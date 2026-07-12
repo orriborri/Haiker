@@ -16,6 +16,9 @@
 *.swp
 *.swo
 
+# Agent task state
+.agents/
+
 # OS files
 .DS_Store
 Thumbs.db
