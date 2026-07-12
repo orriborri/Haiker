@@ -1,5 +1,3 @@
-mod error;
-
 use axum::{routing::get, Json, Router};
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use serde_json::{json, Value};
@@ -66,6 +64,27 @@ mod tests {
 
         let response = app
             .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn openapi_spec_is_accessible() {
+        let app = Router::new()
+            .merge(
+                SwaggerUi::new("/docs")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi()),
+            );
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 

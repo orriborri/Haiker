@@ -9,8 +9,28 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
 
 use haiker_app::error::DomainError;
+
+/// API error response schema for OpenAPI documentation.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApiErrorResponse {
+    /// Error details
+    pub error: ApiErrorDetail,
+}
+
+/// Detailed error information returned by the API.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ApiErrorDetail {
+    /// Machine-readable error code
+    pub code: String,
+    /// Human-readable error message
+    pub message: String,
+    /// Optional additional details about the error
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
 
 /// API error type that produces structured JSON error responses.
 #[derive(Debug)]
