@@ -1,0 +1,126 @@
+/v1/imports:
+  post:
+    operationId: startImport
+    summary: Start a new file import
+    description: |
+      Initiates a GPX file import. Returns a presigned upload URL for the client
+      to upload the file directly to object storage.
+
+      Requires an Idempotency-Key header to ensure safe retries.
+    tags:
+      - Imports
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Unique key to ensure idempotent request handling
+        schema:
+          type: string
+          example: "550e8400-e29b-41d4-a716-446655440000"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/imports.yaml#/StartImportRequest"
+    responses:
+      "202":
+        description: Import accepted; upload URL provided
+        content:
+          application/json:
+            schema:
+              $ref: "../components/imports.yaml#/StartImportResponse"
+      "400":
+        description: Missing Idempotency-Key header
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "401":
+        description: Missing or invalid authentication
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Validation failed (file too large, invalid content type)
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/imports/{importId}/completion:
+  post:
+    operationId: completeUpload
+    summary: Finalize an import upload
+    description: |
+      Signals that the file upload is complete and provides the SHA-256 checksum
+      of the uploaded file. Transitions the import from Uploading to Uploaded.
+    tags:
+      - Imports
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: importId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/imports.yaml#/CompleteUploadRequest"
+    responses:
+      "200":
+        description: Upload finalized successfully
+        content:
+          application/json:
+            schema:
+              $ref: "../components/imports.yaml#/ImportStatusResponse"
+      "404":
+        description: Import not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: Invalid state transition
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/imports/{importId}:
+  get:
+    operationId: getImportStatus
+    summary: Get import status
+    description: Returns the current status of an import job.
+    tags:
+      - Imports
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: importId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: Current import status
+        content:
+          application/json:
+            schema:
+              $ref: "../components/imports.yaml#/ImportStatusResponse"
+      "404":
+        description: Import not found or not owned by caller
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

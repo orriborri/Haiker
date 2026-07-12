@@ -1,0 +1,103 @@
+StartImportRequest:
+  type: object
+  required:
+    - filename
+    - contentType
+    - fileSizeBytes
+  properties:
+    filename:
+      type: string
+      description: Original filename of the GPX file
+      example: "morning-hike.gpx"
+    contentType:
+      type: string
+      description: MIME type of the file (application/gpx+xml or application/xml)
+      enum:
+        - application/gpx+xml
+        - application/xml
+      example: "application/gpx+xml"
+    fileSizeBytes:
+      type: integer
+      format: int64
+      description: Size of the file in bytes (max 50MB)
+      minimum: 1
+      maximum: 52428800
+      example: 245760
+  additionalProperties: false
+
+StartImportResponse:
+  type: object
+  properties:
+    importId:
+      type: string
+      format: uuid
+      description: Unique identifier for the import
+    uploadUrl:
+      type: string
+      format: uri
+      description: Presigned URL for uploading the file to object storage
+    status:
+      type: string
+      description: Current status of the import
+      enum:
+        - uploading
+  required:
+    - importId
+    - uploadUrl
+    - status
+
+CompleteUploadRequest:
+  type: object
+  required:
+    - checksum
+  properties:
+    checksum:
+      type: string
+      description: SHA-256 hex digest of the uploaded file
+      pattern: "^[a-f0-9]{64}$"
+      example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  additionalProperties: false
+
+ImportStatusResponse:
+  type: object
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Import identifier
+    status:
+      type: string
+      description: Current status of the import
+      enum:
+        - requested
+        - uploading
+        - uploaded
+        - validating
+        - queued
+        - parsing
+        - committing
+        - completed
+        - failed
+        - cancelled
+    failureReason:
+      type: string
+      nullable: true
+      description: Human-readable failure reason (present when status is failed)
+    activityId:
+      type: string
+      format: uuid
+      nullable: true
+      description: ID of the created activity (present when status is completed)
+    createdAt:
+      type: string
+      format: date-time
+      description: When the import was created
+    updatedAt:
+      type: string
+      format: date-time
+      description: When the import was last updated
+  required:
+    - id
+    - status
+    - createdAt
+    - updatedAt

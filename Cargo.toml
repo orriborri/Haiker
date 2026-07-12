@@ -52,6 +52,9 @@ dotenvy = "0.15"
 # Object storage (S3-compatible via rust-s3, works with Rust 1.92)
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }
 
+# XML parsing
+quick-xml = "0.37"
+
 # Cryptography & randomness
 sha2 = "0.10"
 rand = { version = "0.8", features = ["std"] }

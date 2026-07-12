@@ -2,6 +2,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use haiker_platform::request_id::request_id_middleware;
 use haiker_platform::telemetry::{self, TelemetryConfig};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -11,6 +12,8 @@ mod auth;
 mod auth_handlers;
 mod error;
 mod health;
+mod imports;
+mod imports_dto;
 
 /// OpenAPI documentation specification.
 #[derive(OpenApi)]
@@ -31,6 +34,21 @@ async fn main() {
 
     tracing::info!("Starting Haiker API server");
 
+    // Import subsystem state (in-memory stub until persistence is wired)
+    let import_state = imports::ImportAppState {
+        repo: Arc::new(imports::InMemoryImportRepository::new()),
+        url_generator: Arc::new(imports::StubUrlGenerator),
+    };
+
+    let import_routes = Router::new()
+        .route("/v1/imports", post(imports::post_start_import))
+        .route(
+            "/v1/imports/{import_id}/completion",
+            post(imports::post_complete_upload),
+        )
+        .route("/v1/imports/{import_id}", get(imports::get_import_status))
+        .with_state(import_state);
+
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
@@ -38,6 +56,7 @@ async fn main() {
         .route("/auth/login", post(auth_handlers::post_login))
         .route("/auth/callback", get(auth_handlers::get_callback))
         .route("/auth/logout", post(auth_handlers::post_logout))
+        .merge(import_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());

@@ -4,6 +4,10 @@
 //! and duplicate detection.
 
 pub mod checksum;
+pub mod commands;
+pub mod duplicate_detection;
+pub mod gpx_parser;
+pub mod repository;
 pub mod state_machine;
 
 use chrono::{DateTime, Utc};
