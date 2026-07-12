@@ -80,13 +80,15 @@ ImportStatusResponse:
         - failed
         - cancelled
     failureReason:
-      type: string
-      nullable: true
+      type:
+        - string
+        - "null"
       description: Human-readable failure reason (present when status is failed)
     activityId:
-      type: string
+      type:
+        - string
+        - "null"
       format: uuid
-      nullable: true
       description: ID of the created activity (present when status is completed)
     createdAt:
       type: string
