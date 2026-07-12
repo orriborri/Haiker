@@ -92,7 +92,15 @@ impl Outbox {
         Ok(rows
             .into_iter()
             .map(
-                |(id, aggregate_type, aggregate_id, event_type, payload, created_at, retry_count)| {
+                |(
+                    id,
+                    aggregate_type,
+                    aggregate_id,
+                    event_type,
+                    payload,
+                    created_at,
+                    retry_count,
+                )| {
                     OutboxEvent {
                         id,
                         aggregate_type,
@@ -184,7 +192,10 @@ pub trait EventHandler: Send + Sync {
     fn event_type(&self) -> &str;
 
     /// Handle an outbox event.
-    async fn handle(&self, event: &OutboxEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    async fn handle(
+        &self,
+        event: &OutboxEvent,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Dispatches outbox events to registered handlers.

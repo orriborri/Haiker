@@ -42,11 +42,7 @@ impl JobQueue {
     }
 
     /// Enqueue a new job for processing.
-    pub async fn enqueue(
-        &self,
-        job_type: &str,
-        payload: Value,
-    ) -> Result<Uuid, sqlx::Error> {
+    pub async fn enqueue(&self, job_type: &str, payload: Value) -> Result<Uuid, sqlx::Error> {
         let id = Uuid::new_v4();
 
         sqlx::query(
@@ -111,16 +107,27 @@ impl JobQueue {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|(id, job_type, payload, status, retry_count, max_retries, scheduled_at, created_at)| Job {
-            id,
-            job_type,
-            payload,
-            status,
-            retry_count,
-            max_retries,
-            scheduled_at,
-            created_at,
-        }))
+        Ok(row.map(
+            |(
+                id,
+                job_type,
+                payload,
+                status,
+                retry_count,
+                max_retries,
+                scheduled_at,
+                created_at,
+            )| Job {
+                id,
+                job_type,
+                payload,
+                status,
+                retry_count,
+                max_retries,
+                scheduled_at,
+                created_at,
+            },
+        ))
     }
 
     /// Mark a job as completed.

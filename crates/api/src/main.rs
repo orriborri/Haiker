@@ -1,12 +1,7 @@
-//! Haiker HTTP API server.
-//!
-//! Starts an Axum-based HTTP server exposing the REST API for the Haiker
-//! hiking-route management application.
-
 use axum::{routing::get, Router};
+use haiker_platform::telemetry::{self, TelemetryConfig};
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
-use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -17,11 +12,7 @@ mod health;
 /// OpenAPI documentation specification.
 #[derive(OpenApi)]
 #[openapi(
-    paths(
-        health::health,
-        health::ready,
-        auth::me,
-    ),
+    paths(health::health, health::ready, auth::me,),
     info(
         title = "Haiker API",
         version = "0.1.0",
@@ -31,26 +22,97 @@ mod health;
 struct ApiDoc;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    haiker_platform::telemetry::init();
+async fn main() {
+    let config = TelemetryConfig::from_env();
+    telemetry::init_telemetry(&config);
 
-    let config = haiker_platform::config::AppConfig::from_env();
+    tracing::info!("Starting Haiker API server");
 
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .route("/me", get(auth::me))
-        .merge(
-            SwaggerUi::new("/docs")
-                .url("/api-docs/openapi.json", ApiDoc::openapi()),
-        )
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(TraceLayer::new_for_http());
 
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    let listener = TcpListener::bind(&addr).await?;
-    info!("API server listening on {}", addr);
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    tracing::info!("Listening on {}", listener.local_addr().unwrap());
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app).await.unwrap();
+}
 
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn health_check_returns_healthy() {
+        let app = Router::new()
+            .route("/health", get(health::health))
+            .route("/ready", get(health::ready));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn openapi_spec_is_accessible() {
+        let app = Router::new()
+            .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api-docs/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn me_without_auth_header_returns_401() {
+        let app = Router::new().route("/me", get(auth::me));
+
+        let response = app
+            .oneshot(Request::builder().uri("/me").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn me_with_valid_bearer_uuid_returns_200_with_user_id() {
+        let app = Router::new().route("/me", get(auth::me));
+        let user_id = uuid::Uuid::new_v4();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/me")
+                    .header("Authorization", format!("Bearer {user_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }
