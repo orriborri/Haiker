@@ -1,0 +1,13 @@
+[package]
+name = "haiker-test-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Haiker test utilities and fixtures"
+
+[dependencies]
+haiker-app.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
