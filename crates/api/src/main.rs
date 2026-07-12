@@ -1,3 +1,5 @@
+mod error;
+
 use axum::{routing::get, Json, Router};
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use serde_json::{json, Value};
