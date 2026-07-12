@@ -9,7 +9,13 @@ description = "Haiker test utilities and fixtures"
 [dependencies]
 haiker-app.workspace = true
 haiker-platform.workspace = true
+chrono.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

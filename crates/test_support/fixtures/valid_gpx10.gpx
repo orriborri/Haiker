@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.0" creator="Haiker Test"
+     xmlns="http://www.topografix.com/GPX/1/0">
+  <name>Evening Walk</name>
+  <desc>A short evening walk along the river</desc>
+  <time>2024-02-20T18:00:00Z</time>
+  <trk>
+    <trkseg>
+      <trkpt lat="48.2082" lon="16.3738">
+        <ele>165.0</ele>
+        <time>2024-02-20T18:00:00Z</time>
+      </trkpt>
+      <trkpt lat="48.2085" lon="16.3742">
+        <ele>164.0</ele>
+        <time>2024-02-20T18:01:00Z</time>
+      </trkpt>
+      <trkpt lat="48.2088" lon="16.3748">
+        <ele>163.0</ele>
+        <time>2024-02-20T18:02:00Z</time>
+      </trkpt>
+      <trkpt lat="48.2092" lon="16.3755">
+        <ele>163.0</ele>
+        <time>2024-02-20T18:03:00Z</time>
+      </trkpt>
+      <trkpt lat="48.2095" lon="16.3760">
+        <ele>162.0</ele>
+        <time>2024-02-20T18:04:00Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

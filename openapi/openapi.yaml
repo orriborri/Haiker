@@ -21,6 +21,12 @@ paths:
     $ref: "paths/auth.yaml#/~1auth~1logout"
   /v1/me:
     $ref: "paths/auth.yaml#/~1v1~1me"
+  /v1/imports:
+    $ref: "paths/imports.yaml#/~1v1~1imports"
+  /v1/imports/{importId}/completion:
+    $ref: "paths/imports.yaml#/~1v1~1imports~1{importId}~1completion"
+  /v1/imports/{importId}:
+    $ref: "paths/imports.yaml#/~1v1~1imports~1{importId}"
 components:
   securitySchemes:
     $ref: "components/security.yaml"

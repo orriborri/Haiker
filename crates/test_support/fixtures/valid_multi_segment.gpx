@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Haiker Test"
+     xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Multi Segment Hike</name>
+  </metadata>
+  <trk>
+    <name>Split Trail</name>
+    <trkseg>
+      <trkpt lat="46.5000" lon="10.0000">
+        <ele>1200.0</ele>
+        <time>2024-04-01T09:00:00Z</time>
+      </trkpt>
+      <trkpt lat="46.5010" lon="10.0010">
+        <ele>1220.0</ele>
+        <time>2024-04-01T09:05:00Z</time>
+      </trkpt>
+      <trkpt lat="46.5020" lon="10.0020">
+        <ele>1240.0</ele>
+        <time>2024-04-01T09:10:00Z</time>
+      </trkpt>
+    </trkseg>
+    <trkseg>
+      <trkpt lat="46.5100" lon="10.0100">
+        <ele>1300.0</ele>
+        <time>2024-04-01T09:30:00Z</time>
+      </trkpt>
+      <trkpt lat="46.5110" lon="10.0110">
+        <ele>1320.0</ele>
+        <time>2024-04-01T09:35:00Z</time>
+      </trkpt>
+      <trkpt lat="46.5120" lon="10.0120">
+        <ele>1340.0</ele>
+        <time>2024-04-01T09:40:00Z</time>
+      </trkpt>
+    </trkseg>
+    <trkseg>
+      <trkpt lat="46.5200" lon="10.0200">
+        <ele>1400.0</ele>
+        <time>2024-04-01T10:00:00Z</time>
+      </trkpt>
+      <trkpt lat="46.5210" lon="10.0210">
+        <ele>1380.0</ele>
+        <time>2024-04-01T10:05:00Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

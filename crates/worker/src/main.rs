@@ -1,6 +1,8 @@
 use haiker_platform::config::AppConfig;
 use haiker_platform::database;
+use haiker_platform::import_worker::ParseGpxJobHandler;
 use haiker_platform::job_queue::JobQueue;
+use haiker_platform::object_storage::ObjectStorageClient;
 use haiker_platform::outbox::{Outbox, OutboxDispatcher};
 use haiker_platform::session::SessionStore;
 use haiker_platform::telemetry::{self, TelemetryConfig};
@@ -38,7 +40,13 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let worker_config = WorkerConfig::default();
-    let runtime = WorkerRuntime::new(job_queue.clone(), worker_config, cancellation_token.clone());
+    let mut runtime =
+        WorkerRuntime::new(job_queue.clone(), worker_config, cancellation_token.clone());
+
+    // Register job handlers
+    let object_storage = ObjectStorageClient::new(&app_config.storage).await?;
+    let parse_gpx_handler = ParseGpxJobHandler::new(pool.clone(), object_storage);
+    runtime.register_handler(Box::new(parse_gpx_handler));
 
     // Run the worker runtime and outbox dispatcher concurrently
     let dispatcher_token = cancellation_token.clone();

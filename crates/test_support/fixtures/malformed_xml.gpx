@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Haiker Test"
+     xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Broken File</name>
+  </metadata>
+  <trk>
+    <trkseg>
+      <trkpt lat="47.0" lon="11.0">
+        <ele>500.0</ele>
+      </trkpt>
+      <!-- Missing closing tags below -->
+      <trkpt lat="47.1" lon="11.1">
+        <ele>510.0

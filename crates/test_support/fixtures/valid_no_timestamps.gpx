@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Haiker Test"
+     xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>No Timestamps Route</name>
+  </metadata>
+  <trk>
+    <name>Mountain Path</name>
+    <trkseg>
+      <trkpt lat="45.8326" lon="6.8652">
+        <ele>1035.0</ele>
+      </trkpt>
+      <trkpt lat="45.8330" lon="6.8660">
+        <ele>1050.0</ele>
+      </trkpt>
+      <trkpt lat="45.8335" lon="6.8668">
+        <ele>1072.0</ele>
+      </trkpt>
+      <trkpt lat="45.8340" lon="6.8675">
+        <ele>1088.0</ele>
+      </trkpt>
+      <trkpt lat="45.8345" lon="6.8682">
+        <ele>1100.0</ele>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

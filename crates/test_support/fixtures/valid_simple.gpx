@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Haiker Test"
+     xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Morning Hike</name>
+    <desc>A beautiful morning hike in the Alps</desc>
+    <time>2024-03-15T07:00:00Z</time>
+  </metadata>
+  <trk>
+    <name>Alpine Trail</name>
+    <trkseg>
+      <trkpt lat="47.2692" lon="11.3933">
+        <ele>574.0</ele>
+        <time>2024-03-15T07:00:00Z</time>
+      </trkpt>
+      <trkpt lat="47.2695" lon="11.3938">
+        <ele>578.0</ele>
+        <time>2024-03-15T07:01:00Z</time>
+      </trkpt>
+      <trkpt lat="47.2700" lon="11.3945">
+        <ele>585.0</ele>
+        <time>2024-03-15T07:02:00Z</time>
+      </trkpt>
+      <trkpt lat="47.2708" lon="11.3950">
+        <ele>592.0</ele>
+        <time>2024-03-15T07:03:00Z</time>
+      </trkpt>
+      <trkpt lat="47.2715" lon="11.3958">
+        <ele>601.0</ele>
+        <time>2024-03-15T07:04:00Z</time>
+      </trkpt>
+      <trkpt lat="47.2720" lon="11.3965">
+        <ele>610.0</ele>
+        <time>2024-03-15T07:05:00Z</time>
+      </trkpt>
+      <trkpt lat="47.2728" lon="11.3972">
+        <ele>618.0</ele>
+        <time>2024-03-15T07:06:00Z</time>
+      </trkpt>
+      <trkpt lat="47.2735" lon="11.3980">
+        <ele>625.0</ele>
+        <time>2024-03-15T07:07:00Z</time>
+      </trkpt>
+      <trkpt lat="47.2740" lon="11.3988">
+        <ele>632.0</ele>
+        <time>2024-03-15T07:08:00Z</time>
+      </trkpt>
+      <trkpt lat="47.2748" lon="11.3995">
+        <ele>640.0</ele>
+        <time>2024-03-15T07:09:00Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>
