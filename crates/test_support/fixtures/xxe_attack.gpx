@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE foo [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<gpx version="1.1" creator="Haiker Test"
+     xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>&xxe;</name>
+  </metadata>
+  <trk>
+    <trkseg>
+      <trkpt lat="47.0" lon="11.0">
+        <ele>500.0</ele>
+      </trkpt>
+      <trkpt lat="47.1" lon="11.1">
+        <ele>510.0</ele>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

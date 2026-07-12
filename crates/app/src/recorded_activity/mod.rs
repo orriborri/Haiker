@@ -5,6 +5,11 @@
 
 pub mod normalization;
 
+// Re-export normalization types for consumers.
+pub use self::normalization::{
+    calculate_elevation_stats, haversine_distance, normalize_gpx, NormalizedTrack,
+};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

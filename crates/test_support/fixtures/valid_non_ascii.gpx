@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Haiker Test"
+     xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Wanderung am Bodensee</name>
+    <desc>Schoene Wanderung entlang des Bodensees mit Blick auf die Alpen</desc>
+  </metadata>
+  <trk>
+    <name>Fuji-san Trailhead</name>
+    <trkseg>
+      <trkpt lat="35.3606" lon="138.7274">
+        <ele>2305.0</ele>
+        <time>2024-06-01T05:00:00Z</time>
+      </trkpt>
+      <trkpt lat="35.3610" lon="138.7280">
+        <ele>2350.0</ele>
+        <time>2024-06-01T05:10:00Z</time>
+      </trkpt>
+      <trkpt lat="35.3615" lon="138.7285">
+        <ele>2400.0</ele>
+        <time>2024-06-01T05:20:00Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

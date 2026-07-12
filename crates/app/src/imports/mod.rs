@@ -24,6 +24,18 @@ use crate::recorded_activity::SourceArtifactId;
 use self::checksum::Checksum;
 use self::state_machine::ImportStatus;
 
+// Re-export key types for consumers.
+pub use self::checksum::Checksum as ImportChecksum;
+pub use self::commit::{CommitImport, ImportCommitData};
+pub use self::duplicate_detection::{CheckDuplicate, DuplicateCheckResult};
+pub use self::gpx_parser::{
+    parse_gpx, GpxMetadata, GpxParseError, GpxParseErrorCode, GpxParseResult, GpxTrack,
+    GpxTrackPoint, GpxTrackSegment, GpxVersion,
+};
+pub use self::orchestrator::{ImportOrchestrator, ImportProcessingResult, ObjectStore};
+pub use self::repository::ImportRepository;
+pub use self::state_machine::ImportStatus as Status;
+
 /// A strongly-typed import identifier wrapping a UUID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ImportId(pub Uuid);
