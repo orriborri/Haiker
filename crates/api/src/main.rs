@@ -1,8 +1,8 @@
 use axum::{routing::get, Json, Router};
+use haiker_platform::telemetry::{self, TelemetryConfig};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
-use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -28,10 +28,8 @@ struct ApiDoc;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
+    let config = TelemetryConfig::from_env();
+    telemetry::init_telemetry(&config);
 
     tracing::info!("Starting Haiker API server");
 
