@@ -35,6 +35,18 @@ impl From<S3Error> for ObjectStorageError {
     }
 }
 
+/// Check whether an error message indicates a not-found condition.
+///
+/// Used by both `download()` and `exists()` to consistently detect 404
+/// responses from S3-compatible backends, regardless of how the upstream
+/// crate formats the error message.
+fn is_not_found_error(msg: &str) -> bool {
+    msg.contains("404")
+        || msg.contains("NoSuchKey")
+        || msg.contains("not found")
+        || msg.contains("NotFound")
+}
+
 impl ObjectStorageClient {
     /// Create a new object storage client from configuration.
     pub async fn new(config: &StorageConfig) -> Result<Self, ObjectStorageError> {
@@ -89,7 +101,7 @@ impl ObjectStorageClient {
     pub async fn download(&self, key: &str) -> Result<Vec<u8>, ObjectStorageError> {
         let response = self.bucket.get_object(key).await.map_err(|e| {
             let msg = e.to_string();
-            if msg.contains("404") || msg.contains("NoSuchKey") || msg.contains("not found") {
+            if is_not_found_error(&msg) {
                 ObjectStorageError::NotFound {
                     key: key.to_string(),
                 }
@@ -143,7 +155,7 @@ impl ObjectStorageClient {
             Ok(_) => Ok(true),
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("404") || msg.contains("NotFound") || msg.contains("NoSuchKey") {
+                if is_not_found_error(&msg) {
                     Ok(false)
                 } else {
                     Err(ObjectStorageError::Storage(msg))

@@ -2,9 +2,13 @@ use haiker_platform::config::AppConfig;
 use haiker_platform::database;
 use haiker_platform::job_queue::JobQueue;
 use haiker_platform::outbox::{Outbox, OutboxDispatcher};
+use haiker_platform::session::SessionStore;
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use haiker_platform::worker_runtime::{WorkerConfig, WorkerRuntime};
 use tokio_util::sync::CancellationToken;
+
+/// Interval for periodic maintenance tasks (stale job timeout, session cleanup).
+const MAINTENANCE_INTERVAL_SECS: u64 = 60;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -19,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
     let job_queue = JobQueue::new(pool.clone());
     let outbox = Outbox::new(pool.clone());
     let outbox_dispatcher = OutboxDispatcher::new(outbox, 5);
+    let session_store = SessionStore::new(pool.clone());
 
     let cancellation_token = CancellationToken::new();
 
@@ -33,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let worker_config = WorkerConfig::default();
-    let runtime = WorkerRuntime::new(job_queue, worker_config, cancellation_token.clone());
+    let runtime = WorkerRuntime::new(job_queue.clone(), worker_config, cancellation_token.clone());
 
     // Run the worker runtime and outbox dispatcher concurrently
     let dispatcher_token = cancellation_token.clone();
@@ -61,8 +66,50 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Spawn periodic maintenance: stale job timeout and session cleanup
+    let maintenance_token = cancellation_token.clone();
+    let maintenance_queue = job_queue.clone();
+    let maintenance_handle = tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(MAINTENANCE_INTERVAL_SECS));
+        loop {
+            tokio::select! {
+                _ = maintenance_token.cancelled() => {
+                    tracing::info!("Maintenance task shutting down");
+                    break;
+                }
+                _ = interval.tick() => {
+                    // Timeout stale jobs that exceeded their deadline
+                    match maintenance_queue.timeout_stale_jobs().await {
+                        Ok(count) => {
+                            if count > 0 {
+                                tracing::info!(count, "Timed out stale jobs");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to timeout stale jobs");
+                        }
+                    }
+
+                    // Cleanup expired sessions
+                    match session_store.cleanup_expired().await {
+                        Ok(count) => {
+                            if count > 0 {
+                                tracing::info!(count, "Cleaned up expired sessions");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to cleanup expired sessions");
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     runtime.run().await;
     let _ = dispatcher_handle.await;
+    let _ = maintenance_handle.await;
 
     tracing::info!("Worker shutting down cleanly");
     Ok(())

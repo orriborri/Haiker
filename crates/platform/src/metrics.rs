@@ -10,6 +10,10 @@
 /// Record an HTTP request metric event.
 ///
 /// Fields: method, path, status, duration_ms.
+///
+/// Callers should invoke this from their HTTP request middleware layer (e.g.,
+/// the request-ID middleware in `request_id.rs` or a dedicated metrics
+/// middleware). It is not called automatically by the platform crate itself.
 pub fn record_http_request(method: &str, path: &str, status: u16, duration_ms: u64) {
     tracing::info!(
         target: "metrics",

@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn, Instrument};
 
 use crate::job_queue::{JobHandler, JobQueue};
+use crate::metrics;
 
 /// Configuration for the worker runtime.
 #[derive(Debug, Clone)]
@@ -140,6 +141,7 @@ impl WorkerRuntime {
                             };
 
                             async {
+                                let start = std::time::Instant::now();
                                 let handler = handlers_ref
                                     .iter()
                                     .find(|h| h.job_type() == job_type);
@@ -147,11 +149,15 @@ impl WorkerRuntime {
                                 match handler {
                                     Some(h) => match h.handle(&job).await {
                                         Ok(()) => {
+                                            let duration_ms = start.elapsed().as_millis() as u64;
+                                            metrics::record_job_processed(&job_type, duration_ms, true);
                                             if let Err(e) = handler_queue.complete(job_id).await {
                                                 warn!(error = %e, "Failed to mark job as completed");
                                             }
                                         }
                                         Err(e) => {
+                                            let duration_ms = start.elapsed().as_millis() as u64;
+                                            metrics::record_job_processed(&job_type, duration_ms, false);
                                             warn!(error = %e, "Job handler failed");
                                             if let Err(e) = handler_queue.fail(job_id, &e.to_string()).await {
                                                 warn!(error = %e, "Failed to mark job as failed");
@@ -159,6 +165,8 @@ impl WorkerRuntime {
                                         }
                                     },
                                     None => {
+                                        let duration_ms = start.elapsed().as_millis() as u64;
+                                        metrics::record_job_processed(&job_type, duration_ms, false);
                                         warn!("No handler registered for job type: {}", job_type);
                                         if let Err(e) = handler_queue.fail(
                                             job_id,

@@ -3,6 +3,8 @@
 //! Provides an Axum extractor (`AuthSession`) that validates session cookies
 //! and CSRF tokens, producing an authenticated `Actor` for downstream handlers.
 
+use std::sync::OnceLock;
+
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
 use axum::http::{Method, StatusCode};
@@ -14,6 +16,10 @@ use uuid::Uuid;
 use haiker_app::identity::{Actor, UserId};
 
 use crate::session::SessionStore;
+
+/// Cached value of the `DEV_AUTH_ENABLED` environment variable, read once at
+/// first access so we avoid re-reading the env on every request.
+static DEV_AUTH_ENABLED: OnceLock<bool> = OnceLock::new();
 
 /// The name of the session cookie.
 pub const SESSION_COOKIE_NAME: &str = "haiker_sid";
@@ -131,10 +137,15 @@ fn is_state_changing_method(method: &Method) -> bool {
 }
 
 /// Check if dev auth mode is enabled via environment variable.
+///
+/// The value is cached at first access using `OnceLock`, so the env var is
+/// read only once rather than on every incoming request.
 fn is_dev_auth_enabled() -> bool {
-    std::env::var("DEV_AUTH_ENABLED")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false)
+    *DEV_AUTH_ENABLED.get_or_init(|| {
+        std::env::var("DEV_AUTH_ENABLED")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false)
+    })
 }
 
 /// Try to extract a Bearer token from the Authorization header and parse it as a UUID.

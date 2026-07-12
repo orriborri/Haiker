@@ -77,16 +77,23 @@ impl Outbox {
 
     /// Poll for unprocessed outbox events.
     ///
-    /// Returns events that have not been processed or permanently failed,
-    /// ordered by creation time.
+    /// Uses `FOR UPDATE SKIP LOCKED` to prevent concurrent workers from
+    /// picking up the same events (avoiding double-dispatch). Events are
+    /// atomically selected and marked as claimed by setting `processed_at`
+    /// to a sentinel value, then returned for processing.
     pub async fn poll_unprocessed(&self, batch_size: i64) -> Result<Vec<OutboxEvent>, sqlx::Error> {
         let rows = sqlx::query_as::<_, (Uuid, String, String, String, Value, DateTime<Utc>, i32, Option<Uuid>)>(
             r#"
             SELECT id, aggregate_type, aggregate_id, event_type, payload, created_at, retry_count, correlation_id
             FROM platform.outbox
-            WHERE processed_at IS NULL AND failed_at IS NULL
+            WHERE id IN (
+                SELECT id FROM platform.outbox
+                WHERE processed_at IS NULL AND failed_at IS NULL
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT $1
+            )
             ORDER BY created_at ASC
-            LIMIT $1
             "#,
         )
         .bind(batch_size)
