@@ -476,6 +476,12 @@ pub fn parse_gpx(input: &[u8]) -> Result<GpxParseResult, GpxParseError> {
                 }
             }
             Ok(Event::Eof) => break,
+            Ok(Event::DocType(_)) => {
+                return Err(GpxParseError::new(
+                    GpxParseErrorCode::ExternalEntity,
+                    "DOCTYPE declarations are not allowed",
+                ));
+            }
             Err(_) => {
                 return Err(GpxParseError::new(
                     GpxParseErrorCode::InvalidXml,

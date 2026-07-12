@@ -1,8 +1,13 @@
 use axum::routing::{get, post};
 use axum::Router;
+use haiker_platform::config::AppConfig;
+use haiker_platform::database;
+use haiker_platform::import_persistence::PgImportRepository;
+use haiker_platform::object_storage::ObjectStorageClient;
 use haiker_platform::request_id::request_id_middleware;
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -34,10 +39,24 @@ async fn main() {
 
     tracing::info!("Starting Haiker API server");
 
-    // Import subsystem state (in-memory stub until persistence is wired)
+    let app_config = AppConfig::from_env();
+
+    // Connect to PostgreSQL
+    let pool = database::connect(&app_config.database)
+        .await
+        .expect("failed to connect to database");
+
+    // Initialize object storage client for presigned URL generation
+    let object_storage = ObjectStorageClient::new(&app_config.storage)
+        .await
+        .expect("failed to initialize object storage");
+
+    // Import subsystem state with real PostgreSQL repository
     let import_state = imports::ImportAppState {
-        repo: Arc::new(imports::InMemoryImportRepository::new()),
-        url_generator: Arc::new(imports::StubUrlGenerator),
+        repo: Arc::new(PgImportRepository::new(pool.clone())),
+        url_generator: Arc::new(PresignedUrlGenerator {
+            client: object_storage,
+        }),
         job_queue: None,
     };
 
@@ -62,10 +81,31 @@ async fn main() {
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());
 
-    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    let bind_addr = format!("{}:{}", app_config.server.host, app_config.server.port);
+    let listener = TcpListener::bind(&bind_addr).await.unwrap();
     tracing::info!("Listening on {}", listener.local_addr().unwrap());
 
     axum::serve(listener, app).await.unwrap();
+}
+
+/// Presigned URL generator backed by real object storage.
+struct PresignedUrlGenerator {
+    client: ObjectStorageClient,
+}
+
+#[async_trait::async_trait]
+impl haiker_app::imports::commands::UploadUrlGenerator for PresignedUrlGenerator {
+    async fn generate_upload_url(
+        &self,
+        key: &str,
+    ) -> Result<String, haiker_app::imports::ImportError> {
+        self.client
+            .presigned_upload_url(key, Duration::from_secs(3600))
+            .await
+            .map_err(|e| haiker_app::imports::ImportError::StorageError {
+                message: format!("failed to generate presigned URL: {e}"),
+            })
+    }
 }
 
 #[cfg(test)]

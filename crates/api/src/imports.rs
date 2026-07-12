@@ -2,6 +2,7 @@
 //!
 //! Implements POST /v1/imports, POST /v1/imports/:id/completion, GET /v1/imports/:id.
 
+use async_trait::async_trait;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -251,17 +252,20 @@ pub async fn get_import_status(
     Ok((StatusCode::OK, Json(import_to_status_response(&import))))
 }
 
-// -- In-memory implementations for use in main() stub and tests --
+// -- In-memory implementations for use in tests --
 
-use async_trait::async_trait;
+#[cfg(test)]
 use std::collections::HashMap;
+#[cfg(test)]
 use std::sync::Mutex;
 
-/// In-memory import repository (placeholder until persistence layer).
+/// In-memory import repository for testing (not used in production).
+#[cfg(test)]
 pub struct InMemoryImportRepository {
     imports: Mutex<HashMap<ImportId, Import>>,
 }
 
+#[cfg(test)]
 impl InMemoryImportRepository {
     pub fn new() -> Self {
         Self {
@@ -270,6 +274,7 @@ impl InMemoryImportRepository {
     }
 }
 
+#[cfg(test)]
 #[async_trait]
 impl ImportRepository for InMemoryImportRepository {
     async fn save(&self, import: &Import) -> Result<(), ImportError> {
@@ -315,9 +320,11 @@ impl ImportRepository for InMemoryImportRepository {
     }
 }
 
-/// Stub URL generator that returns a placeholder URL.
+/// Stub URL generator for testing (not used in production).
+#[cfg(test)]
 pub struct StubUrlGenerator;
 
+#[cfg(test)]
 #[async_trait]
 impl UploadUrlGenerator for StubUrlGenerator {
     async fn generate_upload_url(&self, key: &str) -> Result<String, ImportError> {

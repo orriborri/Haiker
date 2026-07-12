@@ -55,9 +55,15 @@ pub fn haversine_distance(from: &Coordinate, to: &Coordinate) -> f64 {
 
 /// Calculate elevation gain and loss from a sequence of elevations.
 ///
-/// Compares sequential points: positive differences contribute to gain,
-/// negative differences contribute to loss.
+/// Applies a dead-band threshold of 2.0 meters to filter GPS noise.
+/// Only elevation differences with absolute value >= 2.0m are counted
+/// as gain or loss. This prevents GPS barometric altitude noise from
+/// inflating reported elevation statistics.
 pub fn calculate_elevation_stats(elevations: &[Option<Elevation>]) -> (Option<f64>, Option<f64>) {
+    /// Minimum elevation change (meters) to count as gain or loss.
+    /// Filters out GPS noise which typically fluctuates +-2-5m per sample.
+    const ELEVATION_DEAD_BAND: f64 = 2.0;
+
     let mut gain: f64 = 0.0;
     let mut loss: f64 = 0.0;
     let mut has_elevation = false;
@@ -67,9 +73,9 @@ pub fn calculate_elevation_stats(elevations: &[Option<Elevation>]) -> (Option<f6
         has_elevation = true;
         if let Some(prev) = prev_elevation {
             let diff = e.meters() - prev;
-            if diff > 0.0 {
+            if diff >= ELEVATION_DEAD_BAND {
                 gain += diff;
-            } else {
+            } else if diff <= -ELEVATION_DEAD_BAND {
                 loss += diff.abs();
             }
         }

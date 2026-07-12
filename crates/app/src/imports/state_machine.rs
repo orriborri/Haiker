@@ -3,6 +3,13 @@
 //! Defines the valid state transitions for the import lifecycle:
 //! Requested -> Uploading -> Uploaded -> Validating -> Queued -> Parsing -> Committing -> Completed
 //! Any non-terminal state can transition to Failed or Cancelled.
+//!
+//! NOTE: The domain model steering specifies a `DuplicateReview` state between
+//! `Parsing` and `Committing` for probable duplicates that require user review.
+//! This is intentionally omitted for MVP. The current implementation handles
+//! exact duplicates automatically (returns existing activity reference without
+//! user review) per the "Exact Duplicate" rule. Probable-duplicate review will
+//! be added in a future iteration when user-facing review flows are built.
 
 use serde::{Deserialize, Serialize};
 

@@ -97,20 +97,9 @@ impl CommitImport for PgImportCommitter {
         })?;
 
         // 3. Insert recorded_track
-        let segments_json =
+        let geometry_json =
             serde_json::to_value(&data.segments).map_err(|e| ImportError::StorageError {
                 message: format!("failed to serialize segments: {e}"),
-            })?;
-
-        let preview_json = serde_json::to_value(&data.preview_geometry).map_err(|e| {
-            ImportError::StorageError {
-                message: format!("failed to serialize preview: {e}"),
-            }
-        })?;
-
-        let stats_json =
-            serde_json::to_value(data.statistics).map_err(|e| ImportError::StorageError {
-                message: format!("failed to serialize statistics: {e}"),
             })?;
 
         let bbox_json =
@@ -121,19 +110,26 @@ impl CommitImport for PgImportCommitter {
         sqlx::query(
             r#"
             INSERT INTO recorded_activity.recorded_tracks (
-                id, activity_id, owner_id, segments, bounding_box,
-                statistics, preview_geometry, created_at
+                id, source_revision_id, geometry_json, bounding_box_json,
+                started_at, ended_at, distance_meters, elevation_gain_meters,
+                elevation_loss_meters, point_count, segment_count,
+                calculation_version, created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
             "#,
         )
         .bind(data.recorded_track_id.0)
-        .bind(data.activity_id.0)
-        .bind(data.owner_id.0)
-        .bind(&segments_json)
+        .bind(data.source_revision_id.0)
+        .bind(&geometry_json)
         .bind(&bbox_json)
-        .bind(&stats_json)
-        .bind(&preview_json)
+        .bind(data.started_at)
+        .bind(data.ended_at)
+        .bind(data.statistics.distance_meters)
+        .bind(data.statistics.elevation_gain_meters)
+        .bind(data.statistics.elevation_loss_meters)
+        .bind(data.statistics.point_count as i32)
+        .bind(data.statistics.segment_count as i32)
+        .bind(&data.parser_version)
         .execute(&mut *tx)
         .await
         .map_err(|e| ImportError::StorageError {

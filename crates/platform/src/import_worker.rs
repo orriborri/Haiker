@@ -9,6 +9,7 @@ use sqlx::PgPool;
 use haiker_app::identity::UserId;
 use haiker_app::imports::job_types::{ParseGpxJob, PARSE_GPX_JOB_TYPE};
 use haiker_app::imports::orchestrator::ImportOrchestrator;
+use haiker_app::imports::repository::ImportRepository;
 use haiker_app::imports::ImportId;
 
 use crate::import_commit::PgImportCommitter;
@@ -117,6 +118,28 @@ impl JobHandler for ParseGpxJobHandler {
         // Run the import processing pipeline
         let import_id = ImportId::new(payload.import_id);
         let owner_id = UserId::new(payload.owner_id);
+
+        // Transition from Uploaded -> Validating -> Queued before the orchestrator
+        // picks up the import. The orchestrator expects the import to be in Queued state.
+        {
+            let mut import = repo
+                .find_by_id(import_id)
+                .await
+                .map_err(|e| format!("failed to load import: {e}"))?
+                .ok_or_else(|| format!("import {} not found", import_id))?;
+
+            if import.status == haiker_app::imports::state_machine::ImportStatus::Uploaded {
+                import
+                    .start_validation()
+                    .map_err(|e| format!("failed to transition to validating: {e}"))?;
+                import
+                    .queue_for_parsing()
+                    .map_err(|e| format!("failed to transition to queued: {e}"))?;
+                repo.update(&import)
+                    .await
+                    .map_err(|e| format!("failed to persist queued status: {e}"))?;
+            }
+        }
 
         match orchestrator
             .process_import(
