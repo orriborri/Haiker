@@ -4,6 +4,9 @@
 # Environment files
 .env
 
+# sqlx offline query data (generated, do not edit manually)
+# .sqlx/
+
 # IDE
 .idea/
 .vscode/
