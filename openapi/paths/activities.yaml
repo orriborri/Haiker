@@ -38,3 +38,41 @@
           application/json:
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/activities/{activityId}:
+  get:
+    operationId: getActivity
+    summary: Get activity detail by ID
+    description: Returns the full detail of a single activity owned by the authenticated user. Returns 404 for missing, cross-owner, or deleted activities (non-disclosing).
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The unique activity identifier (UUID).
+        schema:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+    responses:
+      "200":
+        description: The activity detail.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/activities.yaml#/ActivityDetailResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity not found (also returned for cross-owner access, non-disclosing).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

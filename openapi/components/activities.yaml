@@ -92,3 +92,77 @@ ActivityListResponse:
           type: integer
           description: The number of items returned in this page.
           example: 25
+
+ActivityDetailResponse:
+  type: object
+  description: Full detail representation of a single activity.
+  required:
+    - id
+    - title
+    - activityType
+    - lifecycleState
+    - createdAt
+    - updatedAt
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Unique activity identifier.
+      example: "550e8400-e29b-41d4-a716-446655440000"
+    title:
+      type: string
+      description: Activity title.
+      example: "Morning Hike in the Alps"
+    activityType:
+      type: string
+      enum: [hike, walk, run, other]
+      description: The type/category of the activity.
+      example: "hike"
+    startedAt:
+      type:
+        - string
+        - "null"
+      format: date-time
+      description: When the activity started (ISO 8601).
+      example: "2024-01-15T10:30:00Z"
+    endedAt:
+      type:
+        - string
+        - "null"
+      format: date-time
+      description: When the activity ended (ISO 8601).
+      example: "2024-01-15T14:00:00Z"
+    lifecycleState:
+      type: string
+      enum: [active, deleted]
+      description: The lifecycle state of the activity.
+      example: "active"
+    recordedSummary:
+      type:
+        - object
+        - "null"
+      description: Summary statistics from the original recorded track.
+      example: {"distanceKm": 12.5, "elevationGainM": 800}
+    correctedSummary:
+      type:
+        - object
+        - "null"
+      description: Summary statistics after user corrections.
+      example: {"distanceKm": 12.3, "elevationGainM": 790}
+    currentRouteVersionId:
+      type:
+        - string
+        - "null"
+      format: uuid
+      description: The current route version linked to this activity, if any.
+      example: "660e8400-e29b-41d4-a716-446655440001"
+    createdAt:
+      type: string
+      format: date-time
+      description: When the activity was created (ISO 8601).
+      example: "2024-01-15T10:30:00Z"
+    updatedAt:
+      type: string
+      format: date-time
+      description: When the activity was last updated (ISO 8601).
+      example: "2024-01-15T14:30:00Z"

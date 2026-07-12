@@ -5,7 +5,7 @@
 use crate::identity::UserId;
 
 use super::repository::{ActivityPage, ActivityRepository};
-use super::ActivityCatalogError;
+use super::{ActivityCatalogError, ActivityId, LifecycleState};
 
 /// Default page size for activity listings.
 pub const DEFAULT_PAGE_SIZE: u32 = 25;
@@ -56,6 +56,24 @@ pub async fn list_activities(
         .clamp(1, MAX_PAGE_SIZE);
 
     repo.list_activities(owner_id, cursor, page_size).await
+}
+
+/// Get a single activity by ID, verifying ownership.
+///
+/// Returns `ActivityNotFound` if the activity does not exist, the owner does not
+/// match, or the activity is in Deleted lifecycle state (non-disclosing).
+pub async fn get_activity(
+    activity_id: ActivityId,
+    owner_id: UserId,
+    repo: &dyn ActivityRepository,
+) -> Result<super::Activity, ActivityCatalogError> {
+    let activity = repo
+        .find_by_id(activity_id)
+        .await?
+        .filter(|a| a.owner_id == owner_id && a.lifecycle_state != LifecycleState::Deleted)
+        .ok_or(ActivityCatalogError::ActivityNotFound)?;
+
+    Ok(activity)
 }
 
 /// Base64 encode a string (standard encoding with padding).

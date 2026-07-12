@@ -1,19 +1,21 @@
 //! Activity API handlers.
 //!
-//! Implements GET /v1/activities.
+//! Implements GET /v1/activities and GET /v1/activities/{activityId}.
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use std::sync::Arc;
+use uuid::Uuid;
 
-use haiker_app::activity_catalog::queries::list_activities;
+use haiker_app::activity_catalog::queries::{get_activity, list_activities};
 use haiker_app::activity_catalog::repository::ActivityRepository;
-use haiker_app::activity_catalog::ActivityCatalogError;
+use haiker_app::activity_catalog::{ActivityCatalogError, ActivityId};
 
 use crate::activities_dto::{
-    ActivityListResponse, ActivitySummaryResponse, ListActivitiesParams, PaginationMeta,
+    ActivityDetailResponse, ActivityListResponse, ActivitySummaryResponse, ListActivitiesParams,
+    PaginationMeta,
 };
 use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
@@ -33,10 +35,11 @@ fn activity_error_to_api_error(err: ActivityCatalogError) -> ApiError {
             message: "activity not found".to_string(),
             details: None,
         },
+        // Non-disclosing: cross-owner access returns 404 identical to not-found.
         ActivityCatalogError::Unauthorized => ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this activity".to_string(),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "activity not found".to_string(),
             details: None,
         },
         ActivityCatalogError::InvalidTitle { message } => ApiError {
@@ -108,6 +111,38 @@ pub async fn get_activities(
     Ok((StatusCode::OK, Json(response)))
 }
 
+/// GET /v1/activities/{activityId}
+///
+/// Get a single activity detail by ID, scoped to the authenticated owner.
+#[tracing::instrument(skip(state, actor))]
+pub async fn get_activity_detail(
+    State(state): State<ActivityAppState>,
+    actor: AuthenticatedActor,
+    Path(activity_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let owner_id = actor.0.user_id;
+
+    let activity = get_activity(ActivityId::new(activity_id), owner_id, state.repo.as_ref())
+        .await
+        .map_err(activity_error_to_api_error)?;
+
+    let response = ActivityDetailResponse {
+        id: activity.id.0,
+        title: activity.title.as_str().to_string(),
+        activity_type: activity.activity_type.to_string(),
+        started_at: activity.started_at,
+        ended_at: activity.ended_at,
+        lifecycle_state: activity.lifecycle_state.to_string(),
+        recorded_summary: activity.recorded_summary,
+        corrected_summary: activity.corrected_summary,
+        current_route_version_id: None,
+        created_at: activity.created_at,
+        updated_at: activity.updated_at,
+    };
+
+    Ok((StatusCode::OK, Json(response)))
+}
+
 // -- In-memory implementations for use in tests --
 
 #[cfg(test)]
@@ -122,7 +157,7 @@ use haiker_app::activity_catalog::queries::{decode_cursor, encode_cursor, Cursor
 #[cfg(test)]
 use haiker_app::activity_catalog::repository::ActivityPage;
 #[cfg(test)]
-use haiker_app::activity_catalog::{Activity, ActivityId, LifecycleState};
+use haiker_app::activity_catalog::{Activity, LifecycleState};
 #[cfg(test)]
 use haiker_app::identity::UserId;
 
@@ -285,6 +320,7 @@ mod tests {
 
         Router::new()
             .route("/v1/activities", get(get_activities))
+            .route("/v1/activities/{activityId}", get(get_activity_detail))
             .with_state(state)
     }
 
@@ -295,6 +331,7 @@ mod tests {
 
         Router::new()
             .route("/v1/activities", get(get_activities))
+            .route("/v1/activities/{activityId}", get(get_activity_detail))
             .with_state(state)
     }
 
@@ -665,5 +702,173 @@ mod tests {
         let items = json["items"].as_array().unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["title"], "Active Hike");
+    }
+
+    // --- Activity Detail (GET /v1/activities/{activityId}) tests ---
+
+    #[tokio::test]
+    async fn get_activity_detail_returns_200_for_owner() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let mut activity = make_activity(user, "Summit Hike", Some(now));
+        activity.ended_at = Some(now + Duration::hours(3));
+        activity.recorded_summary = Some(serde_json::json!({"distance_km": 8.0}));
+        activity.corrected_summary = Some(serde_json::json!({"distance_km": 8.2}));
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/activities/{activity_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["id"], activity_id.to_string());
+        assert_eq!(json["title"], "Summit Hike");
+        assert_eq!(json["activityType"], "hike");
+        assert_eq!(json["lifecycleState"], "active");
+        assert!(json["startedAt"].is_string());
+        assert!(json["endedAt"].is_string());
+        assert_eq!(json["recordedSummary"]["distance_km"], 8.0);
+        assert_eq!(json["correctedSummary"]["distance_km"], 8.2);
+        assert!(json["createdAt"].is_string());
+        assert!(json["updatedAt"].is_string());
+    }
+
+    #[tokio::test]
+    async fn get_activity_detail_not_found_returns_404() {
+        let user = UserId::new(Uuid::new_v4());
+        let random_id = Uuid::new_v4();
+
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/activities/{random_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["error"]["message"], "activity not found");
+    }
+
+    #[tokio::test]
+    async fn get_activity_detail_cross_owner_returns_404() {
+        let owner = UserId::new(Uuid::new_v4());
+        let other_user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let activity = make_activity(owner, "Owner Hike", Some(now));
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(other_user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/activities/{activity_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Non-disclosing: same 404 as not found
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["error"]["message"], "activity not found");
+    }
+
+    #[tokio::test]
+    async fn get_activity_detail_deleted_returns_404() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let mut activity = make_activity(user, "Deleted Hike", Some(now));
+        activity.lifecycle_state = LifecycleState::Deleted;
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/activities/{activity_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["error"]["message"], "activity not found");
+    }
+
+    #[tokio::test]
+    async fn get_activity_detail_without_auth_returns_401() {
+        let random_id = Uuid::new_v4();
+        let app = test_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/activities/{random_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

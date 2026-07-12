@@ -79,6 +79,10 @@ async fn main() {
 
     let activity_routes = Router::new()
         .route("/v1/activities", get(activities::get_activities))
+        .route(
+            "/v1/activities/{activityId}",
+            get(activities::get_activity_detail),
+        )
         .with_state(activity_state);
 
     let app = Router::new()

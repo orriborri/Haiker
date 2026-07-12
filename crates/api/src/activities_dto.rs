@@ -52,3 +52,23 @@ pub struct ActivityListResponse {
     pub items: Vec<ActivitySummaryResponse>,
     pub pagination: PaginationMeta,
 }
+
+/// Response body for GET /v1/activities/{activityId}.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityDetailResponse {
+    pub id: Uuid,
+    pub title: String,
+    pub activity_type: String,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub lifecycle_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded_summary: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corrected_summary: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_route_version_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
