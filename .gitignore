@@ -1,6 +1,9 @@
 # Rust build artifacts
 /target/
 
+# Generated OpenAPI bundle
+/dist/
+
 # Environment files
 .env
 
@@ -12,6 +15,9 @@
 .vscode/
 *.swp
 *.swo
+
+# Agent task state
+.agents/
 
 # OS files
 .DS_Store

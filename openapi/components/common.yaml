@@ -1,0 +1,21 @@
+CursorPagination:
+  type: object
+  description: Cursor-based pagination metadata.
+  required:
+    - hasMore
+    - pageSize
+  properties:
+    cursor:
+      type:
+        - string
+        - "null"
+      description: An opaque cursor pointing to the next page. Null if no more results.
+      example: "eyJpZCI6MTAwfQ=="
+    hasMore:
+      type: boolean
+      description: Whether there are more results beyond the current page.
+      example: true
+    pageSize:
+      type: integer
+      description: The number of items returned per page.
+      example: 25

@@ -4,10 +4,18 @@
 //! management, object storage, job queue, and transactional outbox shared
 //! by the API server and worker processes.
 
+pub mod audit;
+pub mod auth_middleware;
 pub mod clock;
 pub mod config;
 pub mod database;
+pub mod error;
 pub mod job_queue;
-// pub mod object_storage;  // Requires Rust 1.94+ for AWS SDK
+pub mod metrics;
+pub mod object_storage;
 pub mod outbox;
+pub mod ownership;
+pub mod request_id;
+pub mod session;
 pub mod telemetry;
+pub mod worker_runtime;

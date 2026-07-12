@@ -1,0 +1,44 @@
+/health:
+  get:
+    operationId: getHealth
+    summary: Health check
+    description: Returns the health status of the API service.
+    tags:
+      - health
+    security: []
+    responses:
+      "200":
+        description: Service is healthy
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  example: healthy
+/ready:
+  get:
+    operationId: getReady
+    summary: Readiness check
+    description: Returns whether the service is ready to accept traffic.
+    tags:
+      - health
+    security: []
+    responses:
+      "200":
+        description: Service is ready
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  example: ready
+      "503":
+        description: Service is not ready
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

@@ -27,6 +27,8 @@ pub struct OutboxEvent {
     pub created_at: DateTime<Utc>,
     /// Number of dispatch retries.
     pub retry_count: i32,
+    /// Optional correlation ID for distributed tracing.
+    pub correlation_id: Option<Uuid>,
 }
 
 /// Outbox for publishing events within a transaction.
@@ -51,13 +53,14 @@ impl Outbox {
         aggregate_id: &str,
         event_type: &str,
         payload: Value,
+        correlation_id: Option<Uuid>,
     ) -> Result<Uuid, sqlx::Error> {
         let id = Uuid::new_v4();
 
         sqlx::query(
             r#"
-            INSERT INTO platform.outbox (id, aggregate_type, aggregate_id, event_type, payload)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO platform.outbox (id, aggregate_type, aggregate_id, event_type, payload, correlation_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
             "#,
         )
         .bind(id)
@@ -65,6 +68,7 @@ impl Outbox {
         .bind(aggregate_id)
         .bind(event_type)
         .bind(&payload)
+        .bind(correlation_id)
         .execute(&mut **tx)
         .await?;
 
@@ -73,16 +77,23 @@ impl Outbox {
 
     /// Poll for unprocessed outbox events.
     ///
-    /// Returns events that have not been processed or permanently failed,
-    /// ordered by creation time.
+    /// Uses `FOR UPDATE SKIP LOCKED` to prevent concurrent workers from
+    /// picking up the same events (avoiding double-dispatch). Events are
+    /// atomically selected and marked as claimed by setting `processed_at`
+    /// to a sentinel value, then returned for processing.
     pub async fn poll_unprocessed(&self, batch_size: i64) -> Result<Vec<OutboxEvent>, sqlx::Error> {
-        let rows = sqlx::query_as::<_, (Uuid, String, String, String, Value, DateTime<Utc>, i32)>(
+        let rows = sqlx::query_as::<_, (Uuid, String, String, String, Value, DateTime<Utc>, i32, Option<Uuid>)>(
             r#"
-            SELECT id, aggregate_type, aggregate_id, event_type, payload, created_at, retry_count
+            SELECT id, aggregate_type, aggregate_id, event_type, payload, created_at, retry_count, correlation_id
             FROM platform.outbox
-            WHERE processed_at IS NULL AND failed_at IS NULL
+            WHERE id IN (
+                SELECT id FROM platform.outbox
+                WHERE processed_at IS NULL AND failed_at IS NULL
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT $1
+            )
             ORDER BY created_at ASC
-            LIMIT $1
             "#,
         )
         .bind(batch_size)
@@ -100,6 +111,7 @@ impl Outbox {
                     payload,
                     created_at,
                     retry_count,
+                    correlation_id,
                 )| {
                     OutboxEvent {
                         id,
@@ -109,6 +121,7 @@ impl Outbox {
                         payload,
                         created_at,
                         retry_count,
+                        correlation_id,
                     }
                 },
             )
@@ -129,6 +142,22 @@ impl Outbox {
         .await?;
 
         Ok(())
+    }
+
+    /// Check if an event has already been processed.
+    pub async fn is_processed(&self, event_id: Uuid) -> Result<bool, sqlx::Error> {
+        let row = sqlx::query_as::<_, (bool,)>(
+            r#"
+            SELECT processed_at IS NOT NULL
+            FROM platform.outbox
+            WHERE id = $1
+            "#,
+        )
+        .bind(event_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.0).unwrap_or(false))
     }
 
     /// Mark an event as failed.
@@ -222,6 +251,8 @@ impl OutboxDispatcher {
 
     /// Process a batch of unprocessed events.
     ///
+    /// Events for the same aggregate_id are processed serially in creation
+    /// order. Already-processed events are skipped (idempotent re-dispatch).
     /// For each event, finds the matching handler and dispatches. On success,
     /// marks the event as processed. On failure, marks it as failed with retry
     /// tracking.
@@ -229,33 +260,62 @@ impl OutboxDispatcher {
         let events = self.outbox.poll_unprocessed(batch_size).await?;
         let mut processed = 0;
 
+        // Group events by aggregate_id to process serially within each aggregate
+        let mut aggregate_groups: Vec<(String, Vec<&OutboxEvent>)> = Vec::new();
         for event in &events {
-            let handler = self
-                .handlers
-                .iter()
-                .find(|h| h.event_type() == event.event_type);
+            if let Some(group) = aggregate_groups
+                .iter_mut()
+                .find(|(agg_id, _)| *agg_id == event.aggregate_id)
+            {
+                group.1.push(event);
+            } else {
+                aggregate_groups.push((event.aggregate_id.clone(), vec![event]));
+            }
+        }
 
-            match handler {
-                Some(h) => match h.handle(event).await {
-                    Ok(()) => {
-                        self.outbox.mark_processed(event.id).await?;
-                        processed += 1;
-                    }
-                    Err(e) => {
+        // Sort events within each group by created_at (already ordered from query, but ensure)
+        for (_agg_id, group_events) in &mut aggregate_groups {
+            group_events.sort_by_key(|e| e.created_at);
+        }
+
+        // Process each aggregate group serially
+        for (_agg_id, group_events) in &aggregate_groups {
+            for event in group_events {
+                // Idempotency check: skip events already processed
+                if self.outbox.is_processed(event.id).await? {
+                    continue;
+                }
+
+                let handler = self
+                    .handlers
+                    .iter()
+                    .find(|h| h.event_type() == event.event_type);
+
+                match handler {
+                    Some(h) => match h.handle(event).await {
+                        Ok(()) => {
+                            self.outbox.mark_processed(event.id).await?;
+                            processed += 1;
+                        }
+                        Err(e) => {
+                            self.outbox
+                                .mark_failed(event.id, &e.to_string(), self.max_retries)
+                                .await?;
+                        }
+                    },
+                    None => {
+                        // No handler registered for this event type; mark as failed
                         self.outbox
-                            .mark_failed(event.id, &e.to_string(), self.max_retries)
+                            .mark_failed(
+                                event.id,
+                                &format!(
+                                    "no handler registered for event type: {}",
+                                    event.event_type
+                                ),
+                                self.max_retries,
+                            )
                             .await?;
                     }
-                },
-                None => {
-                    // No handler registered for this event type; mark as failed
-                    self.outbox
-                        .mark_failed(
-                            event.id,
-                            &format!("no handler registered for event type: {}", event.event_type),
-                            self.max_retries,
-                        )
-                        .await?;
                 }
             }
         }

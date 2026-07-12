@@ -1,0 +1,10 @@
+bearerAuth:
+  type: http
+  scheme: bearer
+  bearerFormat: JWT
+  description: Bearer token authentication using a JWT or opaque token.
+cookieAuth:
+  type: apiKey
+  in: cookie
+  name: session
+  description: Session-based authentication via a cookie.

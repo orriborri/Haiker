@@ -10,6 +10,7 @@ description = "Haiker HTTP API server (Axum)"
 haiker-app.workspace = true
 haiker-platform.workspace = true
 axum.workspace = true
+axum-extra.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 serde.workspace = true

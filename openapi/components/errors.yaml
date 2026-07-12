@@ -1,0 +1,34 @@
+ProblemDetail:
+  type: object
+  description: RFC 9457 Problem Details error envelope.
+  required:
+    - type
+    - title
+    - status
+  properties:
+    type:
+      type: string
+      format: uri
+      description: A URI reference that identifies the problem type.
+      example: "https://haiker.app/problems/not-found"
+    title:
+      type: string
+      description: A short human-readable summary of the problem type.
+      example: "Not Found"
+    status:
+      type: integer
+      description: The HTTP status code.
+      example: 404
+    code:
+      type: string
+      description: An application-specific error code.
+      example: "RESOURCE_NOT_FOUND"
+    detail:
+      type: string
+      description: A human-readable explanation specific to this occurrence of the problem.
+      example: "The requested route was not found."
+    requestId:
+      type: string
+      format: uuid
+      description: The unique request identifier for correlation.
+      example: "550e8400-e29b-41d4-a716-446655440000"

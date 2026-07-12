@@ -49,9 +49,19 @@ anyhow = "1"
 # Configuration
 dotenvy = "0.15"
 
-# Object storage (requires Rust 1.94+)
-# aws-sdk-s3 = "1.53"
-# aws-config = "1"
+# Object storage (S3-compatible via rust-s3, works with Rust 1.92)
+rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }
+
+# Cryptography & randomness
+sha2 = "0.10"
+rand = { version = "0.8", features = ["std"] }
+hex = "0.4"
+
+# HTTP extras
+axum-extra = { version = "0.10", features = ["cookie"] }
+
+# Concurrency utilities
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # Internal crates
 haiker-app = { path = "crates/app" }
