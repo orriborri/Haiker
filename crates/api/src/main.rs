@@ -1,6 +1,5 @@
-use axum::{routing::get, Json, Router};
+use axum::{routing::get, Router};
 use haiker_platform::telemetry::{self, TelemetryConfig};
-use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;

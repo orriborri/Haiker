@@ -23,8 +23,6 @@ utoipa-axum.workspace = true
 utoipa-swagger-ui.workspace = true
 uuid.workspace = true
 dotenvy.workspace = true
-utoipa.workspace = true
-utoipa-swagger-ui.workspace = true
 async-trait.workspace = true
 
 [dev-dependencies]

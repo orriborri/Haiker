@@ -8,8 +8,9 @@ description = "Haiker shared infrastructure - configuration, telemetry, database
 
 [dependencies]
 anyhow.workspace = true
-async-trait = { workspace = true }
-aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
+async-trait.workspace = true
+# aws-sdk-s3.workspace = true  # Requires Rust 1.94+
+# aws-config.workspace = true  # Requires Rust 1.94+
 chrono.workspace = true
 dotenvy.workspace = true
 http = "1"
@@ -23,6 +24,3 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 url = "2"
 uuid.workspace = true
-aws-sdk-s3.workspace = true
-aws-config.workspace = true
-async-trait.workspace = true
