@@ -1,14 +1,11 @@
 //! S3-compatible object storage client.
 //!
-//! Wraps the AWS SDK to provide upload, download, delete, presigned URL,
+//! Wraps the `rust-s3` crate to provide upload, download, delete, presigned URL,
 //! and existence-check operations against MinIO or any S3-compatible service.
 
-use aws_sdk_s3::{
-    config::{Credentials, Region},
-    presigning::PresigningConfig,
-    primitives::ByteStream,
-    Client,
-};
+use s3::creds::Credentials;
+use s3::error::S3Error;
+use s3::{Bucket, Region};
 use std::time::Duration;
 use tracing::info;
 
@@ -17,8 +14,7 @@ use crate::config::StorageConfig;
 /// Client for interacting with S3-compatible object storage.
 #[derive(Clone)]
 pub struct ObjectStorageClient {
-    client: Client,
-    bucket: String,
+    bucket: Box<Bucket>,
 }
 
 /// Errors that can occur during object storage operations.
@@ -33,36 +29,36 @@ pub enum ObjectStorageError {
     Storage(String),
 }
 
+impl From<S3Error> for ObjectStorageError {
+    fn from(err: S3Error) -> Self {
+        ObjectStorageError::Storage(err.to_string())
+    }
+}
+
 impl ObjectStorageClient {
     /// Create a new object storage client from configuration.
-    pub async fn new(config: &StorageConfig) -> Self {
+    pub async fn new(config: &StorageConfig) -> Result<Self, ObjectStorageError> {
+        let region = Region::Custom {
+            region: "us-east-1".to_string(),
+            endpoint: config.endpoint.clone(),
+        };
+
         let credentials = Credentials::new(
-            &config.access_key_id,
-            &config.secret_access_key,
+            Some(&config.access_key_id),
+            Some(&config.secret_access_key),
             None,
             None,
-            "haiker",
-        );
+            None,
+        )
+        .map_err(|e| ObjectStorageError::Storage(e.to_string()))?;
 
-        let sdk_config = aws_config::from_env()
-            .endpoint_url(&config.endpoint)
-            .region(Region::new("us-east-1"))
-            .credentials_provider(credentials)
-            .load()
-            .await;
-
-        let s3_config = aws_sdk_s3::config::Builder::from(&sdk_config)
-            .force_path_style(true)
-            .build();
-
-        let client = Client::from_conf(s3_config);
+        let bucket = Bucket::new(&config.bucket, region, credentials)
+            .map_err(|e| ObjectStorageError::Storage(e.to_string()))?
+            .with_path_style();
 
         info!(bucket = %config.bucket, endpoint = %config.endpoint, "Object storage client initialized");
 
-        Self {
-            client,
-            bucket: config.bucket.clone(),
-        }
+        Ok(Self { bucket })
     }
 
     /// Upload an object to storage.
@@ -72,64 +68,55 @@ impl ObjectStorageClient {
         body: Vec<u8>,
         content_type: Option<&str>,
     ) -> Result<(), ObjectStorageError> {
-        let mut req = self
-            .client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .body(ByteStream::from(body));
+        let ct = content_type.unwrap_or("application/octet-stream");
 
-        if let Some(ct) = content_type {
-            req = req.content_type(ct);
+        let response = self
+            .bucket
+            .put_object_with_content_type(key, &body, ct)
+            .await?;
+
+        if response.status_code() >= 300 {
+            return Err(ObjectStorageError::Storage(format!(
+                "upload failed with status {}",
+                response.status_code()
+            )));
         }
-
-        req.send()
-            .await
-            .map_err(|e| ObjectStorageError::Storage(e.to_string()))?;
 
         Ok(())
     }
 
     /// Download an object from storage.
     pub async fn download(&self, key: &str) -> Result<Vec<u8>, ObjectStorageError> {
-        let resp = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-            .map_err(|e| {
-                let msg = e.to_string();
-                if msg.contains("NoSuchKey") || msg.contains("not found") {
-                    ObjectStorageError::NotFound {
-                        key: key.to_string(),
-                    }
-                } else {
-                    ObjectStorageError::Storage(msg)
+        let response = self.bucket.get_object(key).await.map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("404") || msg.contains("NoSuchKey") || msg.contains("not found") {
+                ObjectStorageError::NotFound {
+                    key: key.to_string(),
                 }
-            })?;
+            } else {
+                ObjectStorageError::Storage(msg)
+            }
+        })?;
 
-        let bytes = resp
-            .body
-            .collect()
-            .await
-            .map_err(|e| ObjectStorageError::Storage(e.to_string()))?
-            .into_bytes()
-            .to_vec();
+        if response.status_code() == 404 {
+            return Err(ObjectStorageError::NotFound {
+                key: key.to_string(),
+            });
+        }
 
-        Ok(bytes)
+        Ok(response.to_vec())
     }
 
     /// Delete an object from storage.
     pub async fn delete(&self, key: &str) -> Result<(), ObjectStorageError> {
-        self.client
-            .delete_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-            .map_err(|e| ObjectStorageError::Storage(e.to_string()))?;
+        let response = self.bucket.delete_object(key).await?;
+
+        if response.status_code() >= 300 && response.status_code() != 404 {
+            return Err(ObjectStorageError::Storage(format!(
+                "delete failed with status {}",
+                response.status_code()
+            )));
+        }
 
         Ok(())
     }
@@ -140,37 +127,23 @@ impl ObjectStorageClient {
         key: &str,
         expires_in: Duration,
     ) -> Result<String, ObjectStorageError> {
-        let presigning_config = PresigningConfig::builder()
-            .expires_in(expires_in)
-            .build()
-            .map_err(|e| ObjectStorageError::Storage(e.to_string()))?;
-
-        let presigned = self
-            .client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .presigned(presigning_config)
+        let expiry_secs = expires_in.as_secs().try_into().unwrap_or(u32::MAX);
+        let url = self
+            .bucket
+            .presign_put(key, expiry_secs, None, None)
             .await
             .map_err(|e| ObjectStorageError::Storage(e.to_string()))?;
 
-        Ok(presigned.uri().to_string())
+        Ok(url)
     }
 
     /// Check whether an object exists in storage.
     pub async fn exists(&self, key: &str) -> Result<bool, ObjectStorageError> {
-        match self
-            .client
-            .head_object()
-            .bucket(&self.bucket)
-            .key(key)
-            .send()
-            .await
-        {
+        match self.bucket.head_object(key).await {
             Ok(_) => Ok(true),
             Err(e) => {
                 let msg = e.to_string();
-                if msg.contains("NotFound") || msg.contains("404") || msg.contains("NoSuchKey") {
+                if msg.contains("404") || msg.contains("NotFound") || msg.contains("NoSuchKey") {
                     Ok(false)
                 } else {
                     Err(ObjectStorageError::Storage(msg))
