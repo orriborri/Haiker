@@ -1,0 +1,3 @@
+# This directory holds sqlx offline query metadata.
+# Run `cargo sqlx prepare` against a live database to generate query data,
+# which enables compilation without a database connection (SQLX_OFFLINE=true).

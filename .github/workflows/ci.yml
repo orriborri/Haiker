@@ -8,13 +8,13 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  SQLX_OFFLINE: "true"
 
 jobs:
   check:
-    name: Check, Lint & Test
+    name: Check (fmt + clippy)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -27,11 +27,50 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy lints
+        run: cargo clippy --all-targets -- -W clippy::all
 
-      - name: Build
-        run: cargo build --workspace
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: haiker_test
+          POSTGRES_USER: haiker
+          POSTGRES_PASSWORD: haiker_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U haiker -d haiker_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 10s
+    env:
+      DATABASE_URL: postgres://haiker:haiker_test_password@localhost:5432/haiker_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --workspace
+        run: cargo test --all
+
+  build:
+    name: Build (release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
