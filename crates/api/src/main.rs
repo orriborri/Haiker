@@ -1,9 +1,5 @@
-//! Haiker HTTP API server.
-//!
-//! Starts an Axum-based HTTP server exposing the REST API for the Haiker
-//! hiking-route management application.
-
-use axum::{routing::get, Router};
+use axum::{routing::get, Json, Router};
+use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use tracing::info;
@@ -31,10 +27,13 @@ mod health;
 struct ApiDoc;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    haiker_platform::telemetry::init();
+async fn main() {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
+        .init();
 
-    let config = haiker_platform::config::AppConfig::from_env();
+    tracing::info!("Starting Haiker API server");
 
     let app = Router::new()
         .route("/health", get(health::health))
@@ -46,11 +45,30 @@ async fn main() -> anyhow::Result<()> {
         )
         .layer(TraceLayer::new_for_http());
 
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    let listener = TcpListener::bind(&addr).await?;
-    info!("API server listening on {}", addr);
+    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    tracing::info!("Listening on {}", listener.local_addr().unwrap());
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app).await.unwrap();
+}
 
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn health_check_returns_healthy() {
+        let app = Router::new()
+            .route("/health", get(health::health))
+            .route("/ready", get(health::ready));
+
+        let response = app
+            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }

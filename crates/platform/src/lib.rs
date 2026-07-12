@@ -10,3 +10,4 @@ pub mod job_queue;
 pub mod object_storage;
 pub mod outbox;
 pub mod telemetry;
+pub mod clock;

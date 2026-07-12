@@ -7,16 +7,17 @@ license.workspace = true
 description = "Haiker shared infrastructure - configuration, telemetry, database setup"
 
 [dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+dotenvy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
-dotenvy.workspace = true
-sqlx.workspace = true
+uuid.workspace = true
 aws-sdk-s3.workspace = true
 aws-config.workspace = true
-uuid.workspace = true
-chrono.workspace = true
 async-trait.workspace = true

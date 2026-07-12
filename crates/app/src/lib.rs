@@ -11,3 +11,4 @@ pub mod imports;
 pub mod recorded_activity;
 pub mod route_editing;
 pub mod route_versioning;
+pub mod polar_integration;
