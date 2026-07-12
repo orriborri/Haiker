@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target/
+
+# Environment files
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Frontend (future)
+/frontend/node_modules/
+/frontend/dist/

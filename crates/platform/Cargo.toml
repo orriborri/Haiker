@@ -1,0 +1,15 @@
+[package]
+name = "haiker-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Haiker shared infrastructure - configuration, telemetry, database setup"
+
+[dependencies]
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+dotenvy.workspace = true
