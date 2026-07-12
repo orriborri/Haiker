@@ -14,6 +14,7 @@ use haiker_app::imports::commands::{
     handle_complete_upload, handle_get_import, handle_start_import, CompleteUploadCommand,
     StartImportCommand, UploadUrlGenerator,
 };
+use haiker_app::imports::job_types::ParseGpxJob;
 use haiker_app::imports::repository::ImportRepository;
 use haiker_app::imports::{Import, ImportError, ImportId};
 
@@ -23,11 +24,27 @@ use crate::imports_dto::{
     CompleteUploadRequest, ImportStatusResponse, StartImportRequest, StartImportResponse,
 };
 
+/// Trait for enqueueing background jobs from the API layer.
+///
+/// This abstracts the job queue infrastructure so the API handlers
+/// do not depend directly on the platform crate's JobQueue.
+#[async_trait]
+pub trait JobEnqueuer: Send + Sync {
+    /// Enqueue a job with the given type and JSON payload.
+    async fn enqueue(
+        &self,
+        job_type: &str,
+        payload: serde_json::Value,
+        correlation_id: Uuid,
+    ) -> Result<Uuid, String>;
+}
+
 /// Shared application state for import handlers.
 #[derive(Clone)]
 pub struct ImportAppState {
     pub repo: Arc<dyn ImportRepository>,
     pub url_generator: Arc<dyn UploadUrlGenerator>,
+    pub job_queue: Option<Arc<dyn JobEnqueuer>>,
 }
 
 /// Convert an Import domain model to the API response DTO.
@@ -162,7 +179,8 @@ pub async fn post_start_import(
 /// POST /v1/imports/:import_id/completion
 ///
 /// Finalize the upload by providing the file checksum.
-/// Transitions the import from Uploading to Uploaded.
+/// Transitions the import from Uploading to Uploaded, then enqueues
+/// a background job for GPX parsing.
 pub async fn post_complete_upload(
     State(state): State<ImportAppState>,
     actor: AuthenticatedActor,
@@ -178,6 +196,40 @@ pub async fn post_complete_upload(
     let import = handle_complete_upload(cmd, state.repo.as_ref())
         .await
         .map_err(import_error_to_api_error)?;
+
+    // Enqueue parse_gpx job for async processing
+    if let Some(ref job_queue) = state.job_queue {
+        let storage_key = format!("imports/{}/{}", import.owner_id, import.id);
+        let correlation_id = Uuid::new_v4();
+
+        let job_payload = ParseGpxJob {
+            import_id: import.id.0,
+            owner_id: import.owner_id.0,
+            object_storage_key: storage_key,
+            correlation_id,
+        };
+
+        let payload_json = serde_json::to_value(&job_payload).map_err(|e| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "INTERNAL_ERROR".to_string(),
+            message: format!("failed to serialize job payload: {e}"),
+            details: None,
+        })?;
+
+        job_queue
+            .enqueue(
+                haiker_app::imports::job_types::PARSE_GPX_JOB_TYPE,
+                payload_json,
+                correlation_id,
+            )
+            .await
+            .map_err(|e| ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "JOB_ENQUEUE_FAILED".to_string(),
+                message: format!("failed to enqueue parsing job: {e}"),
+                details: None,
+            })?;
+    }
 
     Ok((StatusCode::OK, Json(import_to_status_response(&import))))
 }
@@ -288,6 +340,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
         };
 
         Router::new()
@@ -502,6 +555,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
         };
 
         let app = Router::new()
@@ -569,6 +623,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
         };
 
         let app = Router::new()
@@ -665,6 +720,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
         };
 
         let app = Router::new()

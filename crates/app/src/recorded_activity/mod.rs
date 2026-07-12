@@ -3,6 +3,8 @@
 //! Owns source artifacts, source revisions, recorded tracks, segments,
 //! point streams, and sensor samples.
 
+pub mod normalization;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

@@ -38,6 +38,7 @@ async fn main() {
     let import_state = imports::ImportAppState {
         repo: Arc::new(imports::InMemoryImportRepository::new()),
         url_generator: Arc::new(imports::StubUrlGenerator),
+        job_queue: None,
     };
 
     let import_routes = Router::new()

@@ -5,8 +5,11 @@
 
 pub mod checksum;
 pub mod commands;
+pub mod commit;
 pub mod duplicate_detection;
 pub mod gpx_parser;
+pub mod job_types;
+pub mod orchestrator;
 pub mod repository;
 pub mod state_machine;
 
