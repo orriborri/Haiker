@@ -3,6 +3,7 @@
 //! Provides reliable background job processing using `FOR UPDATE SKIP LOCKED`
 //! for safe concurrent polling by multiple worker instances.
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -27,6 +28,20 @@ pub struct Job {
     pub scheduled_at: DateTime<Utc>,
     /// When the job was created.
     pub created_at: DateTime<Utc>,
+    /// Optional correlation ID for distributed tracing.
+    pub correlation_id: Option<Uuid>,
+    /// Timeout in seconds for job execution.
+    pub timeout_seconds: i32,
+}
+
+/// Trait for handling jobs from the queue.
+#[async_trait]
+pub trait JobHandler: Send + Sync {
+    /// The job type this handler processes.
+    fn job_type(&self) -> &str;
+
+    /// Handle a job. Return Ok(()) on success, Err on failure.
+    async fn handle(&self, job: &Job) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Job queue backed by PostgreSQL.
@@ -54,6 +69,31 @@ impl JobQueue {
         .bind(id)
         .bind(job_type)
         .bind(&payload)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(id)
+    }
+
+    /// Enqueue a new job with a correlation ID for distributed tracing.
+    pub async fn enqueue_with_correlation(
+        &self,
+        job_type: &str,
+        payload: Value,
+        correlation_id: Uuid,
+    ) -> Result<Uuid, sqlx::Error> {
+        let id = Uuid::new_v4();
+
+        sqlx::query(
+            r#"
+            INSERT INTO platform.jobs (id, job_type, payload, status, scheduled_at, correlation_id)
+            VALUES ($1, $2, $3, 'pending', now(), $4)
+            "#,
+        )
+        .bind(id)
+        .bind(job_type)
+        .bind(&payload)
+        .bind(correlation_id)
         .execute(&self.pool)
         .await?;
 
@@ -90,7 +130,7 @@ impl JobQueue {
     /// This atomically selects and locks a pending job, preventing other workers
     /// from picking up the same job.
     pub async fn poll(&self) -> Result<Option<Job>, sqlx::Error> {
-        let row = sqlx::query_as::<_, (Uuid, String, Value, String, i32, i32, DateTime<Utc>, DateTime<Utc>)>(
+        let row = sqlx::query_as::<_, (Uuid, String, Value, String, i32, i32, DateTime<Utc>, DateTime<Utc>, Option<Uuid>, i32)>(
             r#"
             UPDATE platform.jobs
             SET status = 'running', started_at = now(), updated_at = now()
@@ -101,7 +141,7 @@ impl JobQueue {
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
-            RETURNING id, job_type, payload, status, retry_count, max_retries, scheduled_at, created_at
+            RETURNING id, job_type, payload, status, retry_count, max_retries, scheduled_at, created_at, correlation_id, timeout_seconds
             "#,
         )
         .fetch_optional(&self.pool)
@@ -117,6 +157,8 @@ impl JobQueue {
                 max_retries,
                 scheduled_at,
                 created_at,
+                correlation_id,
+                timeout_seconds,
             )| Job {
                 id,
                 job_type,
@@ -126,6 +168,8 @@ impl JobQueue {
                 max_retries,
                 scheduled_at,
                 created_at,
+                correlation_id,
+                timeout_seconds,
             },
         ))
     }
@@ -144,6 +188,63 @@ impl JobQueue {
         .await?;
 
         Ok(())
+    }
+
+    /// Cancel a job that is pending or running.
+    pub async fn cancel(&self, job_id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE platform.jobs
+            SET status = 'cancelled', updated_at = now()
+            WHERE id = $1 AND status IN ('pending', 'running')
+            "#,
+        )
+        .bind(job_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Find and handle stale jobs that have exceeded their timeout.
+    ///
+    /// Jobs in 'running' state past their timeout are reset to 'pending' if
+    /// retries remain, otherwise marked as 'failed'.
+    pub async fn timeout_stale_jobs(&self) -> Result<u64, sqlx::Error> {
+        // Reset timed-out jobs that have retries remaining back to pending
+        let reset_result = sqlx::query(
+            r#"
+            UPDATE platform.jobs
+            SET status = 'pending',
+                retry_count = retry_count + 1,
+                error_message = 'job timed out',
+                updated_at = now()
+            WHERE status = 'running'
+              AND started_at + make_interval(secs => timeout_seconds::double precision) < now()
+              AND retry_count + 1 < max_retries
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Mark timed-out jobs that exhausted retries as failed
+        let failed_result = sqlx::query(
+            r#"
+            UPDATE platform.jobs
+            SET status = 'failed',
+                retry_count = retry_count + 1,
+                error_message = 'job timed out (max retries exhausted)',
+                failed_at = now(),
+                updated_at = now()
+            WHERE status = 'running'
+              AND started_at + make_interval(secs => timeout_seconds::double precision) < now()
+              AND retry_count + 1 >= max_retries
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(reset_result.rows_affected() + failed_result.rows_affected())
     }
 
     /// Mark a job as failed with exponential backoff retry.

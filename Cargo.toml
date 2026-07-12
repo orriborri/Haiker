@@ -60,6 +60,9 @@ hex = "0.4"
 # HTTP extras
 axum-extra = { version = "0.10", features = ["cookie"] }
 
+# Concurrency utilities
+tokio-util = { version = "0.7", features = ["rt"] }
+
 # Internal crates
 haiker-app = { path = "crates/app" }
 haiker-platform = { path = "crates/platform" }
