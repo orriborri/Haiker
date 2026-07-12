@@ -15,7 +15,7 @@ pub enum LogFormat {
 
 impl LogFormat {
     /// Parse a string into a `LogFormat`, defaulting to `Pretty`.
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "json" => Self::Json,
             _ => Self::Pretty,
@@ -44,7 +44,7 @@ impl TelemetryConfig {
         let log_level =
             std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
         let log_format =
-            LogFormat::from_str(&std::env::var("LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string()));
+            LogFormat::parse(&std::env::var("LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string()));
         let service_name =
             std::env::var("SERVICE_NAME").unwrap_or_else(|_| "haiker".to_string());
 
