@@ -4,6 +4,7 @@
 //! business logic with no dependencies on infrastructure (Axum, SQLx, S3 SDK).
 
 pub mod activity_catalog;
+pub mod error;
 pub mod exports;
 pub mod identity;
 pub mod imports;

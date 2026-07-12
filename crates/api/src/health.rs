@@ -9,6 +9,13 @@ use serde_json::{json, Value};
 /// Liveness health check.
 ///
 /// Returns a 200 response indicating the server process is running.
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Service is healthy")
+    )
+)]
 pub async fn health() -> Json<Value> {
     Json(json!({ "status": "healthy" }))
 }
@@ -17,6 +24,13 @@ pub async fn health() -> Json<Value> {
 ///
 /// Returns a 200 response indicating the server is ready to accept traffic.
 /// In the future, this will verify database and storage connectivity.
+#[utoipa::path(
+    get,
+    path = "/ready",
+    responses(
+        (status = 200, description = "Service is ready to accept traffic")
+    )
+)]
 pub async fn ready() -> Json<Value> {
     Json(json!({ "status": "ready" }))
 }
