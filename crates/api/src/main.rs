@@ -1,5 +1,6 @@
 use axum::routing::{get, post};
 use axum::Router;
+use haiker_platform::request_id::request_id_middleware;
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
@@ -38,6 +39,7 @@ async fn main() {
         .route("/auth/callback", get(auth_handlers::get_callback))
         .route("/auth/logout", post(auth_handlers::post_logout))
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();

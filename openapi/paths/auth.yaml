@@ -1,0 +1,100 @@
+/auth/login:
+  post:
+    operationId: postLogin
+    summary: Initiate login
+    description: Initiates the authentication flow and returns the redirect URL for the identity provider.
+    tags:
+      - auth
+    security: []
+    responses:
+      "200":
+        description: Login initiation successful
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                redirect_url:
+                  type: string
+                  format: uri
+/auth/callback:
+  get:
+    operationId: getAuthCallback
+    summary: Auth callback
+    description: Handles the OAuth callback from the identity provider and establishes a session.
+    tags:
+      - auth
+    security: []
+    parameters:
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: state
+        in: query
+        required: true
+        schema:
+          type: string
+    responses:
+      "200":
+        description: Authentication successful
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+      "401":
+        description: Authentication failed
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+/auth/logout:
+  post:
+    operationId: postLogout
+    summary: Logout
+    description: Terminates the current session and invalidates the token.
+    tags:
+      - auth
+    security:
+      - bearerAuth: []
+      - cookieAuth: []
+    responses:
+      "204":
+        description: Logout successful
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+/v1/me:
+  get:
+    operationId: getMe
+    summary: Get current user
+    description: Returns the profile information for the currently authenticated user.
+    tags:
+      - auth
+    security:
+      - bearerAuth: []
+      - cookieAuth: []
+    responses:
+      "200":
+        description: Current user profile
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

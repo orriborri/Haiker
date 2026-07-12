@@ -32,6 +32,16 @@ pub struct TelemetryConfig {
     pub log_level: String,
     /// The name of the service emitting telemetry.
     pub service_name: String,
+    /// Optional OTLP exporter endpoint (e.g. "http://localhost:4317").
+    /// When set, the system is configured for OpenTelemetry export.
+    ///
+    /// NOTE: Full OpenTelemetry SDK integration (opentelemetry, opentelemetry-otlp,
+    /// tracing-opentelemetry crates) is deferred until the project upgrades to Rust >= 1.94.
+    /// Until then, this field logs that OTLP export is configured but does not actually
+    /// export spans via the OTel protocol.
+    pub otlp_endpoint: Option<String>,
+    /// The version of the service, used as a resource attribute in telemetry.
+    pub service_version: String,
 }
 
 impl TelemetryConfig {
@@ -45,11 +55,16 @@ impl TelemetryConfig {
         let log_format =
             LogFormat::parse(&std::env::var("LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string()));
         let service_name = std::env::var("SERVICE_NAME").unwrap_or_else(|_| "haiker".to_string());
+        let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
+        let service_version =
+            std::env::var("SERVICE_VERSION").unwrap_or_else(|_| "0.1.0".to_string());
 
         Self {
             log_format,
             log_level,
             service_name,
+            otlp_endpoint,
+            service_version,
         }
     }
 }
@@ -88,7 +103,14 @@ pub fn init_telemetry(config: &TelemetryConfig) {
         }
     }
 
-    tracing::info!(service = %config.service_name, "Telemetry initialized");
+    tracing::info!(service = %config.service_name, version = %config.service_version, "Telemetry initialized");
+
+    if let Some(ref endpoint) = config.otlp_endpoint {
+        tracing::info!(
+            otlp_endpoint = %endpoint,
+            "OTLP export configured (actual export deferred until opentelemetry crates are added with Rust >= 1.94)"
+        );
+    }
 }
 
 /// Create a `tower_http` trace layer for Axum routers.

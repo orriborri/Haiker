@@ -1,0 +1,31 @@
+openapi: "3.1.1"
+info:
+  title: Haiker API
+  version: "1.0.0"
+  description: Hiking route management API with social features, route planning, and activity tracking.
+servers:
+  - url: /v1
+security:
+  - bearerAuth: []
+  - cookieAuth: []
+paths:
+  /health:
+    $ref: "paths/health.yaml#/~1health"
+  /ready:
+    $ref: "paths/health.yaml#/~1ready"
+  /auth/login:
+    $ref: "paths/auth.yaml#/~1auth~1login"
+  /auth/callback:
+    $ref: "paths/auth.yaml#/~1auth~1callback"
+  /auth/logout:
+    $ref: "paths/auth.yaml#/~1auth~1logout"
+  /v1/me:
+    $ref: "paths/auth.yaml#/~1v1~1me"
+components:
+  securitySchemes:
+    $ref: "components/security.yaml"
+  schemas:
+    ProblemDetail:
+      $ref: "components/errors.yaml#/ProblemDetail"
+    CursorPagination:
+      $ref: "components/common.yaml#/CursorPagination"
