@@ -90,4 +90,37 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn me_without_auth_header_returns_401() {
+        let app = Router::new()
+            .route("/me", get(auth::me));
+
+        let response = app
+            .oneshot(Request::builder().uri("/me").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn me_with_valid_bearer_uuid_returns_200_with_user_id() {
+        let app = Router::new()
+            .route("/me", get(auth::me));
+        let user_id = uuid::Uuid::new_v4();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/me")
+                    .header("Authorization", format!("Bearer {user_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }
