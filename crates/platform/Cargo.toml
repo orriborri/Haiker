@@ -9,12 +9,18 @@ description = "Haiker shared infrastructure - configuration, telemetry, database
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+axum.workspace = true
+axum-extra.workspace = true
 rust-s3 = { workspace = true }
 chrono.workspace = true
 dotenvy.workspace = true
+haiker-app.workspace = true
+hex.workspace = true
 http = "1"
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 sqlx = { workspace = true, features = ["migrate"] }
 thiserror.workspace = true
 tokio.workspace = true
