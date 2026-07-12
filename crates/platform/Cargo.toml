@@ -8,6 +8,7 @@ description = "Haiker shared infrastructure - configuration, telemetry, database
 
 [dependencies]
 anyhow.workspace = true
+async-trait = { workspace = true }
 aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
 chrono.workspace = true
 dotenvy.workspace = true
