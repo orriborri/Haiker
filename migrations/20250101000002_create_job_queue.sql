@@ -9,11 +9,11 @@ CREATE TABLE IF NOT EXISTS platform.jobs (
     priority INTEGER NOT NULL DEFAULT 0,
     max_retries INTEGER NOT NULL DEFAULT 3,
     retry_count INTEGER NOT NULL DEFAULT 0,
+    error_message TEXT,
     scheduled_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
-    error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
