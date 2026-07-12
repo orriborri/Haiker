@@ -38,8 +38,7 @@ where
 
         // In this placeholder implementation, the token is the user's UUID.
         // A real implementation would validate a JWT or session token.
-        let user_uuid =
-            Uuid::parse_str(token).map_err(|_| AuthError::InvalidToken)?;
+        let user_uuid = Uuid::parse_str(token).map_err(|_| AuthError::InvalidToken)?;
 
         Ok(AuthenticatedActor(Actor {
             user_id: UserId(user_uuid),

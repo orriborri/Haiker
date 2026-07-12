@@ -12,11 +12,7 @@ mod health;
 /// OpenAPI documentation specification.
 #[derive(OpenApi)]
 #[openapi(
-    paths(
-        health::health,
-        health::ready,
-        auth::me,
-    ),
+    paths(health::health, health::ready, auth::me,),
     info(
         title = "Haiker API",
         version = "0.1.0",
@@ -36,10 +32,7 @@ async fn main() {
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .route("/me", get(auth::me))
-        .merge(
-            SwaggerUi::new("/docs")
-                .url("/api-docs/openapi.json", ApiDoc::openapi()),
-        )
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(TraceLayer::new_for_http());
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -62,7 +55,12 @@ mod tests {
             .route("/ready", get(health::ready));
 
         let response = app
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
 
@@ -72,10 +70,7 @@ mod tests {
     #[tokio::test]
     async fn openapi_spec_is_accessible() {
         let app = Router::new()
-            .merge(
-                SwaggerUi::new("/docs")
-                    .url("/api-docs/openapi.json", ApiDoc::openapi()),
-            );
+            .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
 
         let response = app
             .oneshot(
@@ -92,8 +87,7 @@ mod tests {
 
     #[tokio::test]
     async fn me_without_auth_header_returns_401() {
-        let app = Router::new()
-            .route("/me", get(auth::me));
+        let app = Router::new().route("/me", get(auth::me));
 
         let response = app
             .oneshot(Request::builder().uri("/me").body(Body::empty()).unwrap())
@@ -105,8 +99,7 @@ mod tests {
 
     #[tokio::test]
     async fn me_with_valid_bearer_uuid_returns_200_with_user_id() {
-        let app = Router::new()
-            .route("/me", get(auth::me));
+        let app = Router::new().route("/me", get(auth::me));
         let user_id = uuid::Uuid::new_v4();
 
         let response = app
