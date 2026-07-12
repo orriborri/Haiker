@@ -27,6 +27,8 @@ paths:
     $ref: "paths/imports.yaml#/~1v1~1imports~1{importId}~1completion"
   /v1/imports/{importId}:
     $ref: "paths/imports.yaml#/~1v1~1imports~1{importId}"
+  /v1/activities:
+    $ref: "paths/activities.yaml#/~1v1~1activities"
 components:
   securitySchemes:
     $ref: "components/security.yaml"
@@ -35,3 +37,7 @@ components:
       $ref: "components/errors.yaml#/ProblemDetail"
     CursorPagination:
       $ref: "components/common.yaml#/CursorPagination"
+    ActivitySummary:
+      $ref: "components/activities.yaml#/ActivitySummary"
+    ActivityListResponse:
+      $ref: "components/activities.yaml#/ActivityListResponse"

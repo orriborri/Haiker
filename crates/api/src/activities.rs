@@ -1,0 +1,669 @@
+//! Activity API handlers.
+//!
+//! Implements GET /v1/activities.
+
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::Json;
+use std::sync::Arc;
+
+use haiker_app::activity_catalog::queries::list_activities;
+use haiker_app::activity_catalog::repository::ActivityRepository;
+use haiker_app::activity_catalog::ActivityCatalogError;
+
+use crate::activities_dto::{
+    ActivityListResponse, ActivitySummaryResponse, ListActivitiesParams, PaginationMeta,
+};
+use crate::auth::AuthenticatedActor;
+use crate::error::ApiError;
+
+/// Shared application state for activity handlers.
+#[derive(Clone)]
+pub struct ActivityAppState {
+    pub repo: Arc<dyn ActivityRepository>,
+}
+
+/// Convert an ActivityCatalogError to an ApiError.
+fn activity_error_to_api_error(err: ActivityCatalogError) -> ApiError {
+    match err {
+        ActivityCatalogError::ActivityNotFound => ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "activity not found".to_string(),
+            details: None,
+        },
+        ActivityCatalogError::Unauthorized => ApiError {
+            status: StatusCode::FORBIDDEN,
+            code: "FORBIDDEN".to_string(),
+            message: "not authorized to access this activity".to_string(),
+            details: None,
+        },
+        ActivityCatalogError::InvalidTitle { message } => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "VALIDATION_FAILED".to_string(),
+            message,
+            details: None,
+        },
+        ActivityCatalogError::InvalidCursor { message } => ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_CURSOR".to_string(),
+            message,
+            details: None,
+        },
+        ActivityCatalogError::PersistenceError { message } => ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "INTERNAL_ERROR".to_string(),
+            message,
+            details: None,
+        },
+    }
+}
+
+/// GET /v1/activities
+///
+/// List activities owned by the authenticated user with cursor-based pagination.
+#[tracing::instrument(skip(state, actor))]
+pub async fn get_activities(
+    State(state): State<ActivityAppState>,
+    actor: AuthenticatedActor,
+    Query(params): Query<ListActivitiesParams>,
+) -> Result<impl IntoResponse, ApiError> {
+    let owner_id = actor.0.user_id;
+
+    let page = list_activities(
+        owner_id,
+        params.cursor.as_deref(),
+        params.page_size,
+        state.repo.as_ref(),
+    )
+    .await
+    .map_err(activity_error_to_api_error)?;
+
+    let items: Vec<ActivitySummaryResponse> = page
+        .items
+        .iter()
+        .map(|a| ActivitySummaryResponse {
+            id: a.id.0,
+            title: a.title.as_str().to_string(),
+            activity_type: a.activity_type.to_string(),
+            started_at: a.started_at,
+            ended_at: a.ended_at,
+            recorded_summary: a.recorded_summary.clone(),
+            corrected_summary: a.corrected_summary.clone(),
+            created_at: a.created_at,
+            updated_at: a.updated_at,
+        })
+        .collect();
+
+    let response = ActivityListResponse {
+        pagination: PaginationMeta {
+            cursor: page.next_cursor,
+            has_more: page.has_more,
+            page_size: items.len() as u32,
+        },
+        items,
+    };
+
+    Ok((StatusCode::OK, Json(response)))
+}
+
+// -- In-memory implementations for use in tests --
+
+#[cfg(test)]
+use async_trait::async_trait;
+#[cfg(test)]
+use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::Mutex;
+
+#[cfg(test)]
+use haiker_app::activity_catalog::queries::{decode_cursor, encode_cursor, CursorPayload};
+#[cfg(test)]
+use haiker_app::activity_catalog::repository::ActivityPage;
+#[cfg(test)]
+use haiker_app::activity_catalog::{Activity, ActivityId, LifecycleState};
+#[cfg(test)]
+use haiker_app::identity::UserId;
+
+/// In-memory activity repository for testing (not used in production).
+#[cfg(test)]
+pub struct InMemoryActivityRepository {
+    activities: Mutex<HashMap<ActivityId, Activity>>,
+}
+
+#[cfg(test)]
+impl InMemoryActivityRepository {
+    pub fn new() -> Self {
+        Self {
+            activities: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn with_activities(activities: Vec<Activity>) -> Self {
+        let map: HashMap<ActivityId, Activity> =
+            activities.into_iter().map(|a| (a.id, a.clone())).collect();
+        Self {
+            activities: Mutex::new(map),
+        }
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl ActivityRepository for InMemoryActivityRepository {
+    async fn list_activities(
+        &self,
+        owner_id: UserId,
+        cursor: Option<&str>,
+        page_size: u32,
+    ) -> Result<ActivityPage, ActivityCatalogError> {
+        let activities = self.activities.lock().unwrap();
+
+        // Get all active activities for this owner, sorted by started_at DESC, id DESC
+        let mut owner_activities: Vec<&Activity> = activities
+            .values()
+            .filter(|a| a.owner_id == owner_id && a.lifecycle_state == LifecycleState::Active)
+            .collect();
+
+        owner_activities.sort_by(|a, b| {
+            let a_time = a.started_at;
+            let b_time = b.started_at;
+            // DESC order: b before a for started_at, then by id DESC
+            match (b_time, a_time) {
+                (Some(bt), Some(at)) => bt.cmp(&at).then_with(|| b.id.0.cmp(&a.id.0)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => b.id.0.cmp(&a.id.0),
+            }
+        });
+
+        // Apply cursor filtering
+        let filtered: Vec<&Activity> = if let Some(cursor_str) = cursor {
+            let cursor_payload = decode_cursor(cursor_str)?;
+            let cursor_id: uuid::Uuid =
+                cursor_payload
+                    .id
+                    .parse()
+                    .map_err(|_| ActivityCatalogError::InvalidCursor {
+                        message: "invalid id in cursor".to_string(),
+                    })?;
+            let cursor_started_at: Option<chrono::DateTime<chrono::Utc>> = cursor_payload
+                .started_at
+                .as_deref()
+                .map(|s| {
+                    s.parse::<chrono::DateTime<chrono::Utc>>().map_err(|_| {
+                        ActivityCatalogError::InvalidCursor {
+                            message: "invalid started_at in cursor".to_string(),
+                        }
+                    })
+                })
+                .transpose()?;
+
+            owner_activities
+                .into_iter()
+                .filter(|a| {
+                    match (a.started_at, cursor_started_at) {
+                        (Some(a_time), Some(c_time)) => (a_time, a.id.0) < (c_time, cursor_id),
+                        (None, Some(_)) => true, // NULL started_at comes after any value in DESC
+                        (Some(_), None) => false,
+                        (None, None) => a.id.0 < cursor_id,
+                    }
+                })
+                .collect()
+        } else {
+            owner_activities
+        };
+
+        let has_more = filtered.len() as u32 > page_size;
+        let items: Vec<Activity> = filtered
+            .into_iter()
+            .take(page_size as usize)
+            .cloned()
+            .collect();
+
+        let next_cursor = if has_more {
+            items.last().map(|last| {
+                encode_cursor(&CursorPayload {
+                    started_at: last.started_at.map(|ts| ts.to_rfc3339()),
+                    id: last.id.0.to_string(),
+                })
+            })
+        } else {
+            None
+        };
+
+        Ok(ActivityPage {
+            items,
+            next_cursor,
+            has_more,
+        })
+    }
+
+    async fn find_by_id(&self, id: ActivityId) -> Result<Option<Activity>, ActivityCatalogError> {
+        Ok(self.activities.lock().unwrap().get(&id).cloned())
+    }
+
+    async fn save(&self, activity: &Activity) -> Result<(), ActivityCatalogError> {
+        self.activities
+            .lock()
+            .unwrap()
+            .insert(activity.id, activity.clone());
+        Ok(())
+    }
+
+    async fn update(&self, activity: &Activity) -> Result<(), ActivityCatalogError> {
+        self.activities
+            .lock()
+            .unwrap()
+            .insert(activity.id, activity.clone());
+        Ok(())
+    }
+
+    async fn delete(&self, id: ActivityId) -> Result<(), ActivityCatalogError> {
+        self.activities.lock().unwrap().remove(&id);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::routing::get;
+    use axum::Router;
+    use chrono::{Duration, Utc};
+    use haiker_app::activity_catalog::{ActivityTitle, ActivityType};
+    use tower::ServiceExt;
+    use uuid::Uuid;
+
+    fn test_app() -> Router {
+        let state = ActivityAppState {
+            repo: Arc::new(InMemoryActivityRepository::new()),
+        };
+
+        Router::new()
+            .route("/v1/activities", get(get_activities))
+            .with_state(state)
+    }
+
+    fn test_app_with_activities(activities: Vec<Activity>) -> Router {
+        let state = ActivityAppState {
+            repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
+        };
+
+        Router::new()
+            .route("/v1/activities", get(get_activities))
+            .with_state(state)
+    }
+
+    fn auth_header() -> (String, String) {
+        let user_id = Uuid::new_v4();
+        ("Authorization".to_string(), format!("Bearer {user_id}"))
+    }
+
+    fn auth_header_for(user_id: Uuid) -> (String, String) {
+        ("Authorization".to_string(), format!("Bearer {user_id}"))
+    }
+
+    fn make_activity(
+        owner_id: UserId,
+        title: &str,
+        started_at: Option<chrono::DateTime<Utc>>,
+    ) -> Activity {
+        let title = ActivityTitle::new(title).unwrap();
+        let mut activity = Activity::new(owner_id, title, ActivityType::Hike, started_at, None);
+        activity.started_at = started_at;
+        activity
+    }
+
+    #[tokio::test]
+    async fn list_activities_returns_200_empty() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/activities")
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["items"].as_array().unwrap().len(), 0);
+        assert_eq!(json["pagination"]["hasMore"], false);
+        assert_eq!(json["pagination"]["pageSize"], 0);
+    }
+
+    #[tokio::test]
+    async fn list_activities_returns_owner_activities_only() {
+        let user1 = UserId::new(Uuid::new_v4());
+        let user2 = UserId::new(Uuid::new_v4());
+
+        let now = Utc::now();
+        let activities = vec![
+            make_activity(user1, "User1 Hike", Some(now)),
+            make_activity(user2, "User2 Hike", Some(now - Duration::hours(1))),
+            make_activity(user1, "User1 Walk", Some(now - Duration::hours(2))),
+        ];
+
+        let app = test_app_with_activities(activities);
+        let (auth_key, auth_val) = auth_header_for(user1.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/activities")
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let items = json["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        // Only user1's activities
+        for item in items {
+            let title = item["title"].as_str().unwrap();
+            assert!(title.starts_with("User1"));
+        }
+    }
+
+    #[tokio::test]
+    async fn list_activities_pagination() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let mut activities = Vec::new();
+        for i in 0..5 {
+            activities.push(make_activity(
+                user,
+                &format!("Hike {i}"),
+                Some(now - Duration::hours(i as i64)),
+            ));
+        }
+
+        let state = ActivityAppState {
+            repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
+        };
+
+        let app = Router::new()
+            .route("/v1/activities", get(get_activities))
+            .with_state(state);
+
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        // First page: pageSize=2
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/activities?pageSize=2")
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let items = json["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(json["pagination"]["hasMore"], true);
+        assert!(json["pagination"]["cursor"].is_string());
+
+        // Second page using cursor
+        let cursor = json["pagination"]["cursor"].as_str().unwrap();
+        let uri = format!("/v1/activities?pageSize=2&cursor={cursor}");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(&uri)
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json2: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let items2 = json2["items"].as_array().unwrap();
+        assert_eq!(items2.len(), 2);
+        assert_eq!(json2["pagination"]["hasMore"], true);
+
+        // Third page - should have 1 item
+        let cursor2 = json2["pagination"]["cursor"].as_str().unwrap();
+        let uri2 = format!("/v1/activities?pageSize=2&cursor={cursor2}");
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(&uri2)
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json3: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let items3 = json3["items"].as_array().unwrap();
+        assert_eq!(items3.len(), 1);
+        assert_eq!(json3["pagination"]["hasMore"], false);
+    }
+
+    #[tokio::test]
+    async fn list_activities_no_duplicates_across_pages() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let mut activities = Vec::new();
+        for i in 0..7 {
+            activities.push(make_activity(
+                user,
+                &format!("Hike {i}"),
+                Some(now - Duration::hours(i as i64)),
+            ));
+        }
+
+        let state = ActivityAppState {
+            repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
+        };
+
+        let app = Router::new()
+            .route("/v1/activities", get(get_activities))
+            .with_state(state);
+
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let mut all_ids: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        for _ in 0..10 {
+            let uri = match &cursor {
+                Some(c) => format!("/v1/activities?pageSize=3&cursor={c}"),
+                None => "/v1/activities?pageSize=3".to_string(),
+            };
+
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri(&uri)
+                        .header(&auth_key, &auth_val)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+            let items = json["items"].as_array().unwrap();
+            for item in items {
+                all_ids.push(item["id"].as_str().unwrap().to_string());
+            }
+
+            if !json["pagination"]["hasMore"].as_bool().unwrap() {
+                break;
+            }
+            cursor = json["pagination"]["cursor"].as_str().map(|s| s.to_string());
+        }
+
+        // Verify no duplicates
+        let unique_count = {
+            let mut sorted = all_ids.clone();
+            sorted.sort();
+            sorted.dedup();
+            sorted.len()
+        };
+        assert_eq!(all_ids.len(), 7);
+        assert_eq!(unique_count, 7);
+    }
+
+    #[tokio::test]
+    async fn list_activities_without_auth_returns_401() {
+        let app = test_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/activities")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn list_activities_response_includes_expected_fields() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let mut activity = make_activity(user, "Morning Hike", Some(now));
+        activity.ended_at = Some(now + Duration::hours(2));
+        activity.recorded_summary = Some(serde_json::json!({"distance_km": 5.2}));
+        activity.corrected_summary = Some(serde_json::json!({"distance_km": 5.5}));
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/activities")
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let item = &json["items"][0];
+        assert!(item["id"].is_string());
+        assert_eq!(item["title"], "Morning Hike");
+        assert_eq!(item["activityType"], "hike");
+        assert!(item["startedAt"].is_string());
+        assert!(item["endedAt"].is_string());
+        assert_eq!(item["recordedSummary"]["distance_km"], 5.2);
+        assert_eq!(item["correctedSummary"]["distance_km"], 5.5);
+        assert!(item["createdAt"].is_string());
+        assert!(item["updatedAt"].is_string());
+    }
+
+    #[tokio::test]
+    async fn list_activities_deleted_not_returned() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let active = make_activity(user, "Active Hike", Some(now));
+        let mut deleted = make_activity(user, "Deleted Hike", Some(now - Duration::hours(1)));
+        deleted.lifecycle_state = LifecycleState::Deleted;
+
+        let app = test_app_with_activities(vec![active, deleted]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/activities")
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let items = json["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["title"], "Active Hike");
+    }
+}

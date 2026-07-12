@@ -1,5 +1,6 @@
 use axum::routing::{get, post};
 use axum::Router;
+use haiker_platform::activity_persistence::PgActivityRepository;
 use haiker_platform::config::AppConfig;
 use haiker_platform::database;
 use haiker_platform::import_persistence::PgImportRepository;
@@ -13,6 +14,8 @@ use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+mod activities;
+mod activities_dto;
 mod auth;
 mod auth_handlers;
 mod error;
@@ -69,6 +72,15 @@ async fn main() {
         .route("/v1/imports/{import_id}", get(imports::get_import_status))
         .with_state(import_state);
 
+    // Activity subsystem state with real PostgreSQL repository
+    let activity_state = activities::ActivityAppState {
+        repo: Arc::new(PgActivityRepository::new(pool.clone())),
+    };
+
+    let activity_routes = Router::new()
+        .route("/v1/activities", get(activities::get_activities))
+        .with_state(activity_state);
+
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
@@ -77,6 +89,7 @@ async fn main() {
         .route("/auth/callback", get(auth_handlers::get_callback))
         .route("/auth/logout", post(auth_handlers::post_logout))
         .merge(import_routes)
+        .merge(activity_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());

@@ -3,6 +3,9 @@
 //! Owns activity identity, title, type, timestamps, current route version,
 //! summary statistics, and lifecycle management.
 
+pub mod queries;
+pub mod repository;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -85,6 +88,27 @@ pub enum ActivityType {
     Other,
 }
 
+/// Lifecycle state of an activity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleState {
+    /// The activity is active and visible.
+    #[default]
+    Active,
+    /// The activity has been soft-deleted.
+    Deleted,
+}
+
+impl std::fmt::Display for LifecycleState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            LifecycleState::Active => "active",
+            LifecycleState::Deleted => "deleted",
+        };
+        write!(f, "{s}")
+    }
+}
+
 impl std::fmt::Display for ActivityType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -104,8 +128,11 @@ pub struct Activity {
     pub owner_id: UserId,
     pub title: ActivityTitle,
     pub activity_type: ActivityType,
+    pub lifecycle_state: LifecycleState,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
+    pub recorded_summary: Option<serde_json::Value>,
+    pub corrected_summary: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -125,8 +152,11 @@ impl Activity {
             owner_id,
             title,
             activity_type,
+            lifecycle_state: LifecycleState::default(),
             started_at,
             ended_at,
+            recorded_summary: None,
+            corrected_summary: None,
             created_at: now,
             updated_at: now,
         }
@@ -159,6 +189,14 @@ pub enum ActivityCatalogError {
     /// The user is not authorized to access this activity.
     #[error("unauthorized")]
     Unauthorized,
+
+    /// A persistence error occurred.
+    #[error("persistence error: {message}")]
+    PersistenceError { message: String },
+
+    /// Invalid cursor provided for pagination.
+    #[error("invalid cursor: {message}")]
+    InvalidCursor { message: String },
 }
 
 #[cfg(test)]

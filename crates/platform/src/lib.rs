@@ -4,6 +4,7 @@
 //! management, object storage, job queue, and transactional outbox shared
 //! by the API server and worker processes.
 
+pub mod activity_persistence;
 pub mod audit;
 pub mod auth_middleware;
 pub mod clock;

@@ -1,0 +1,40 @@
+/v1/activities:
+  get:
+    operationId: listActivities
+    summary: List activities for the authenticated user
+    description: Returns a paginated list of activities owned by the authenticated user, ordered by started_at descending.
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: Opaque cursor for fetching the next page of results.
+        schema:
+          type: string
+          example: "eyJzdGFydGVkX2F0IjoiMjAyNC0wMS0xNVQxMDozMDowMFoiLCJpZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCJ9"
+      - name: pageSize
+        in: query
+        required: false
+        description: Number of items per page. Default 25, max 100.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 25
+          example: 25
+    responses:
+      "200":
+        description: A paginated list of activities.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/activities.yaml#/ActivityListResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
