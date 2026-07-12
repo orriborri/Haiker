@@ -2,7 +2,7 @@
   "id": "FEAT-006",
   "type": "fix",
   "description": "Address semantic review findings: outbox FOR UPDATE SKIP LOCKED, cache DEV_AUTH_ENABLED at startup, wire maintenance tasks into worker, consistent 404 detection in object storage, add metrics calls to worker runtime.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "Fix outbox double-dispatch: change poll_unprocessed() to use FOR UPDATE SKIP LOCKED pattern similar to job_queue.rs",
     "Cache DEV_AUTH_ENABLED at startup using std::sync::LazyLock",
@@ -23,5 +23,5 @@
     "SQLX_OFFLINE=true cargo test --workspace"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 49 tests pass (17 api, 12 app, 20 platform). Build, clippy (-D warnings), fmt all pass with SQLX_OFFLINE=true. Used std::sync::OnceLock instead of LazyLock for DEV_AUTH_ENABLED cache because the project MSRV is 1.75 and LazyLock was only stabilized in 1.80 (clippy::incompatible_msrv caught this). OnceLock::get_or_init provides equivalent lazy initialization behavior. The outbox FOR UPDATE SKIP LOCKED required restructuring the query to use a subquery pattern matching job_queue.rs."
 }
