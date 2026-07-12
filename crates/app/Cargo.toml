@@ -8,3 +8,6 @@ description = "Haiker domain modules - pure business logic"
 
 [dependencies]
 thiserror.workspace = true
+serde.workspace = true
+uuid.workspace = true
+chrono.workspace = true
