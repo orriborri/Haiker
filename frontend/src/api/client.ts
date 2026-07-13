@@ -165,4 +165,133 @@ export function deleteActivity(activityId: string): Promise<undefined> {
   });
 }
 
+// Route Editing Schemas
+
+const RoutePointDtoSchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+  elevation: z.number().optional(),
+});
+
+const RouteDraftResponseSchema = z.object({
+  id: z.string(),
+  activityId: z.string(),
+  revision: z.number(),
+  state: z.string(),
+  geometry: z.array(z.array(RoutePointDtoSchema)),
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const OperationResultResponseSchema = z.object({
+  draftId: z.string(),
+  revision: z.number(),
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
+});
+
+export type RoutePointDto = z.infer<typeof RoutePointDtoSchema>;
+export type RouteDraftResponse = z.infer<typeof RouteDraftResponseSchema>;
+export type OperationResultResponse = z.infer<typeof OperationResultResponseSchema>;
+
+/** Geometry payload for create/reset: array of segments, each segment is array of {latitude, longitude, elevation?} */
+export type RouteGeometryPayload = RoutePointDto[][];
+
+// Route Editing API Functions
+
+export function createRouteDraft(
+  activityId: string,
+  geometry: RouteGeometryPayload,
+): Promise<RouteDraftResponse> {
+  return apiFetch(`/activities/${activityId}/route-drafts`, RouteDraftResponseSchema, {
+    method: "POST",
+    headers: {
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({ geometry }),
+  });
+}
+
+export function getRouteDraft(draftId: string): Promise<RouteDraftResponse> {
+  return apiFetch(`/route-drafts/${draftId}`, RouteDraftResponseSchema);
+}
+
+export function applyOperation(
+  draftId: string,
+  operation: Record<string, unknown>,
+  expectedRevision: number,
+): Promise<OperationResultResponse> {
+  return apiFetch(
+    `/route-drafts/${draftId}/operations`,
+    OperationResultResponseSchema,
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ operation, expectedRevision }),
+    },
+  );
+}
+
+export function undoOperation(
+  draftId: string,
+  expectedRevision: number,
+): Promise<OperationResultResponse> {
+  return apiFetch(
+    `/route-drafts/${draftId}/undo`,
+    OperationResultResponseSchema,
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ expectedRevision }),
+    },
+  );
+}
+
+export function redoOperation(
+  draftId: string,
+  expectedRevision: number,
+): Promise<OperationResultResponse> {
+  return apiFetch(
+    `/route-drafts/${draftId}/redo`,
+    OperationResultResponseSchema,
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ expectedRevision }),
+    },
+  );
+}
+
+export function resetDraft(
+  draftId: string,
+  expectedRevision: number,
+  geometry: RouteGeometryPayload,
+): Promise<OperationResultResponse> {
+  return apiFetch(
+    `/route-drafts/${draftId}/reset`,
+    OperationResultResponseSchema,
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ expectedRevision, geometry }),
+    },
+  );
+}
+
+export function discardDraft(draftId: string): Promise<undefined> {
+  return apiFetch(`/route-drafts/${draftId}`, VoidSchema, {
+    method: "DELETE",
+  });
+}
+
 export { ApiError };

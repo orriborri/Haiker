@@ -1,0 +1,321 @@
+CreateRouteDraftRequest:
+  type: object
+  required:
+    - geometry
+  properties:
+    geometry:
+      type: array
+      description: Array of segments, each segment is an array of route points (minimum 1 segment with 2+ points)
+      items:
+        type: array
+        items:
+          $ref: "#/RoutePoint"
+      minItems: 1
+
+RouteDraftResponse:
+  type: object
+  required:
+    - id
+    - activityId
+    - revision
+    - state
+    - geometry
+    - canUndo
+    - canRedo
+    - createdAt
+    - updatedAt
+  properties:
+    id:
+      type: string
+      format: uuid
+    activityId:
+      type: string
+      format: uuid
+    revision:
+      type: integer
+      format: int64
+      minimum: 0
+    state:
+      type: string
+      enum: [active, published, discarded]
+    geometry:
+      type: array
+      items:
+        type: array
+        items:
+          $ref: "#/RoutePoint"
+    canUndo:
+      type: boolean
+      description: Whether the draft has operations that can be undone
+    canRedo:
+      type: boolean
+      description: Whether the draft has undone operations that can be redone
+    createdAt:
+      type: string
+      format: date-time
+    updatedAt:
+      type: string
+      format: date-time
+
+ApplyOperationRequest:
+  type: object
+  required:
+    - operation
+    - expectedRevision
+  properties:
+    operation:
+      $ref: "#/RouteOperation"
+    expectedRevision:
+      type: integer
+      format: int64
+      minimum: 0
+
+RouteOperation:
+  type: object
+  required:
+    - type
+  discriminator:
+    propertyName: type
+    mapping:
+      movePoint: "#/MovePointOperation"
+      addPoint: "#/AddPointOperation"
+      deletePoint: "#/DeletePointOperation"
+      deleteSection: "#/DeleteSectionOperation"
+      replaceSection: "#/ReplaceSectionOperation"
+      splitSegment: "#/SplitSegmentOperation"
+      joinSegments: "#/JoinSegmentsOperation"
+  oneOf:
+    - $ref: "#/MovePointOperation"
+    - $ref: "#/AddPointOperation"
+    - $ref: "#/DeletePointOperation"
+    - $ref: "#/DeleteSectionOperation"
+    - $ref: "#/ReplaceSectionOperation"
+    - $ref: "#/SplitSegmentOperation"
+    - $ref: "#/JoinSegmentsOperation"
+
+MovePointOperation:
+  type: object
+  required:
+    - type
+    - segmentIndex
+    - pointIndex
+    - newPosition
+  properties:
+    type:
+      type: string
+      enum: [movePoint]
+    segmentIndex:
+      type: integer
+      minimum: 0
+    pointIndex:
+      type: integer
+      minimum: 0
+    newPosition:
+      $ref: "#/Position"
+
+AddPointOperation:
+  type: object
+  required:
+    - type
+    - segmentIndex
+    - afterPointIndex
+    - point
+  properties:
+    type:
+      type: string
+      enum: [addPoint]
+    segmentIndex:
+      type: integer
+      minimum: 0
+    afterPointIndex:
+      type: integer
+      minimum: 0
+    point:
+      $ref: "#/RoutePoint"
+
+DeletePointOperation:
+  type: object
+  required:
+    - type
+    - segmentIndex
+    - pointIndex
+  properties:
+    type:
+      type: string
+      enum: [deletePoint]
+    segmentIndex:
+      type: integer
+      minimum: 0
+    pointIndex:
+      type: integer
+      minimum: 0
+
+DeleteSectionOperation:
+  type: object
+  required:
+    - type
+    - segmentIndex
+    - startIndex
+    - endIndex
+  properties:
+    type:
+      type: string
+      enum: [deleteSection]
+    segmentIndex:
+      type: integer
+      minimum: 0
+    startIndex:
+      type: integer
+      minimum: 0
+    endIndex:
+      type: integer
+      minimum: 0
+
+ReplaceSectionOperation:
+  type: object
+  required:
+    - type
+    - segmentIndex
+    - startIndex
+    - endIndex
+    - replacement
+  properties:
+    type:
+      type: string
+      enum: [replaceSection]
+    segmentIndex:
+      type: integer
+      minimum: 0
+    startIndex:
+      type: integer
+      minimum: 0
+    endIndex:
+      type: integer
+      minimum: 0
+    replacement:
+      type: array
+      items:
+        $ref: "#/RoutePoint"
+
+SplitSegmentOperation:
+  type: object
+  required:
+    - type
+    - segmentIndex
+    - atPointIndex
+  properties:
+    type:
+      type: string
+      enum: [splitSegment]
+    segmentIndex:
+      type: integer
+      minimum: 0
+    atPointIndex:
+      type: integer
+      minimum: 0
+
+JoinSegmentsOperation:
+  type: object
+  required:
+    - type
+    - firstSegmentIndex
+    - secondSegmentIndex
+  properties:
+    type:
+      type: string
+      enum: [joinSegments]
+    firstSegmentIndex:
+      type: integer
+      minimum: 0
+    secondSegmentIndex:
+      type: integer
+      minimum: 0
+
+UndoRedoRequest:
+  type: object
+  required:
+    - expectedRevision
+  properties:
+    expectedRevision:
+      type: integer
+      format: int64
+      minimum: 0
+
+ResetRequest:
+  type: object
+  required:
+    - expectedRevision
+    - geometry
+  properties:
+    expectedRevision:
+      type: integer
+      format: int64
+      minimum: 0
+    geometry:
+      type: array
+      description: New base geometry (array of segments)
+      items:
+        type: array
+        items:
+          $ref: "#/RoutePoint"
+      minItems: 1
+
+OperationResultResponse:
+  type: object
+  required:
+    - draftId
+    - revision
+    - canUndo
+    - canRedo
+  properties:
+    draftId:
+      type: string
+      format: uuid
+    revision:
+      type: integer
+      format: int64
+      minimum: 0
+    canUndo:
+      type: boolean
+      description: Whether the draft has operations that can be undone
+    canRedo:
+      type: boolean
+      description: Whether the draft has undone operations that can be redone
+
+RoutePoint:
+  type: object
+  required:
+    - latitude
+    - longitude
+  properties:
+    latitude:
+      type: number
+      format: double
+      minimum: -90
+      maximum: 90
+    longitude:
+      type: number
+      format: double
+      minimum: -180
+      maximum: 180
+    elevation:
+      type: number
+      format: double
+      description: Elevation in meters (optional)
+
+Position:
+  type: object
+  required:
+    - latitude
+    - longitude
+  properties:
+    latitude:
+      type: number
+      format: double
+      minimum: -90
+      maximum: 90
+    longitude:
+      type: number
+      format: double
+      minimum: -180
+      maximum: 180

@@ -9,6 +9,7 @@ use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::object_storage::ObjectStorageClient;
 use haiker_platform::recorded_route_persistence::PgRecordedRouteRepository;
 use haiker_platform::request_id::request_id_middleware;
+use haiker_platform::route_editing_persistence::PgRouteDraftRepository;
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,6 +28,8 @@ mod imports;
 mod imports_dto;
 mod recorded_route;
 mod recorded_route_dto;
+mod route_editing;
+mod route_editing_dto;
 
 /// OpenAPI documentation specification.
 #[derive(OpenApi)]
@@ -111,6 +114,38 @@ async fn main() {
         )
         .with_state(recorded_route_state);
 
+    // Route editing subsystem state with PostgreSQL persistence
+    let route_editing_state = route_editing::RouteEditingAppState {
+        repo: Arc::new(PgRouteDraftRepository::new(pool.clone())),
+    };
+
+    let route_editing_routes = Router::new()
+        .route(
+            "/v1/activities/{activityId}/route-drafts",
+            post(route_editing::post_create_draft),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}",
+            get(route_editing::get_draft).delete(route_editing::delete_draft),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/operations",
+            post(route_editing::post_apply_operation),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/undo",
+            post(route_editing::post_undo),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/redo",
+            post(route_editing::post_redo),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/reset",
+            post(route_editing::post_reset),
+        )
+        .with_state(route_editing_state);
+
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
@@ -121,6 +156,7 @@ async fn main() {
         .merge(import_routes)
         .merge(activity_routes)
         .merge(recorded_route_routes)
+        .merge(route_editing_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());
