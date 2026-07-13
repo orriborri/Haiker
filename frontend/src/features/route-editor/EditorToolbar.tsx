@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { EditorTool } from "./types";
 
 interface EditorToolbarProps {
@@ -14,16 +14,24 @@ interface EditorToolbarProps {
   onJoin: () => void;
   hasSelection: boolean;
   isOperationPending: boolean;
+  selectionDescription: string | null;
+  onClearSelection: () => void;
 }
 
-const TOOLS: Array<{ id: EditorTool; label: string; shortLabel: string }> = [
-  { id: "select", label: "Select point or section", shortLabel: "Select" },
-  { id: "move", label: "Move selected point", shortLabel: "Move" },
-  { id: "add", label: "Add point on segment", shortLabel: "Add Point" },
-  { id: "delete", label: "Delete selected element", shortLabel: "Delete" },
-  { id: "split", label: "Split segment at point", shortLabel: "Split" },
-  { id: "join", label: "Join adjacent segments", shortLabel: "Join" },
-  { id: "draw-section", label: "Draw replacement section", shortLabel: "Draw Section" },
+const TOOLS: Array<{
+  id: EditorTool;
+  label: string;
+  shortLabel: string;
+  abbreviation: string;
+  key: string;
+}> = [
+  { id: "select", label: "Select point or section", shortLabel: "Select", abbreviation: "S", key: "1" },
+  { id: "move", label: "Move selected point", shortLabel: "Move", abbreviation: "M", key: "2" },
+  { id: "add", label: "Add point on segment", shortLabel: "Add Point", abbreviation: "A", key: "3" },
+  { id: "delete", label: "Delete selected element", shortLabel: "Delete", abbreviation: "D", key: "4" },
+  { id: "split", label: "Split segment at point", shortLabel: "Split", abbreviation: "Sp", key: "5" },
+  { id: "join", label: "Join adjacent segments", shortLabel: "Join", abbreviation: "J", key: "6" },
+  { id: "draw-section", label: "Draw replacement section", shortLabel: "Draw Section", abbreviation: "Dr", key: "7" },
 ];
 
 export function EditorToolbar({
@@ -39,8 +47,11 @@ export function EditorToolbar({
   onJoin,
   hasSelection,
   isOperationPending,
+  selectionDescription,
+  onClearSelection,
 }: EditorToolbarProps) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const toolbarRef = useRef<HTMLElement>(null);
 
   const handleReset = useCallback(() => {
     setShowResetConfirm(true);
@@ -55,22 +66,75 @@ export function EditorToolbar({
     setShowResetConfirm(false);
   }, []);
 
+  // Keyboard shortcuts scoped to toolbar focus or global via RouteEditor
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Ignore if focus is inside an input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+
+      // Number keys 1-7 to switch tools
+      const keyNum = parseInt(e.key, 10);
+      if (keyNum >= 1 && keyNum <= 7 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const tool = TOOLS[keyNum - 1];
+        if (tool && !isOperationPending) {
+          e.preventDefault();
+          onToolChange(tool.id);
+        }
+        return;
+      }
+
+      // Escape clears selection
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClearSelection();
+        return;
+      }
+
+      // Delete/Backspace triggers delete on selection
+      if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey) {
+        if (hasSelection && !isOperationPending) {
+          e.preventDefault();
+          onDelete();
+        }
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onToolChange, onClearSelection, onDelete, hasSelection, isOperationPending]);
+
+  // Build the status announcement text
+  const currentToolDef = TOOLS.find((t) => t.id === currentTool);
+  const statusText = [
+    currentToolDef ? `Tool: ${currentToolDef.shortLabel}` : "",
+    selectionDescription ? `${selectionDescription}` : "No selection",
+  ]
+    .filter(Boolean)
+    .join(". ");
+
   return (
     <nav
-      className="flex flex-wrap items-center gap-2 border-b border-gray-200 bg-white px-4 py-2"
+      ref={toolbarRef}
+      className="flex min-h-[3.5rem] flex-wrap items-center gap-2 overflow-x-auto border-b border-gray-200 bg-white px-4 py-2"
       role="toolbar"
       aria-label="Route editing tools"
     >
+      {/* Visually hidden aria-live status region */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {statusText}
+      </div>
+
       {/* Tool mode buttons */}
-      <div className="flex gap-1" role="radiogroup" aria-label="Editing mode">
+      <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Editing mode">
         {TOOLS.map((tool) => (
           <button
             key={tool.id}
             type="button"
             role="radio"
             aria-checked={currentTool === tool.id}
-            aria-label={tool.label}
-            className={`rounded px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+            aria-label={`${tool.label} (${tool.key})`}
+            className={`min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
               currentTool === tool.id
                 ? "bg-blue-600 text-white"
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
@@ -78,29 +142,32 @@ export function EditorToolbar({
             onClick={() => onToolChange(tool.id)}
             disabled={isOperationPending}
           >
-            {tool.shortLabel}
+            {/* Mobile: abbreviation, Desktop: short label */}
+            <span className="sm:hidden">{tool.abbreviation}</span>
+            <span className="hidden sm:inline">{tool.shortLabel}</span>
           </button>
         ))}
       </div>
 
       {/* Separator */}
-      <div className="mx-2 h-6 w-px bg-gray-200" aria-hidden="true" />
+      <div className="mx-1 hidden h-6 w-px bg-gray-200 sm:mx-2 sm:block" aria-hidden="true" />
 
-      {/* Action buttons */}
-      <div className="flex gap-1">
+      {/* Action buttons - wraps to second row on small screens */}
+      <div className="flex flex-wrap gap-1">
         <button
           type="button"
           aria-label="Delete selected element"
-          className="rounded px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
+          className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
           onClick={onDelete}
           disabled={!hasSelection || isOperationPending}
         >
-          Delete
+          <span className="sm:hidden">Del</span>
+          <span className="hidden sm:inline">Delete</span>
         </button>
         <button
           type="button"
           aria-label="Split segment at selected point"
-          className="rounded px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+          className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
           onClick={onSplit}
           disabled={!hasSelection || isOperationPending}
         >
@@ -109,7 +176,7 @@ export function EditorToolbar({
         <button
           type="button"
           aria-label="Join adjacent segments"
-          className="rounded px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+          className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
           onClick={onJoin}
           disabled={isOperationPending}
         >
@@ -118,14 +185,14 @@ export function EditorToolbar({
       </div>
 
       {/* Separator */}
-      <div className="mx-2 h-6 w-px bg-gray-200" aria-hidden="true" />
+      <div className="mx-1 hidden h-6 w-px bg-gray-200 sm:mx-2 sm:block" aria-hidden="true" />
 
       {/* Undo/Redo */}
       <div className="flex gap-1">
         <button
           type="button"
           aria-label="Undo last operation (Ctrl+Z)"
-          className="rounded px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+          className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
           onClick={onUndo}
           disabled={!canUndo || isOperationPending}
         >
@@ -134,7 +201,7 @@ export function EditorToolbar({
         <button
           type="button"
           aria-label="Redo last undone operation (Ctrl+Shift+Z)"
-          className="rounded px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+          className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
           onClick={onRedo}
           disabled={!canRedo || isOperationPending}
         >
@@ -143,14 +210,14 @@ export function EditorToolbar({
       </div>
 
       {/* Separator */}
-      <div className="mx-2 h-6 w-px bg-gray-200" aria-hidden="true" />
+      <div className="mx-1 hidden h-6 w-px bg-gray-200 sm:mx-2 sm:block" aria-hidden="true" />
 
       {/* Reset */}
       <div className="relative">
         <button
           type="button"
           aria-label="Reset route to original"
-          className="rounded px-3 py-1.5 text-sm font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-1"
+          className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-1"
           onClick={handleReset}
           disabled={isOperationPending}
         >
@@ -169,14 +236,14 @@ export function EditorToolbar({
             <div className="flex gap-2">
               <button
                 type="button"
-                className="rounded bg-orange-600 px-3 py-1 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                className="min-h-[44px] rounded bg-orange-600 px-3 py-2 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500"
                 onClick={confirmReset}
               >
                 Confirm Reset
               </button>
               <button
                 type="button"
-                className="rounded bg-gray-100 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                className="min-h-[44px] rounded bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
                 onClick={cancelReset}
               >
                 Cancel
