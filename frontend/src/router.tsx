@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { ActivityLibrary } from "@/features/activity-library/ActivityLibrary";
 import { ActivityDetailPage } from "@/features/activity-detail/ActivityDetail";
+import { RouteEditor } from "@/features/route-editor/RouteEditor";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const rootRoute = createRootRoute({
@@ -33,7 +34,20 @@ const activityDetailRoute = createRoute({
   },
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, activityDetailRoute]);
+const activityEditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/activities/$activityId/edit",
+  component: function ActivityEditWrapper() {
+    const { activityId } = activityEditRoute.useParams();
+    return <RouteEditor activityId={activityId} />;
+  },
+});
+
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  activityDetailRoute,
+  activityEditRoute,
+]);
 
 export const router = createRouter({ routeTree });
 
