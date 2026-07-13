@@ -76,6 +76,38 @@
           application/json:
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
+  delete:
+    operationId: deleteActivity
+    summary: Delete an activity
+    description: Soft-deletes an activity owned by the authenticated user. Returns 204 No Content on success. Idempotent - repeated deletion returns 204. Returns 404 for missing or cross-owner activities (non-disclosing).
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The unique activity identifier (UUID).
+        schema:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+    responses:
+      "204":
+        description: Activity successfully deleted (no content).
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity not found (also returned for cross-owner access, non-disclosing).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
 
 /v1/activities/{activityId}/title:
   patch:

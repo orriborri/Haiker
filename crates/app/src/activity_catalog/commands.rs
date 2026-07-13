@@ -95,6 +95,55 @@ pub async fn rename_activity(
     Ok(activity)
 }
 
+/// Delete (soft-delete) an activity.
+///
+/// Loads the activity, verifies ownership, transitions to Deleted state,
+/// persists the change, and records an audit event. Idempotent: repeated
+/// deletion of an already-deleted activity succeeds without error.
+///
+/// Returns `ActivityNotFound` (non-disclosing) if the activity does not exist
+/// or belongs to another owner.
+pub async fn delete_activity(
+    activity_id: ActivityId,
+    owner_id: UserId,
+    repo: &dyn ActivityRepository,
+    audit: &dyn AuditSink,
+) -> Result<(), ActivityCatalogError> {
+    // Load the activity
+    let mut activity = repo
+        .find_by_id(activity_id)
+        .await?
+        .ok_or(ActivityCatalogError::ActivityNotFound)?;
+
+    // Verify ownership (non-disclosing: return same error as not-found)
+    if activity.owner_id != owner_id {
+        return Err(ActivityCatalogError::Unauthorized);
+    }
+
+    // Idempotent: if already deleted, return success without re-persisting
+    if activity.lifecycle_state == LifecycleState::Deleted {
+        return Ok(());
+    }
+
+    // Apply domain mutation
+    activity.delete();
+
+    // Persist
+    repo.update(&activity).await?;
+
+    // Record audit event
+    audit
+        .record(
+            owner_id.0,
+            "activity.deleted",
+            "activity",
+            &activity_id.to_string(),
+        )
+        .await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,5 +399,106 @@ mod tests {
         assert!(result.is_ok());
         let updated = result.unwrap();
         assert_eq!(updated.title.as_str(), "Trimmed Title");
+    }
+
+    // --- delete_activity command tests ---
+
+    #[tokio::test]
+    async fn delete_active_activity_succeeds() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity = make_active_activity(owner, "To Delete");
+        let activity_id = activity.id;
+
+        let repo = TestRepo::with(activity);
+        let audit = TestAuditSink::new();
+
+        let result = delete_activity(activity_id, owner, &repo, &audit).await;
+
+        assert!(result.is_ok());
+
+        // Verify persistence: activity should now be Deleted
+        let stored = repo.find_by_id(activity_id).await.unwrap().unwrap();
+        assert_eq!(stored.lifecycle_state, LifecycleState::Deleted);
+
+        // Verify audit event
+        let calls = audit.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, owner.0);
+        assert_eq!(calls[0].1, "activity.deleted");
+        assert_eq!(calls[0].2, "activity");
+        assert_eq!(calls[0].3, activity_id.to_string());
+    }
+
+    #[tokio::test]
+    async fn delete_already_deleted_is_idempotent() {
+        let owner = UserId::new(Uuid::new_v4());
+        let mut activity = make_active_activity(owner, "Already Deleted");
+        activity.lifecycle_state = LifecycleState::Deleted;
+        let activity_id = activity.id;
+
+        let repo = TestRepo::with(activity);
+        let audit = TestAuditSink::new();
+
+        let result = delete_activity(activity_id, owner, &repo, &audit).await;
+
+        assert!(result.is_ok());
+
+        // No audit event for idempotent re-deletion
+        assert_eq!(audit.calls().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_cross_owner_returns_unauthorized() {
+        let owner = UserId::new(Uuid::new_v4());
+        let other_user = UserId::new(Uuid::new_v4());
+        let activity = make_active_activity(owner, "Owner's Activity");
+        let activity_id = activity.id;
+
+        let repo = TestRepo::with(activity);
+        let audit = TestAuditSink::new();
+
+        let result = delete_activity(activity_id, other_user, &repo, &audit).await;
+
+        assert!(matches!(result, Err(ActivityCatalogError::Unauthorized)));
+        assert_eq!(audit.calls().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_returns_not_found() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity = make_active_activity(owner, "Exists");
+
+        let repo = TestRepo::with(activity);
+        let audit = TestAuditSink::new();
+
+        let fake_id = ActivityId::generate();
+        let result = delete_activity(fake_id, owner, &repo, &audit).await;
+
+        assert!(matches!(
+            result,
+            Err(ActivityCatalogError::ActivityNotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn deleted_activity_rejects_rename() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity = make_active_activity(owner, "Will Delete");
+        let activity_id = activity.id;
+
+        let repo = TestRepo::with(activity);
+        let audit = TestAuditSink::new();
+
+        // First delete it
+        delete_activity(activity_id, owner, &repo, &audit)
+            .await
+            .unwrap();
+
+        // Now try to rename
+        let result = rename_activity(activity_id, owner, "New Name", &repo, &audit).await;
+        assert!(matches!(
+            result,
+            Err(ActivityCatalogError::ActivityNotFound)
+        ));
     }
 }

@@ -90,7 +90,7 @@ async fn main() {
         .route("/v1/activities", get(activities::get_activities))
         .route(
             "/v1/activities/{activityId}",
-            get(activities::get_activity_detail),
+            get(activities::get_activity_detail).delete(activities::delete_activity_handler),
         )
         .route(
             "/v1/activities/{activityId}/title",

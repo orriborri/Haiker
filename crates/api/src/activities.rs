@@ -186,6 +186,30 @@ pub async fn patch_activity_title(
     Ok((StatusCode::OK, Json(response)))
 }
 
+/// DELETE /v1/activities/{activityId}
+///
+/// Soft-delete an activity. Enforces ownership. Returns 204 No Content on success.
+/// Idempotent: repeated deletion returns 204 without error.
+#[tracing::instrument(skip(state, actor))]
+pub async fn delete_activity_handler(
+    State(state): State<ActivityAppState>,
+    actor: AuthenticatedActor,
+    Path(activity_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let owner_id = actor.0.user_id;
+
+    commands::delete_activity(
+        ActivityId::new(activity_id),
+        owner_id,
+        state.repo.as_ref(),
+        state.audit.as_ref(),
+    )
+    .await
+    .map_err(activity_error_to_api_error)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // -- In-memory implementations for use in tests --
 
 #[cfg(test)]
@@ -366,7 +390,10 @@ mod tests {
 
         Router::new()
             .route("/v1/activities", get(get_activities))
-            .route("/v1/activities/{activityId}", get(get_activity_detail))
+            .route(
+                "/v1/activities/{activityId}",
+                get(get_activity_detail).delete(delete_activity_handler),
+            )
             .route(
                 "/v1/activities/{activityId}/title",
                 patch(patch_activity_title),
@@ -382,7 +409,10 @@ mod tests {
 
         Router::new()
             .route("/v1/activities", get(get_activities))
-            .route("/v1/activities/{activityId}", get(get_activity_detail))
+            .route(
+                "/v1/activities/{activityId}",
+                get(get_activity_detail).delete(delete_activity_handler),
+            )
             .route(
                 "/v1/activities/{activityId}/title",
                 patch(patch_activity_title),
@@ -1111,5 +1141,217 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // --- Activity Delete (DELETE /v1/activities/{activityId}) tests ---
+
+    #[tokio::test]
+    async fn delete_activity_returns_204() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let activity = make_activity(user, "To Delete", Some(now));
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/activities/{activity_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn delete_activity_cross_owner_returns_404() {
+        let owner = UserId::new(Uuid::new_v4());
+        let other_user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let activity = make_activity(owner, "Owner's Activity", Some(now));
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(other_user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/activities/{activity_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["error"]["message"], "activity not found");
+    }
+
+    #[tokio::test]
+    async fn delete_activity_repeated_returns_204_idempotent() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let mut activity = make_activity(user, "Already Deleted", Some(now));
+        activity.lifecycle_state = LifecycleState::Deleted;
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/activities/{activity_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn delete_activity_then_not_in_list() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let activity1 = make_activity(user, "Keep This", Some(now));
+        let activity2 = make_activity(user, "Delete This", Some(now - Duration::hours(1)));
+        let activity2_id = activity2.id.0;
+
+        let state = ActivityAppState {
+            repo: Arc::new(InMemoryActivityRepository::with_activities(vec![
+                activity1, activity2,
+            ])),
+            audit: Arc::new(NoOpAuditSink),
+        };
+
+        let app = Router::new()
+            .route("/v1/activities", get(get_activities))
+            .route(
+                "/v1/activities/{activityId}",
+                get(get_activity_detail).delete(delete_activity_handler),
+            )
+            .with_state(state);
+
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        // Delete activity2
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/activities/{activity2_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // List should only contain activity1
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/activities")
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        let items = json["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["title"], "Keep This");
+
+        // Detail of deleted activity should return 404
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/activities/{activity2_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_activity_without_auth_returns_401() {
+        let random_id = Uuid::new_v4();
+        let app = test_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/activities/{random_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn delete_activity_not_found_returns_404() {
+        let user = UserId::new(Uuid::new_v4());
+        let random_id = Uuid::new_v4();
+
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/activities/{random_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

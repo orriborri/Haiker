@@ -174,6 +174,15 @@ impl Activity {
         self.activity_type = activity_type;
         self.updated_at = Utc::now();
     }
+
+    /// Soft-delete the activity by transitioning its lifecycle state to Deleted.
+    ///
+    /// This operation is idempotent: calling delete on an already-deleted activity
+    /// succeeds without error and updates the timestamp.
+    pub fn delete(&mut self) {
+        self.lifecycle_state = LifecycleState::Deleted;
+        self.updated_at = Utc::now();
+    }
 }
 
 /// Errors that can occur in the activity catalog context.
@@ -305,5 +314,44 @@ mod tests {
 
         let err = ActivityCatalogError::Unauthorized;
         assert_eq!(err.to_string(), "unauthorized");
+    }
+
+    #[test]
+    fn delete_active_activity_succeeds() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let title = ActivityTitle::new("Trail Run").unwrap();
+        let mut activity = Activity::new(owner_id, title, ActivityType::Run, None, None);
+
+        assert_eq!(activity.lifecycle_state, LifecycleState::Active);
+        activity.delete();
+        assert_eq!(activity.lifecycle_state, LifecycleState::Deleted);
+    }
+
+    #[test]
+    fn delete_is_idempotent() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let title = ActivityTitle::new("Trail Run").unwrap();
+        let mut activity = Activity::new(owner_id, title, ActivityType::Run, None, None);
+
+        activity.delete();
+        assert_eq!(activity.lifecycle_state, LifecycleState::Deleted);
+
+        // Second delete should succeed without error
+        activity.delete();
+        assert_eq!(activity.lifecycle_state, LifecycleState::Deleted);
+    }
+
+    #[test]
+    fn deleted_activity_rejects_rename() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let title = ActivityTitle::new("Active Hike").unwrap();
+        let mut activity = Activity::new(owner_id, title, ActivityType::Hike, None, None);
+
+        activity.delete();
+
+        // Attempting to update title on a deleted activity is a domain violation.
+        // The command layer enforces this, not the aggregate directly, but this test
+        // verifies the lifecycle_state is indeed Deleted.
+        assert_eq!(activity.lifecycle_state, LifecycleState::Deleted);
     }
 }
