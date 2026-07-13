@@ -66,56 +66,72 @@ fn import_error_to_api_error(err: ImportError) -> ApiError {
         ImportError::NotFound => ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            message: "import not found".to_string(),
-            details: None,
+            detail: "import not found".to_string(),
+            problem_type: "/problems/not-found".to_string(),
+            title: "Not Found".to_string(),
         },
         ImportError::Unauthorized => ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this import".to_string(),
-            details: None,
+            detail: "not authorized to access this import".to_string(),
+            problem_type: "/problems/forbidden".to_string(),
+            title: "Forbidden".to_string(),
         },
         ImportError::UploadTooLarge => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "UPLOAD_TOO_LARGE".to_string(),
-            message: "file size exceeds the 50MB limit".to_string(),
-            details: None,
+            detail: "file size exceeds the 50MB limit".to_string(),
+            problem_type: "/problems/upload-too-large".to_string(),
+            title: "Upload Too Large".to_string(),
         },
         ImportError::InvalidMediaType => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_MEDIA_TYPE".to_string(),
-            message: "content type must be application/gpx+xml or application/xml".to_string(),
-            details: None,
+            detail: "content type must be application/gpx+xml or application/xml".to_string(),
+            problem_type: "/problems/invalid-media-type".to_string(),
+            title: "Invalid Media Type".to_string(),
         },
         ImportError::InvalidTransition { from, to } => ApiError {
             status: StatusCode::CONFLICT,
             code: "INVALID_STATE_TRANSITION".to_string(),
-            message: format!("cannot transition from {from} to {to}"),
-            details: None,
+            detail: format!("cannot transition from {from} to {to}"),
+            problem_type: "/problems/invalid-state-transition".to_string(),
+            title: "Invalid State Transition".to_string(),
         },
         ImportError::DuplicateIdempotencyKey => ApiError {
             status: StatusCode::CONFLICT,
             code: "DUPLICATE_IDEMPOTENCY_KEY".to_string(),
-            message: "an import with this idempotency key already exists".to_string(),
-            details: None,
+            detail: "an import with this idempotency key already exists".to_string(),
+            problem_type: "/problems/duplicate-idempotency-key".to_string(),
+            title: "Duplicate Idempotency Key".to_string(),
+        },
+        ImportError::IdempotencyPayloadMismatch => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "IDEMPOTENCY_PAYLOAD_MISMATCH".to_string(),
+            detail: "idempotency key reused with different payload".to_string(),
+            problem_type: "/problems/idempotency-conflict".to_string(),
+            title: "Idempotency Conflict".to_string(),
         },
         ImportError::ValidationFailed { message } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "VALIDATION_FAILED".to_string(),
-            message,
-            details: None,
+            detail: message,
+            problem_type: "/problems/validation-failed".to_string(),
+            title: "Validation Failed".to_string(),
         },
         ImportError::StorageError { message } => ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "STORAGE_ERROR".to_string(),
-            message,
-            details: None,
+            detail: message,
+            problem_type: "/problems/storage-error".to_string(),
+            title: "Storage Error".to_string(),
         },
         _ => ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "INTERNAL_ERROR".to_string(),
-            message: err.to_string(),
-            details: None,
+            detail: err.to_string(),
+            problem_type: "/problems/internal-error".to_string(),
+            title: "Internal Server Error".to_string(),
         },
     }
 }
@@ -128,16 +144,18 @@ fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
         .ok_or_else(|| ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "MISSING_IDEMPOTENCY_KEY".to_string(),
-            message: "Idempotency-Key header is required".to_string(),
-            details: None,
+            detail: "Idempotency-Key header is required".to_string(),
+            problem_type: "/problems/missing-idempotency-key".to_string(),
+            title: "Missing Idempotency Key".to_string(),
         })?;
 
     if key.trim().is_empty() {
         return Err(ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "MISSING_IDEMPOTENCY_KEY".to_string(),
-            message: "Idempotency-Key header must not be empty".to_string(),
-            details: None,
+            detail: "Idempotency-Key header must not be empty".to_string(),
+            problem_type: "/problems/missing-idempotency-key".to_string(),
+            title: "Missing Idempotency Key".to_string(),
         });
     }
 
@@ -213,8 +231,9 @@ pub async fn post_complete_upload(
         let payload_json = serde_json::to_value(&job_payload).map_err(|e| ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "INTERNAL_ERROR".to_string(),
-            message: format!("failed to serialize job payload: {e}"),
-            details: None,
+            detail: format!("failed to serialize job payload: {e}"),
+            problem_type: "/problems/internal-error".to_string(),
+            title: "Internal Server Error".to_string(),
         })?;
 
         job_queue
@@ -227,8 +246,9 @@ pub async fn post_complete_upload(
             .map_err(|e| ApiError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "JOB_ENQUEUE_FAILED".to_string(),
-                message: format!("failed to enqueue parsing job: {e}"),
-                details: None,
+                detail: format!("failed to enqueue parsing job: {e}"),
+                problem_type: "/problems/job-enqueue-failed".to_string(),
+                title: "Job Enqueue Failed".to_string(),
             })?;
     }
 

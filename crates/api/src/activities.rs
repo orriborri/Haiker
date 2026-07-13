@@ -35,33 +35,38 @@ fn activity_error_to_api_error(err: ActivityCatalogError) -> ApiError {
         ActivityCatalogError::ActivityNotFound => ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            message: "activity not found".to_string(),
-            details: None,
+            detail: "activity not found".to_string(),
+            problem_type: "/problems/not-found".to_string(),
+            title: "Not Found".to_string(),
         },
         // Non-disclosing: cross-owner access returns 404 identical to not-found.
         ActivityCatalogError::Unauthorized => ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            message: "activity not found".to_string(),
-            details: None,
+            detail: "activity not found".to_string(),
+            problem_type: "/problems/not-found".to_string(),
+            title: "Not Found".to_string(),
         },
         ActivityCatalogError::InvalidTitle { message } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "VALIDATION_FAILED".to_string(),
-            message,
-            details: None,
+            detail: message,
+            problem_type: "/problems/validation-failed".to_string(),
+            title: "Validation Failed".to_string(),
         },
         ActivityCatalogError::InvalidCursor { message } => ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "INVALID_CURSOR".to_string(),
-            message,
-            details: None,
+            detail: message,
+            problem_type: "/problems/invalid-cursor".to_string(),
+            title: "Invalid Cursor".to_string(),
         },
         ActivityCatalogError::PersistenceError { message } => ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "INTERNAL_ERROR".to_string(),
-            message,
-            details: None,
+            detail: message,
+            problem_type: "/problems/internal-error".to_string(),
+            title: "Internal Server Error".to_string(),
         },
     }
 }
@@ -863,8 +868,8 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["error"]["code"], "NOT_FOUND");
-        assert_eq!(json["error"]["message"], "activity not found");
+        assert_eq!(json["code"], "NOT_FOUND");
+        assert_eq!(json["detail"], "activity not found");
     }
 
     #[tokio::test]
@@ -899,8 +904,8 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["error"]["code"], "NOT_FOUND");
-        assert_eq!(json["error"]["message"], "activity not found");
+        assert_eq!(json["code"], "NOT_FOUND");
+        assert_eq!(json["detail"], "activity not found");
     }
 
     #[tokio::test]
@@ -934,8 +939,8 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["error"]["code"], "NOT_FOUND");
-        assert_eq!(json["error"]["message"], "activity not found");
+        assert_eq!(json["code"], "NOT_FOUND");
+        assert_eq!(json["detail"], "activity not found");
     }
 
     #[tokio::test]
@@ -1026,7 +1031,7 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["error"]["code"], "VALIDATION_FAILED");
+        assert_eq!(json["code"], "VALIDATION_FAILED");
     }
 
     #[tokio::test]
@@ -1089,8 +1094,8 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["error"]["code"], "NOT_FOUND");
-        assert_eq!(json["error"]["message"], "activity not found");
+        assert_eq!(json["code"], "NOT_FOUND");
+        assert_eq!(json["detail"], "activity not found");
     }
 
     #[tokio::test]
@@ -1200,8 +1205,8 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["error"]["code"], "NOT_FOUND");
-        assert_eq!(json["error"]["message"], "activity not found");
+        assert_eq!(json["code"], "NOT_FOUND");
+        assert_eq!(json["detail"], "activity not found");
     }
 
     #[tokio::test]

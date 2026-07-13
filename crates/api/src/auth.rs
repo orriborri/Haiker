@@ -8,10 +8,11 @@ use axum::http::request::Parts;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use serde_json::json;
 use uuid::Uuid;
 
 use haiker_app::identity::{Actor, UserId};
+
+use crate::error::ProblemDetailBody;
 
 /// Axum extractor wrapper for the authenticated actor.
 ///
@@ -57,27 +58,21 @@ pub enum AuthError {
 
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
-        let (status, code, message) = match self {
-            AuthError::MissingToken => (
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "missing authorization header",
-            ),
-            AuthError::InvalidToken => (
-                StatusCode::UNAUTHORIZED,
-                "UNAUTHORIZED",
-                "invalid bearer token",
-            ),
+        let detail = match self {
+            AuthError::MissingToken => "missing authorization header",
+            AuthError::InvalidToken => "invalid bearer token",
         };
 
-        let body = json!({
-            "error": {
-                "code": code,
-                "message": message
-            }
-        });
+        let body = ProblemDetailBody {
+            problem_type: "/problems/unauthorized".to_string(),
+            title: "Unauthorized".to_string(),
+            status: StatusCode::UNAUTHORIZED.as_u16(),
+            code: "UNAUTHORIZED".to_string(),
+            detail: detail.to_string(),
+            request_id: Uuid::new_v4().to_string(),
+        };
 
-        (status, Json(body)).into_response()
+        (StatusCode::UNAUTHORIZED, Json(body)).into_response()
     }
 }
 
@@ -96,7 +91,7 @@ impl IntoResponse for AuthError {
     )
 )]
 pub async fn me(actor: AuthenticatedActor) -> Json<serde_json::Value> {
-    Json(json!({
+    Json(serde_json::json!({
         "user_id": actor.0.user_id.0
     }))
 }
@@ -104,17 +99,47 @@ pub async fn me(actor: AuthenticatedActor) -> Json<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::Response as HttpResponse;
 
-    #[test]
-    fn auth_error_missing_token_display() {
-        let err = AuthError::MissingToken;
-        // Just verify it can be converted to response
-        let _response = err.into_response();
+    async fn extract_problem_detail(response: HttpResponse<Body>) -> serde_json::Value {
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body).unwrap()
     }
 
-    #[test]
-    fn auth_error_invalid_token_display() {
+    #[tokio::test]
+    async fn auth_error_missing_token_returns_problem_details() {
+        let err = AuthError::MissingToken;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let json = extract_problem_detail(response).await;
+        assert_eq!(json["type"], "/problems/unauthorized");
+        assert_eq!(json["title"], "Unauthorized");
+        assert_eq!(json["status"], 401);
+        assert_eq!(json["code"], "UNAUTHORIZED");
+        assert_eq!(json["detail"], "missing authorization header");
+        assert!(json["requestId"].is_string());
+        let request_id = json["requestId"].as_str().unwrap();
+        assert!(Uuid::parse_str(request_id).is_ok());
+    }
+
+    #[tokio::test]
+    async fn auth_error_invalid_token_returns_problem_details() {
         let err = AuthError::InvalidToken;
-        let _response = err.into_response();
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let json = extract_problem_detail(response).await;
+        assert_eq!(json["type"], "/problems/unauthorized");
+        assert_eq!(json["title"], "Unauthorized");
+        assert_eq!(json["status"], 401);
+        assert_eq!(json["code"], "UNAUTHORIZED");
+        assert_eq!(json["detail"], "invalid bearer token");
+        assert!(json["requestId"].is_string());
+        let request_id = json["requestId"].as_str().unwrap();
+        assert!(Uuid::parse_str(request_id).is_ok());
     }
 }

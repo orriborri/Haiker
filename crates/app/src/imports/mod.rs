@@ -236,6 +236,10 @@ pub enum ImportError {
     /// A validation error occurred.
     #[error("validation failed: {message}")]
     ValidationFailed { message: String },
+
+    /// An idempotency key was reused with a different payload.
+    #[error("idempotency key reused with different payload")]
+    IdempotencyPayloadMismatch,
 }
 
 #[cfg(test)]

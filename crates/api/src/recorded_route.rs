@@ -33,20 +33,23 @@ fn recorded_route_error_to_api_error(err: RecordedActivityError) -> ApiError {
         RecordedActivityError::NotFound => ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            message: "recorded route not found".to_string(),
-            details: None,
+            detail: "recorded route not found".to_string(),
+            problem_type: "/problems/not-found".to_string(),
+            title: "Not Found".to_string(),
         },
         RecordedActivityError::Persistence { message } => ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "INTERNAL_ERROR".to_string(),
-            message,
-            details: None,
+            detail: message,
+            problem_type: "/problems/internal-error".to_string(),
+            title: "Internal Server Error".to_string(),
         },
         _ => ApiError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "INTERNAL_ERROR".to_string(),
-            message: "unexpected error".to_string(),
-            details: None,
+            detail: "unexpected error".to_string(),
+            problem_type: "/problems/internal-error".to_string(),
+            title: "Internal Server Error".to_string(),
         },
     }
 }
@@ -638,8 +641,8 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["error"]["code"], "NOT_FOUND");
-        assert_eq!(json["error"]["message"], "recorded route not found");
+        assert_eq!(json["code"], "NOT_FOUND");
+        assert_eq!(json["detail"], "recorded route not found");
     }
 
     #[tokio::test]
@@ -679,7 +682,7 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["code"], "NOT_FOUND");
         // Should not reveal any geometry or storage details
         assert!(json.get("features").is_none());
         assert!(json.get("bbox").is_none());
