@@ -1,0 +1,212 @@
+/v1/activities:
+  get:
+    operationId: listActivities
+    summary: List activities for the authenticated user
+    description: Returns a paginated list of activities owned by the authenticated user, ordered by started_at descending.
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: cursor
+        in: query
+        required: false
+        description: Opaque cursor for fetching the next page of results.
+        schema:
+          type: string
+          example: "eyJzdGFydGVkX2F0IjoiMjAyNC0wMS0xNVQxMDozMDowMFoiLCJpZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCJ9"
+      - name: pageSize
+        in: query
+        required: false
+        description: Number of items per page. Default 25, max 100.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 25
+          example: 25
+    responses:
+      "200":
+        description: A paginated list of activities.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/activities.yaml#/ActivityListResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/activities/{activityId}:
+  get:
+    operationId: getActivity
+    summary: Get activity detail by ID
+    description: Returns the full detail of a single activity owned by the authenticated user. Returns 404 for missing, cross-owner, or deleted activities (non-disclosing).
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The unique activity identifier (UUID).
+        schema:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+    responses:
+      "200":
+        description: The activity detail.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/activities.yaml#/ActivityDetailResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity not found (also returned for cross-owner access, non-disclosing).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+  delete:
+    operationId: deleteActivity
+    summary: Delete an activity
+    description: Soft-deletes an activity owned by the authenticated user. Returns 204 No Content on success. Idempotent - repeated deletion returns 204. Returns 404 for missing or cross-owner activities (non-disclosing).
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The unique activity identifier (UUID).
+        schema:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+    responses:
+      "204":
+        description: Activity successfully deleted (no content).
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity not found (also returned for cross-owner access, non-disclosing).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/activities/{activityId}/title:
+  patch:
+    operationId: updateActivityTitle
+    summary: Rename an activity
+    description: Updates the title of an activity owned by the authenticated user. Returns 404 for missing, cross-owner, or deleted activities (non-disclosing). Returns 422 for invalid titles.
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The unique activity identifier (UUID).
+        schema:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/activities.yaml#/RenameActivityRequest"
+    responses:
+      "200":
+        description: The updated activity detail.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/activities.yaml#/ActivityDetailResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity not found (also returned for cross-owner access, non-disclosing).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Validation failed (e.g. empty title).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/activities/{activityId}/recorded-route:
+  get:
+    operationId: getRecordedRoute
+    summary: Get recorded route geometry for an activity
+    description: Returns the recorded route geometry as GeoJSON (full detail) or a simplified preview with bounding box and statistics. Returns 404 for missing, cross-owner, or deleted activities (non-disclosing).
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The unique activity identifier (UUID).
+        schema:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      - name: detail
+        in: query
+        required: false
+        description: Level of detail for the response. "full" returns complete GeoJSON geometry, "preview" returns bounding box and statistics only.
+        schema:
+          type: string
+          enum:
+            - full
+            - preview
+          default: full
+          example: full
+    responses:
+      "200":
+        description: The recorded route geometry (GeoJSON FeatureCollection for full, JSON for preview).
+        content:
+          application/geo+json:
+            schema:
+              $ref: "../components/activities.yaml#/RecordedRouteResponse"
+          application/json:
+            schema:
+              $ref: "../components/activities.yaml#/RecordedRoutePreviewResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Recorded route not found (also returned for cross-owner access, non-disclosing).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

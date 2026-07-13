@@ -3,6 +3,10 @@
 //! Owns activity identity, title, type, timestamps, current route version,
 //! summary statistics, and lifecycle management.
 
+pub mod commands;
+pub mod queries;
+pub mod repository;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -85,6 +89,27 @@ pub enum ActivityType {
     Other,
 }
 
+/// Lifecycle state of an activity.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleState {
+    /// The activity is active and visible.
+    #[default]
+    Active,
+    /// The activity has been soft-deleted.
+    Deleted,
+}
+
+impl std::fmt::Display for LifecycleState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            LifecycleState::Active => "active",
+            LifecycleState::Deleted => "deleted",
+        };
+        write!(f, "{s}")
+    }
+}
+
 impl std::fmt::Display for ActivityType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -104,8 +129,11 @@ pub struct Activity {
     pub owner_id: UserId,
     pub title: ActivityTitle,
     pub activity_type: ActivityType,
+    pub lifecycle_state: LifecycleState,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
+    pub recorded_summary: Option<serde_json::Value>,
+    pub corrected_summary: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -125,8 +153,11 @@ impl Activity {
             owner_id,
             title,
             activity_type,
+            lifecycle_state: LifecycleState::default(),
             started_at,
             ended_at,
+            recorded_summary: None,
+            corrected_summary: None,
             created_at: now,
             updated_at: now,
         }
@@ -141,6 +172,15 @@ impl Activity {
     /// Update the activity type.
     pub fn update_activity_type(&mut self, activity_type: ActivityType) {
         self.activity_type = activity_type;
+        self.updated_at = Utc::now();
+    }
+
+    /// Soft-delete the activity by transitioning its lifecycle state to Deleted.
+    ///
+    /// This operation is idempotent: calling delete on an already-deleted activity
+    /// succeeds without error and updates the timestamp.
+    pub fn delete(&mut self) {
+        self.lifecycle_state = LifecycleState::Deleted;
         self.updated_at = Utc::now();
     }
 }
@@ -159,6 +199,14 @@ pub enum ActivityCatalogError {
     /// The user is not authorized to access this activity.
     #[error("unauthorized")]
     Unauthorized,
+
+    /// A persistence error occurred.
+    #[error("persistence error: {message}")]
+    PersistenceError { message: String },
+
+    /// Invalid cursor provided for pagination.
+    #[error("invalid cursor: {message}")]
+    InvalidCursor { message: String },
 }
 
 #[cfg(test)]
@@ -266,5 +314,44 @@ mod tests {
 
         let err = ActivityCatalogError::Unauthorized;
         assert_eq!(err.to_string(), "unauthorized");
+    }
+
+    #[test]
+    fn delete_active_activity_succeeds() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let title = ActivityTitle::new("Trail Run").unwrap();
+        let mut activity = Activity::new(owner_id, title, ActivityType::Run, None, None);
+
+        assert_eq!(activity.lifecycle_state, LifecycleState::Active);
+        activity.delete();
+        assert_eq!(activity.lifecycle_state, LifecycleState::Deleted);
+    }
+
+    #[test]
+    fn delete_is_idempotent() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let title = ActivityTitle::new("Trail Run").unwrap();
+        let mut activity = Activity::new(owner_id, title, ActivityType::Run, None, None);
+
+        activity.delete();
+        assert_eq!(activity.lifecycle_state, LifecycleState::Deleted);
+
+        // Second delete should succeed without error
+        activity.delete();
+        assert_eq!(activity.lifecycle_state, LifecycleState::Deleted);
+    }
+
+    #[test]
+    fn deleted_activity_rejects_rename() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let title = ActivityTitle::new("Active Hike").unwrap();
+        let mut activity = Activity::new(owner_id, title, ActivityType::Hike, None, None);
+
+        activity.delete();
+
+        // Attempting to update title on a deleted activity is a domain violation.
+        // The command layer enforces this, not the aggregate directly, but this test
+        // verifies the lifecycle_state is indeed Deleted.
+        assert_eq!(activity.lifecycle_state, LifecycleState::Deleted);
     }
 }

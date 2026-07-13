@@ -1,9 +1,13 @@
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
+use haiker_app::activity_catalog::commands::AuditSink;
+use haiker_platform::activity_persistence::PgActivityRepository;
+use haiker_platform::audit::AuditLog;
 use haiker_platform::config::AppConfig;
 use haiker_platform::database;
 use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::object_storage::ObjectStorageClient;
+use haiker_platform::recorded_route_persistence::PgRecordedRouteRepository;
 use haiker_platform::request_id::request_id_middleware;
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use std::sync::Arc;
@@ -13,12 +17,16 @@ use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+mod activities;
+mod activities_dto;
 mod auth;
 mod auth_handlers;
 mod error;
 mod health;
 mod imports;
 mod imports_dto;
+mod recorded_route;
+mod recorded_route_dto;
 
 /// OpenAPI documentation specification.
 #[derive(OpenApi)]
@@ -69,6 +77,40 @@ async fn main() {
         .route("/v1/imports/{import_id}", get(imports::get_import_status))
         .with_state(import_state);
 
+    // Activity subsystem state with real PostgreSQL repository
+    let audit_log = AuditLog::new(pool.clone());
+    let activity_state = activities::ActivityAppState {
+        repo: Arc::new(PgActivityRepository::new(pool.clone())),
+        audit: Arc::new(AuditSinkAdapter {
+            audit_log: audit_log.clone(),
+        }),
+    };
+
+    let activity_routes = Router::new()
+        .route("/v1/activities", get(activities::get_activities))
+        .route(
+            "/v1/activities/{activityId}",
+            get(activities::get_activity_detail).delete(activities::delete_activity_handler),
+        )
+        .route(
+            "/v1/activities/{activityId}/title",
+            patch(activities::patch_activity_title),
+        )
+        .with_state(activity_state);
+
+    // Recorded route subsystem state
+    let recorded_route_state = recorded_route::RecordedRouteAppState {
+        activity_repo: Arc::new(PgActivityRepository::new(pool.clone())),
+        route_repo: Arc::new(PgRecordedRouteRepository::new(pool.clone())),
+    };
+
+    let recorded_route_routes = Router::new()
+        .route(
+            "/v1/activities/{activityId}/recorded-route",
+            get(recorded_route::get_recorded_route_handler),
+        )
+        .with_state(recorded_route_state);
+
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
@@ -77,6 +119,8 @@ async fn main() {
         .route("/auth/callback", get(auth_handlers::get_callback))
         .route("/auth/logout", post(auth_handlers::post_logout))
         .merge(import_routes)
+        .merge(activity_routes)
+        .merge(recorded_route_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());
@@ -105,6 +149,32 @@ impl haiker_app::imports::commands::UploadUrlGenerator for PresignedUrlGenerator
             .map_err(|e| haiker_app::imports::ImportError::StorageError {
                 message: format!("failed to generate presigned URL: {e}"),
             })
+    }
+}
+
+/// Adapter bridging the platform AuditLog to the domain AuditSink trait.
+struct AuditSinkAdapter {
+    audit_log: AuditLog,
+}
+
+#[async_trait::async_trait]
+impl AuditSink for AuditSinkAdapter {
+    async fn record(
+        &self,
+        actor_id: uuid::Uuid,
+        action: &str,
+        resource_type: &str,
+        resource_id: &str,
+    ) -> Result<(), haiker_app::activity_catalog::ActivityCatalogError> {
+        self.audit_log
+            .append(actor_id, action, resource_type, resource_id, None)
+            .await
+            .map_err(
+                |e| haiker_app::activity_catalog::ActivityCatalogError::PersistenceError {
+                    message: format!("audit log error: {e}"),
+                },
+            )?;
+        Ok(())
     }
 }
 

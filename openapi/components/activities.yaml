@@ -1,0 +1,331 @@
+ActivitySummary:
+  type: object
+  description: Summary representation of an activity.
+  required:
+    - id
+    - title
+    - activityType
+    - createdAt
+    - updatedAt
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Unique activity identifier.
+      example: "550e8400-e29b-41d4-a716-446655440000"
+    title:
+      type: string
+      description: Activity title.
+      example: "Morning Hike in the Alps"
+    activityType:
+      type: string
+      enum: [hike, walk, run, other]
+      description: The type/category of the activity.
+      example: "hike"
+    startedAt:
+      type:
+        - string
+        - "null"
+      format: date-time
+      description: When the activity started (ISO 8601).
+      example: "2024-01-15T10:30:00Z"
+    endedAt:
+      type:
+        - string
+        - "null"
+      format: date-time
+      description: When the activity ended (ISO 8601).
+      example: "2024-01-15T14:00:00Z"
+    recordedSummary:
+      type:
+        - object
+        - "null"
+      description: Summary statistics from the original recorded track.
+      example: {"distanceKm": 12.5, "elevationGainM": 800}
+    correctedSummary:
+      type:
+        - object
+        - "null"
+      description: Summary statistics after user corrections.
+      example: {"distanceKm": 12.3, "elevationGainM": 790}
+    createdAt:
+      type: string
+      format: date-time
+      description: When the activity was created (ISO 8601).
+      example: "2024-01-15T10:30:00Z"
+    updatedAt:
+      type: string
+      format: date-time
+      description: When the activity was last updated (ISO 8601).
+      example: "2024-01-15T14:30:00Z"
+
+ActivityListResponse:
+  type: object
+  description: Paginated list of activities.
+  required:
+    - items
+    - pagination
+  properties:
+    items:
+      type: array
+      items:
+        $ref: "#/ActivitySummary"
+      description: List of activity summaries.
+    pagination:
+      type: object
+      description: Pagination metadata.
+      required:
+        - hasMore
+        - pageSize
+      properties:
+        cursor:
+          type:
+            - string
+            - "null"
+          description: Opaque cursor for the next page. Null if no more results.
+          example: "eyJpZCI6MTAwfQ=="
+        hasMore:
+          type: boolean
+          description: Whether there are more results beyond the current page.
+          example: true
+        pageSize:
+          type: integer
+          description: The number of items returned in this page.
+          example: 25
+
+ActivityDetailResponse:
+  type: object
+  description: Full detail representation of a single activity.
+  required:
+    - id
+    - title
+    - activityType
+    - lifecycleState
+    - createdAt
+    - updatedAt
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Unique activity identifier.
+      example: "550e8400-e29b-41d4-a716-446655440000"
+    title:
+      type: string
+      description: Activity title.
+      example: "Morning Hike in the Alps"
+    activityType:
+      type: string
+      enum: [hike, walk, run, other]
+      description: The type/category of the activity.
+      example: "hike"
+    startedAt:
+      type:
+        - string
+        - "null"
+      format: date-time
+      description: When the activity started (ISO 8601).
+      example: "2024-01-15T10:30:00Z"
+    endedAt:
+      type:
+        - string
+        - "null"
+      format: date-time
+      description: When the activity ended (ISO 8601).
+      example: "2024-01-15T14:00:00Z"
+    lifecycleState:
+      type: string
+      enum: [active, deleted]
+      description: The lifecycle state of the activity.
+      example: "active"
+    recordedSummary:
+      type:
+        - object
+        - "null"
+      description: Summary statistics from the original recorded track.
+      example: {"distanceKm": 12.5, "elevationGainM": 800}
+    correctedSummary:
+      type:
+        - object
+        - "null"
+      description: Summary statistics after user corrections.
+      example: {"distanceKm": 12.3, "elevationGainM": 790}
+    currentRouteVersionId:
+      type:
+        - string
+        - "null"
+      format: uuid
+      description: The current route version linked to this activity, if any.
+      example: "660e8400-e29b-41d4-a716-446655440001"
+    createdAt:
+      type: string
+      format: date-time
+      description: When the activity was created (ISO 8601).
+      example: "2024-01-15T10:30:00Z"
+    updatedAt:
+      type: string
+      format: date-time
+      description: When the activity was last updated (ISO 8601).
+      example: "2024-01-15T14:30:00Z"
+
+RenameActivityRequest:
+  type: object
+  description: Request body for renaming an activity.
+  required:
+    - title
+  additionalProperties: false
+  properties:
+    title:
+      type: string
+      description: The new title for the activity. Must not be empty after trimming. Truncated at 500 characters.
+      minLength: 1
+      maxLength: 500
+      example: "Afternoon Hike in the Mountains"
+
+RecordedRouteResponse:
+  type: object
+  description: GeoJSON FeatureCollection containing the full recorded route geometry.
+  required:
+    - type
+    - bbox
+    - features
+    - properties
+  properties:
+    type:
+      type: string
+      enum: [FeatureCollection]
+      description: GeoJSON type.
+      example: "FeatureCollection"
+    bbox:
+      type: array
+      items:
+        type: number
+      minItems: 4
+      maxItems: 4
+      description: Bounding box as [west, south, east, north].
+      example: [10.2, 47.5, 10.5, 47.8]
+    features:
+      type: array
+      items:
+        $ref: "#/GeoJsonFeature"
+      description: One feature per route segment.
+    properties:
+      type: object
+      description: Route-level statistics.
+      required:
+        - distanceMeters
+        - pointCount
+        - segmentCount
+      properties:
+        distanceMeters:
+          type: number
+          description: Total distance in meters.
+          example: 5000.0
+        elevationGainMeters:
+          type:
+            - number
+            - "null"
+          description: Total elevation gain in meters.
+          example: 200.0
+        elevationLossMeters:
+          type:
+            - number
+            - "null"
+          description: Total elevation loss in meters.
+          example: 150.0
+        pointCount:
+          type: integer
+          description: Total number of points across all segments.
+          example: 500
+        segmentCount:
+          type: integer
+          description: Number of segments.
+          example: 2
+
+GeoJsonFeature:
+  type: object
+  description: A GeoJSON Feature representing a route segment.
+  required:
+    - type
+    - geometry
+    - properties
+  properties:
+    type:
+      type: string
+      enum: [Feature]
+      example: "Feature"
+    geometry:
+      type: object
+      required:
+        - type
+        - coordinates
+      properties:
+        type:
+          type: string
+          enum: [LineString]
+          example: "LineString"
+        coordinates:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+            minItems: 2
+            maxItems: 2
+          description: Coordinates as [longitude, latitude] pairs.
+          example: [[10.2, 47.5], [10.3, 47.6]]
+    properties:
+      type: object
+      required:
+        - segmentIndex
+        - pointCount
+      properties:
+        segmentIndex:
+          type: integer
+          description: Zero-based index of this segment.
+          example: 0
+        pointCount:
+          type: integer
+          description: Number of points in this segment.
+          example: 250
+
+RecordedRoutePreviewResponse:
+  type: object
+  description: Preview of a recorded route with bounding box and statistics (no full geometry).
+  required:
+    - bbox
+    - pointCount
+    - segmentCount
+    - distanceMeters
+  properties:
+    bbox:
+      type: array
+      items:
+        type: number
+      minItems: 4
+      maxItems: 4
+      description: Bounding box as [west, south, east, north].
+      example: [10.2, 47.5, 10.5, 47.8]
+    pointCount:
+      type: integer
+      description: Total number of points across all segments.
+      example: 500
+    segmentCount:
+      type: integer
+      description: Number of segments.
+      example: 2
+    distanceMeters:
+      type: number
+      description: Total distance in meters.
+      example: 5000.0
+    elevationGainMeters:
+      type:
+        - number
+        - "null"
+      description: Total elevation gain in meters.
+      example: 200.0
+    elevationLossMeters:
+      type:
+        - number
+        - "null"
+      description: Total elevation loss in meters.
+      example: 150.0

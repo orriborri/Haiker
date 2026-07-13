@@ -4,10 +4,17 @@
 //! point streams, and sensor samples.
 
 pub mod normalization;
+pub mod queries;
+pub mod repository;
 
 // Re-export normalization types for consumers.
 pub use self::normalization::{
     calculate_elevation_stats, haversine_distance, normalize_gpx, NormalizedTrack,
+};
+
+// Re-export repository types for consumers.
+pub use self::repository::{
+    RecordedRouteData, RecordedRoutePreview, RecordedRouteRepository, RouteSegment, RouteStatistics,
 };
 
 use chrono::{DateTime, Utc};
@@ -297,6 +304,10 @@ pub enum RecordedActivityError {
     /// A recorded track must have at least one segment.
     #[error("recorded track must have at least one segment")]
     NoSegments,
+
+    /// A persistence error occurred.
+    #[error("persistence error: {message}")]
+    Persistence { message: String },
 }
 
 #[cfg(test)]
