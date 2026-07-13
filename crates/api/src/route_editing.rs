@@ -381,9 +381,33 @@ pub async fn post_apply_operation(
                     details: None,
                 });
             }
+
+            // Derive the revision this operation produced from its stack position.
+            // Each operation increments revision by 1 starting from 0, so the
+            // operation at index N produced revision N+1.
+            let entry_index = draft
+                .applied_operations
+                .iter()
+                .position(|e| e.id == operation_id)
+                .unwrap_or(0);
+            let snapshot_revision = (entry_index as u64) + 1;
+
+            // Replay: return the state as it was when this operation was originally applied.
+            // can_undo is true (at least this operation exists), can_redo is false
+            // (new operations clear the redo stack at the time of application).
+            return Ok((
+                StatusCode::OK,
+                Json(OperationResultResponse {
+                    draft_id: draft.id.0,
+                    revision: snapshot_revision,
+                    can_undo: true,
+                    can_redo: false,
+                }),
+            ));
         }
 
-        // Replay: return the current state
+        // Operation ID was found in the repository but not in applied_operations
+        // (should not normally happen). Fall through to return current state.
         return Ok((
             StatusCode::OK,
             Json(OperationResultResponse {

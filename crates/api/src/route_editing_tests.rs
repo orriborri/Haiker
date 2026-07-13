@@ -1352,6 +1352,114 @@ async fn error_response_has_problem_details_shape() {
 }
 
 #[tokio::test]
+async fn idempotent_replay_returns_snapshot_revision_not_current() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Apply operation A (revision 0 -> 1)
+    let op_a_id = Uuid::new_v4();
+    let body_a = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response_a = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", op_a_id.to_string())
+                .body(Body::from(serde_json::to_vec(&body_a).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response_a.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response_a.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json_a: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json_a["revision"], 1);
+
+    // Apply operation B (revision 1 -> 2)
+    let body_b = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 1,
+            "newPosition": {"latitude": 48.5, "longitude": 12.5}
+        },
+        "expectedRevision": 1
+    });
+
+    let response_b = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body_b).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response_b.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response_b.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json_b: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json_b["revision"], 2);
+
+    // Replay operation A (should return revision 1, not 2)
+    let replay_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", op_a_id.to_string())
+                .body(Body::from(serde_json::to_vec(&body_a).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(replay_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let replay_json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+
+    // The replay must return the snapshot revision (1), not the current draft revision (2)
+    assert_eq!(replay_json["revision"], 1);
+    assert_eq!(replay_json["canUndo"], true);
+    assert_eq!(replay_json["canRedo"], false);
+    assert_eq!(replay_json["draftId"], draft_id);
+}
+
+#[tokio::test]
 async fn stale_revision_returns_409_with_problem_details() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),

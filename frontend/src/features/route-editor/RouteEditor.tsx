@@ -481,6 +481,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
     // Re-apply each pending operation sequentially against the new server state
     let currentRevision = serverRevision;
+    let successCount = 0;
     for (const pendingOp of opsToRetry) {
       if (!state.draftId) break;
       try {
@@ -490,8 +491,12 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
           expectedRevision: currentRevision,
         });
         currentRevision = result.revision;
+        successCount++;
       } catch {
-        // If a retry fails, stop and let the user see the updated state
+        // If a retry fails, surface which operations were lost
+        setConflict(
+          `Retry failed: ${successCount} of ${opsToRetry.length} operations were re-applied successfully. The remaining ${opsToRetry.length - successCount} operation(s) could not be applied.`,
+        );
         break;
       }
     }
@@ -516,6 +521,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     applyOp,
     refetchDraft,
     operationSuccess,
+    setConflict,
   ]);
 
   const handleDismissConflict = useCallback(() => {
