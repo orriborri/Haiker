@@ -1,0 +1,216 @@
+import { useCallback, useEffect, useRef } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useActivity } from "./useActivity";
+import { useRecordedRoute } from "./useRecordedRoute";
+import { RouteMap } from "./RouteMap";
+import { LoadingSpinner } from "@/components/LoadingSpinner";
+
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function formatDistance(meters: number): string {
+  if (meters >= 1000) {
+    return `${(meters / 1000).toFixed(1)} km`;
+  }
+  return `${Math.round(meters)} m`;
+}
+
+function formatDateTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+interface ActivityDetailPageProps {
+  activityId: string;
+}
+
+export function ActivityDetailPage({ activityId }: ActivityDetailPageProps) {
+  const navigate = useNavigate();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const {
+    data: activity,
+    isLoading: activityLoading,
+    isError: activityError,
+    error: activityErr,
+    refetch: refetchActivity,
+  } = useActivity(activityId);
+  const {
+    data: route,
+    isLoading: routeLoading,
+    isError: routeError,
+  } = useRecordedRoute(activityId);
+
+  useEffect(() => {
+    if (activity && headingRef.current) {
+      headingRef.current.focus();
+    }
+  }, [activity]);
+
+  const handleBack = useCallback(() => {
+    void navigate({ to: "/" });
+  }, [navigate]);
+
+  if (activityLoading) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <LoadingSpinner className="py-16" />
+      </div>
+    );
+  }
+
+  if (activityError) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-8">
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <h2 className="text-lg font-medium text-gray-900">
+            Failed to load activity
+          </h2>
+          <p className="mt-1 text-sm text-gray-500">
+            {activityErr instanceof Error
+              ? activityErr.message
+              : "An unexpected error occurred"}
+          </p>
+          <div className="mt-4 flex gap-3">
+            <button
+              type="button"
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              onClick={handleBack}
+            >
+              Back to list
+            </button>
+            <button
+              type="button"
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              onClick={() => void refetchActivity()}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!activity) return null;
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-4">
+      {/* Back navigation */}
+      <button
+        type="button"
+        className="mb-4 flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 rounded"
+        onClick={handleBack}
+      >
+        <svg
+          className="h-4 w-4"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          aria-hidden="true"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M15 19l-7-7 7-7"
+          />
+        </svg>
+        Back to activities
+      </button>
+
+      {/* Activity header */}
+      <header className="mb-6">
+        <h1
+          ref={headingRef}
+          className="text-2xl font-bold text-gray-900 focus:outline-none"
+          tabIndex={-1}
+        >
+          {activity.title}
+        </h1>
+        <p className="mt-1 text-sm capitalize text-gray-500">
+          {activity.activityType}
+        </p>
+      </header>
+
+      {/* Route map */}
+      <section className="mb-6" aria-label="Route map">
+        {routeLoading && <LoadingSpinner className="h-64 sm:h-96" />}
+        {routeError && (
+          <div className="flex h-64 items-center justify-center rounded-lg border border-gray-200 bg-gray-50 sm:h-96">
+            <p className="text-sm text-gray-500">Unable to load route map</p>
+          </div>
+        )}
+        {route && <RouteMap route={route} />}
+      </section>
+
+      {/* Activity metadata */}
+      <section aria-label="Activity details">
+        <h2 className="mb-3 text-lg font-semibold text-gray-900">Details</h2>
+        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <MetadataItem label="Started" value={formatDateTime(activity.startedAt)} />
+          {activity.finishedAt && (
+            <MetadataItem
+              label="Finished"
+              value={formatDateTime(activity.finishedAt)}
+            />
+          )}
+          {activity.distanceMeters != null && (
+            <MetadataItem
+              label="Distance"
+              value={formatDistance(activity.distanceMeters)}
+            />
+          )}
+          {activity.durationSeconds != null && (
+            <MetadataItem
+              label="Duration"
+              value={formatDuration(activity.durationSeconds)}
+            />
+          )}
+          {activity.elevationGainMeters != null && (
+            <MetadataItem
+              label="Elevation gain"
+              value={`${Math.round(activity.elevationGainMeters)} m`}
+            />
+          )}
+          {activity.elevationLossMeters != null && (
+            <MetadataItem
+              label="Elevation loss"
+              value={`${Math.round(activity.elevationLossMeters)} m`}
+            />
+          )}
+          {activity.averageHeartRate != null && (
+            <MetadataItem
+              label="Avg heart rate"
+              value={`${Math.round(activity.averageHeartRate)} bpm`}
+            />
+          )}
+          {activity.maxHeartRate != null && (
+            <MetadataItem
+              label="Max heart rate"
+              value={`${Math.round(activity.maxHeartRate)} bpm`}
+            />
+          )}
+        </dl>
+      </section>
+    </div>
+  );
+}
+
+function MetadataItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs font-medium text-gray-500">{label}</dt>
+      <dd className="mt-0.5 text-sm text-gray-900">{value}</dd>
+    </div>
+  );
+}
