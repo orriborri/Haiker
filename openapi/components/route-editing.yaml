@@ -11,6 +11,10 @@ CreateRouteDraftRequest:
         items:
           $ref: "#/RoutePoint"
       minItems: 1
+    baseRouteVersionId:
+      type: string
+      format: uuid
+      description: Optional ID of the base route version to anchor this draft to
 
 RouteDraftResponse:
   type: object
@@ -31,6 +35,10 @@ RouteDraftResponse:
     activityId:
       type: string
       format: uuid
+    baseRouteVersionId:
+      type: string
+      format: uuid
+      description: ID of the base route version this draft is anchored to (if any)
     revision:
       type: integer
       format: int64

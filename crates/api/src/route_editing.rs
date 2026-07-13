@@ -14,7 +14,8 @@ use uuid::Uuid;
 
 use haiker_app::activity_catalog::ActivityId;
 use haiker_app::route_editing::{
-    RouteDraft, RouteDraftId, RouteDraftRepository, RouteEditingError,
+    ActivityGateway, RouteDraft, RouteDraftId, RouteDraftRepository, RouteEditingError,
+    RouteVersionGateway,
 };
 
 use crate::auth::AuthenticatedActor;
@@ -28,6 +29,8 @@ use crate::route_editing_dto::{
 #[derive(Clone)]
 pub struct RouteEditingAppState {
     pub repo: Arc<dyn RouteDraftRepository>,
+    pub activity_gateway: Arc<dyn ActivityGateway>,
+    pub route_version_gateway: Arc<dyn RouteVersionGateway>,
 }
 
 /// Convert a RouteEditingError to an ApiError.
@@ -99,6 +102,24 @@ fn route_editing_error_to_api_error(err: RouteEditingError) -> ApiError {
             message,
             details: None,
         },
+        RouteEditingError::ActivityNotFound => ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "activity not found".to_string(),
+            details: None,
+        },
+        RouteEditingError::ActivityDeleted => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "ACTIVITY_DELETED".to_string(),
+            message: "activity is deleted".to_string(),
+            details: None,
+        },
+        RouteEditingError::InvalidBaseRouteVersion => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "INVALID_BASE_ROUTE_VERSION".to_string(),
+            message: "invalid base route version".to_string(),
+            details: None,
+        },
     }
 }
 
@@ -145,6 +166,22 @@ pub async fn post_create_draft(
         details: None,
     })?;
 
+    // Validate activity existence, ownership, and lifecycle
+    state
+        .activity_gateway
+        .validate_activity_for_draft(ActivityId(activity_id), actor.0.user_id)
+        .await
+        .map_err(route_editing_error_to_api_error)?;
+
+    // Validate base route version if provided
+    if let Some(base_version_id) = body.base_route_version_id {
+        state
+            .route_version_gateway
+            .validate_route_version_exists(base_version_id, ActivityId(activity_id))
+            .await
+            .map_err(route_editing_error_to_api_error)?;
+    }
+
     // Check if there is already an active draft for this activity
     let existing = state
         .repo
@@ -158,9 +195,13 @@ pub async fn post_create_draft(
         return Ok((StatusCode::CREATED, Json(response)));
     }
 
-    let draft =
-        RouteDraft::create_from_geometry(actor.0.user_id, ActivityId(activity_id), None, geometry)
-            .map_err(route_editing_error_to_api_error)?;
+    let draft = RouteDraft::create_from_geometry(
+        actor.0.user_id,
+        ActivityId(activity_id),
+        body.base_route_version_id,
+        geometry,
+    )
+    .map_err(route_editing_error_to_api_error)?;
 
     state
         .repo

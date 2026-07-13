@@ -4,10 +4,11 @@ use axum::body::Body;
 use axum::http::Request;
 use axum::routing::{get, post};
 use axum::Router;
-use haiker_app::activity_catalog::ActivityId;
+use haiker_app::activity_catalog::{ActivityId, LifecycleState};
 use haiker_app::identity::UserId;
 use haiker_app::route_editing::{
-    DraftState, OperationId, RouteDraft, RouteDraftId, RouteDraftRepository, RouteEditingError,
+    ActivityGateway, DraftState, OperationId, RouteDraft, RouteDraftId, RouteDraftRepository,
+    RouteEditingError, RouteVersionGateway,
 };
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -74,9 +75,137 @@ impl RouteDraftRepository for InMemoryRouteDraftRepository {
     }
 }
 
+/// Represents a known activity in the in-memory gateway.
+#[derive(Debug, Clone)]
+struct KnownActivity {
+    owner_id: UserId,
+    lifecycle_state: LifecycleState,
+}
+
+/// In-memory activity gateway for testing.
+///
+/// By default (empty map), it permits all activity validations (always succeeds).
+/// When activities are explicitly registered, it validates against them.
+pub struct InMemoryActivityGateway {
+    /// Map of activity_id -> KnownActivity. If empty, all validations pass.
+    activities: Mutex<HashMap<ActivityId, KnownActivity>>,
+    /// When true, an empty map means "permit all". When false, empty map means "deny all".
+    permit_when_empty: bool,
+}
+
+impl InMemoryActivityGateway {
+    /// Create a gateway that permits all validations (for backward-compatible tests).
+    pub fn permissive() -> Self {
+        Self {
+            activities: Mutex::new(HashMap::new()),
+            permit_when_empty: true,
+        }
+    }
+
+    /// Create a gateway with explicit activity entries.
+    pub fn with_activities(activities: Vec<(ActivityId, UserId, LifecycleState)>) -> Self {
+        let map = activities
+            .into_iter()
+            .map(|(id, owner_id, state)| {
+                (
+                    id,
+                    KnownActivity {
+                        owner_id,
+                        lifecycle_state: state,
+                    },
+                )
+            })
+            .collect();
+        Self {
+            activities: Mutex::new(map),
+            permit_when_empty: false,
+        }
+    }
+}
+
+#[async_trait]
+impl ActivityGateway for InMemoryActivityGateway {
+    async fn validate_activity_for_draft(
+        &self,
+        activity_id: ActivityId,
+        owner_id: UserId,
+    ) -> Result<(), RouteEditingError> {
+        let activities = self.activities.lock().unwrap();
+        if activities.is_empty() && self.permit_when_empty {
+            return Ok(());
+        }
+        match activities.get(&activity_id) {
+            None => Err(RouteEditingError::ActivityNotFound),
+            Some(activity) => {
+                if activity.owner_id != owner_id {
+                    // Non-disclosing: treat as not found
+                    Err(RouteEditingError::ActivityNotFound)
+                } else if activity.lifecycle_state == LifecycleState::Deleted {
+                    Err(RouteEditingError::ActivityDeleted)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
+/// In-memory route version gateway for testing.
+///
+/// By default (empty set), it permits all validations (always succeeds).
+/// When versions are explicitly registered, it validates against them.
+pub struct InMemoryRouteVersionGateway {
+    /// Set of valid (route_version_id, activity_id) pairs.
+    valid_versions: Mutex<Vec<(Uuid, ActivityId)>>,
+    /// When true, an empty set means "permit all". When false, empty set means "deny all".
+    permit_when_empty: bool,
+}
+
+impl InMemoryRouteVersionGateway {
+    /// Create a gateway that permits all validations (for backward-compatible tests).
+    pub fn permissive() -> Self {
+        Self {
+            valid_versions: Mutex::new(Vec::new()),
+            permit_when_empty: true,
+        }
+    }
+
+    /// Create a gateway with explicit valid version entries.
+    pub fn with_versions(versions: Vec<(Uuid, ActivityId)>) -> Self {
+        Self {
+            valid_versions: Mutex::new(versions),
+            permit_when_empty: false,
+        }
+    }
+}
+
+#[async_trait]
+impl RouteVersionGateway for InMemoryRouteVersionGateway {
+    async fn validate_route_version_exists(
+        &self,
+        route_version_id: Uuid,
+        activity_id: ActivityId,
+    ) -> Result<(), RouteEditingError> {
+        let versions = self.valid_versions.lock().unwrap();
+        if versions.is_empty() && self.permit_when_empty {
+            return Ok(());
+        }
+        if versions
+            .iter()
+            .any(|(vid, aid)| *vid == route_version_id && *aid == activity_id)
+        {
+            Ok(())
+        } else {
+            Err(RouteEditingError::InvalidBaseRouteVersion)
+        }
+    }
+}
+
 fn test_app() -> Router {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     test_app_with_state(state)
 }
@@ -186,6 +315,8 @@ async fn create_draft_returns_201() {
 async fn get_draft_returns_200() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -220,6 +351,8 @@ async fn get_draft_returns_200() {
 async fn apply_operation_returns_200_with_new_revision() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -267,6 +400,8 @@ async fn apply_operation_returns_200_with_new_revision() {
 async fn apply_with_stale_revision_returns_409() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -334,6 +469,8 @@ async fn apply_with_stale_revision_returns_409() {
 async fn apply_with_duplicate_idempotency_key_replays_response() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -406,6 +543,8 @@ async fn apply_with_duplicate_idempotency_key_replays_response() {
 async fn undo_redo_reset_work() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -563,6 +702,8 @@ async fn draft_not_found_returns_404() {
 async fn wrong_owner_returns_403() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -594,6 +735,8 @@ async fn wrong_owner_returns_403() {
 async fn idempotency_key_required_for_apply() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -634,6 +777,8 @@ async fn idempotency_key_required_for_apply() {
 async fn idempotency_key_required_for_undo() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -666,6 +811,8 @@ async fn idempotency_key_required_for_undo() {
 async fn delete_draft_returns_204() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -714,4 +861,299 @@ async fn create_draft_missing_idempotency_key_returns_400() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+// --- Activity validation tests ---
+
+#[tokio::test]
+async fn create_draft_activity_not_found_returns_404() {
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    // Gateway has no activities registered (non-permissive mode)
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+
+    let body = serde_json::json!({
+        "geometry": sample_geometry()
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{activity_id}/route-drafts"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["error"]["code"], "NOT_FOUND");
+}
+
+#[tokio::test]
+async fn create_draft_deleted_activity_returns_422() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Deleted,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+
+    let body = serde_json::json!({
+        "geometry": sample_geometry()
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["error"]["code"], "ACTIVITY_DELETED");
+}
+
+#[tokio::test]
+async fn create_draft_cross_owner_activity_returns_404() {
+    let user_id = Uuid::new_v4();
+    let other_user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+
+    // Activity is owned by other_user_id, but user_id is making the request
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(other_user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+
+    let body = serde_json::json!({
+        "geometry": sample_geometry()
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Non-disclosing: returns 404 instead of 403
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["error"]["code"], "NOT_FOUND");
+}
+
+// --- Base route version validation tests ---
+
+#[tokio::test]
+async fn create_draft_invalid_base_route_version_returns_422() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let invalid_version_id = Uuid::new_v4();
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![])),
+    };
+    let app = test_app_with_state(state);
+
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": invalid_version_id
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["error"]["code"], "INVALID_BASE_ROUTE_VERSION");
+}
+
+#[tokio::test]
+async fn create_draft_valid_base_route_version_succeeds() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![(
+            version_id,
+            activity_id,
+        )])),
+    };
+    let app = test_app_with_state(state);
+
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["baseRouteVersionId"], version_id.to_string());
+    assert_eq!(json["revision"], 0);
+}
+
+#[tokio::test]
+async fn get_draft_returns_base_route_version_id() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![(
+            version_id,
+            activity_id,
+        )])),
+    };
+    let app = test_app_with_state(state);
+
+    // Create draft with base version
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(create_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let draft_id = created["id"].as_str().unwrap();
+
+    // GET the draft and verify baseRouteVersionId is returned
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/route-drafts/{draft_id}"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["baseRouteVersionId"], version_id.to_string());
+    assert_eq!(json["revision"], 0);
+    // Verify geometry is preserved
+    assert_eq!(json["geometry"], sample_geometry());
 }

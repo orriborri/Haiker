@@ -51,8 +51,18 @@
           application/json:
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity not found or not accessible to the caller
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
       "422":
-        description: Validation failed (invalid geometry)
+        description: |
+          Validation failed. Possible error codes:
+          - VALIDATION_FAILED: invalid geometry
+          - ACTIVITY_DELETED: the activity exists but is in deleted state
+          - INVALID_BASE_ROUTE_VERSION: the provided baseRouteVersionId does not exist or does not belong to the activity
         content:
           application/json:
             schema:
