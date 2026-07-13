@@ -30,7 +30,7 @@ export type Selection = PointSelection | SectionSelection | null;
 
 /** MovePoint operation payload */
 export interface MovePointOperation {
-  type: "MovePoint";
+  type: "movePoint";
   segmentIndex: number;
   pointIndex: number;
   newPosition: { latitude: number; longitude: number };
@@ -38,7 +38,7 @@ export interface MovePointOperation {
 
 /** AddPoint operation payload */
 export interface AddPointOperation {
-  type: "AddPoint";
+  type: "addPoint";
   segmentIndex: number;
   afterPointIndex: number;
   point: { latitude: number; longitude: number; elevation?: number };
@@ -46,14 +46,14 @@ export interface AddPointOperation {
 
 /** DeletePoint operation payload */
 export interface DeletePointOperation {
-  type: "DeletePoint";
+  type: "deletePoint";
   segmentIndex: number;
   pointIndex: number;
 }
 
 /** DeleteSection operation payload */
 export interface DeleteSectionOperation {
-  type: "DeleteSection";
+  type: "deleteSection";
   segmentIndex: number;
   startIndex: number;
   endIndex: number;
@@ -61,7 +61,7 @@ export interface DeleteSectionOperation {
 
 /** ReplaceSection operation payload */
 export interface ReplaceSectionOperation {
-  type: "ReplaceSection";
+  type: "replaceSection";
   segmentIndex: number;
   startIndex: number;
   endIndex: number;
@@ -70,14 +70,14 @@ export interface ReplaceSectionOperation {
 
 /** SplitSegment operation payload */
 export interface SplitSegmentOperation {
-  type: "SplitSegment";
+  type: "splitSegment";
   segmentIndex: number;
   atPointIndex: number;
 }
 
 /** JoinSegments operation payload */
 export interface JoinSegmentsOperation {
-  type: "JoinSegments";
+  type: "joinSegments";
   firstSegmentIndex: number;
   secondSegmentIndex: number;
 }

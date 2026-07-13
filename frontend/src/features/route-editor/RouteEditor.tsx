@@ -339,7 +339,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   const handleMovePoint = useCallback(
     (segmentIndex: number, pointIndex: number, newLng: number, newLat: number) => {
       void dispatchOperation({
-        type: "MovePoint",
+        type: "movePoint",
         segmentIndex,
         pointIndex,
         newPosition: { latitude: newLat, longitude: newLng },
@@ -351,7 +351,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   const handleAddPoint = useCallback(
     (segmentIndex: number, afterPointIndex: number, lng: number, lat: number) => {
       void dispatchOperation({
-        type: "AddPoint",
+        type: "addPoint",
         segmentIndex,
         afterPointIndex,
         point: { latitude: lat, longitude: lng },
@@ -364,13 +364,13 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     if (!state.selection) return;
     if (state.selection.type === "point") {
       void dispatchOperation({
-        type: "DeletePoint",
+        type: "deletePoint",
         segmentIndex: state.selection.segmentIndex,
         pointIndex: state.selection.pointIndex,
       });
     } else if (state.selection.type === "section") {
       void dispatchOperation({
-        type: "DeleteSection",
+        type: "deleteSection",
         segmentIndex: state.selection.segmentIndex,
         startIndex: state.selection.startIndex,
         endIndex: state.selection.endIndex,
@@ -382,7 +382,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   const handleSplit = useCallback(() => {
     if (!state.selection || state.selection.type !== "point") return;
     void dispatchOperation({
-      type: "SplitSegment",
+      type: "splitSegment",
       segmentIndex: state.selection.segmentIndex,
       atPointIndex: state.selection.pointIndex,
     });
@@ -393,7 +393,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     // Join the first two segments (simplified - in a full implementation
     // the user would select which segments to join)
     void dispatchOperation({
-      type: "JoinSegments",
+      type: "joinSegments",
       firstSegmentIndex: 0,
       secondSegmentIndex: 1,
     });

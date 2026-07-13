@@ -20,6 +20,8 @@ RouteDraftResponse:
     - revision
     - state
     - geometry
+    - canUndo
+    - canRedo
     - createdAt
     - updatedAt
   properties:
@@ -42,6 +44,12 @@ RouteDraftResponse:
         type: array
         items:
           $ref: "#/RoutePoint"
+    canUndo:
+      type: boolean
+      description: Whether the draft has operations that can be undone
+    canRedo:
+      type: boolean
+      description: Whether the draft has undone operations that can be redone
     createdAt:
       type: string
       format: date-time
@@ -257,6 +265,8 @@ OperationResultResponse:
   required:
     - draftId
     - revision
+    - canUndo
+    - canRedo
   properties:
     draftId:
       type: string
@@ -265,6 +275,12 @@ OperationResultResponse:
       type: integer
       format: int64
       minimum: 0
+    canUndo:
+      type: boolean
+      description: Whether the draft has operations that can be undone
+    canRedo:
+      type: boolean
+      description: Whether the draft has undone operations that can be redone
 
 RoutePoint:
   type: object
