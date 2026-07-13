@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Selection, EditorTool } from "./types";
@@ -7,6 +7,7 @@ import { computeSelection } from "./SelectionModel";
 
 interface EditorMapProps {
   geometry: RoutePointDto[][] | null;
+  baseGeometry: RoutePointDto[][] | null;
   selection: Selection;
   currentTool: EditorTool;
   onSelectionChange: (selection: Selection) => void;
@@ -33,6 +34,7 @@ function geometryToCoords(geometry: RoutePointDto[][]): number[][][] {
 
 export function EditorMap({
   geometry,
+  baseGeometry,
   selection,
   currentTool,
   onSelectionChange,
@@ -46,6 +48,7 @@ export function EditorMap({
     pointIndex: number;
   } | null>(null);
   const isDraggingRef = useRef(false);
+  const [tileError, setTileError] = useState(false);
 
   // Store latest props in refs for event handlers
   const selectionRef = useRef(selection);
@@ -94,8 +97,39 @@ export function EditorMap({
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
+    // Tile error detection
+    map.on("error", (e) => {
+      if (
+        e.error &&
+        (e.error.message?.includes("tile") ||
+          e.error.message?.includes("Tile") ||
+          e.error.message?.includes("source"))
+      ) {
+        setTileError(true);
+      }
+    });
+
     map.on("load", () => {
-      // Route line source and layer
+      // Base route source and layer (rendered BELOW draft route)
+      map.addSource("base-route", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: "base-route-line",
+        type: "line",
+        source: "base-route",
+        layout: { "line-join": "round", "line-cap": "butt" },
+        paint: {
+          "line-color": "#9ca3af",
+          "line-width": 3,
+          "line-opacity": 0.6,
+          "line-dasharray": [4, 4],
+        },
+      });
+
+      // Route line source and layer (draft/corrected route)
       map.addSource("route", {
         type: "geojson",
         data: createRouteGeoJSON([]),
@@ -108,36 +142,8 @@ export function EditorMap({
         layout: { "line-join": "round", "line-cap": "round" },
         paint: {
           "line-color": "#3b82f6",
-          "line-width": 4,
+          "line-width": 5,
           "line-opacity": 0.8,
-        },
-      });
-
-      // Route points source and layer
-      map.addSource("route-points", {
-        type: "geojson",
-        data: createPointsGeoJSON([], null),
-      });
-
-      map.addLayer({
-        id: "route-points-layer",
-        type: "circle",
-        source: "route-points",
-        paint: {
-          "circle-radius": [
-            "case",
-            ["==", ["get", "selected"], true],
-            8,
-            5,
-          ],
-          "circle-color": [
-            "case",
-            ["==", ["get", "selected"], true],
-            "#ef4444",
-            "#3b82f6",
-          ],
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
         },
       });
 
@@ -154,13 +160,54 @@ export function EditorMap({
         layout: { "line-join": "round", "line-cap": "round" },
         paint: {
           "line-color": "#ef4444",
-          "line-width": 6,
-          "line-opacity": 0.6,
+          "line-width": 7,
+          "line-opacity": 0.8,
         },
       });
 
-      // Click handler for point selection
-      map.on("click", "route-points-layer", (e) => {
+      // Route points source and layers
+      map.addSource("route-points", {
+        type: "geojson",
+        data: createPointsGeoJSON([], null),
+      });
+
+      // Transparent hit-area circle layer for touch accuracy
+      map.addLayer({
+        id: "route-points-hitarea",
+        type: "circle",
+        source: "route-points",
+        paint: {
+          "circle-radius": 22,
+          "circle-color": "transparent",
+          "circle-stroke-width": 0,
+        },
+      });
+
+      // Visible points layer on top
+      map.addLayer({
+        id: "route-points-layer",
+        type: "circle",
+        source: "route-points",
+        paint: {
+          "circle-radius": [
+            "case",
+            ["==", ["get", "selected"], true],
+            10,
+            7,
+          ],
+          "circle-color": [
+            "case",
+            ["==", ["get", "selected"], true],
+            "#ef4444",
+            "#3b82f6",
+          ],
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
+        },
+      });
+
+      // Click handler for point selection (on hitarea for better touch targets)
+      map.on("click", "route-points-hitarea", (e) => {
         if (isDraggingRef.current) return;
         const feature = e.features?.[0];
         if (!feature || !feature.properties) return;
@@ -199,7 +246,7 @@ export function EditorMap({
       });
 
       // Drag handling for move tool
-      map.on("mousedown", "route-points-layer", (e) => {
+      map.on("mousedown", "route-points-hitarea", (e) => {
         if (currentToolRef.current !== "move") return;
         const feature = e.features?.[0];
         if (!feature || !feature.properties) return;
@@ -235,7 +282,7 @@ export function EditorMap({
       });
 
       // Cursor management
-      map.on("mouseenter", "route-points-layer", () => {
+      map.on("mouseenter", "route-points-hitarea", () => {
         if (currentToolRef.current === "move") {
           map.getCanvas().style.cursor = "grab";
         } else {
@@ -243,7 +290,7 @@ export function EditorMap({
         }
       });
 
-      map.on("mouseleave", "route-points-layer", () => {
+      map.on("mouseleave", "route-points-hitarea", () => {
         if (!isDraggingRef.current) {
           map.getCanvas().style.cursor = "";
         }
@@ -264,6 +311,15 @@ export function EditorMap({
     if (!map || !map.isStyleLoaded()) return;
 
     const coords = geometry ? geometryToCoords(geometry) : [];
+
+    // Update base route
+    const baseCoords = baseGeometry ? geometryToCoords(baseGeometry) : [];
+    const baseRouteSource = map.getSource("base-route") as maplibregl.GeoJSONSource | undefined;
+    if (baseRouteSource) {
+      baseRouteSource.setData(createBaseRouteGeoJSON(baseCoords));
+    }
+
+    // Update draft route
     const routeSource = map.getSource("route") as maplibregl.GeoJSONSource | undefined;
     if (routeSource) {
       routeSource.setData(createRouteGeoJSON(coords));
@@ -278,7 +334,7 @@ export function EditorMap({
     if (selectionSource) {
       selectionSource.setData(createSelectionGeoJSON(coords, selection));
     }
-  }, [geometry, selection]);
+  }, [geometry, baseGeometry, selection]);
 
   useEffect(() => {
     updateMap();
@@ -305,32 +361,76 @@ export function EditorMap({
   }, [geometry !== null]);
 
   return (
-    <div
-      ref={mapContainerRef}
-      className="h-full w-full"
-      role="application"
-      aria-label="Route editor map"
-      aria-roledescription="Interactive map for editing route geometry"
-      tabIndex={0}
-    />
+    <div className="relative h-full w-full">
+      <div
+        ref={mapContainerRef}
+        className="h-full w-full"
+        role="application"
+        aria-label="Route editor map"
+        aria-roledescription="Interactive map for editing route geometry"
+        tabIndex={0}
+      />
+      {tileError && (
+        <div
+          className="absolute inset-x-0 top-0 flex items-center justify-center bg-black/60 px-4 py-3"
+          role="alert"
+          aria-live="polite"
+        >
+          <p className="text-sm font-medium text-white">
+            Map tiles failed to load. Check your connection.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
-/** Create a GeoJSON FeatureCollection for the route lines */
-function createRouteGeoJSON(
+/** Create a GeoJSON FeatureCollection for the base route lines */
+function createBaseRouteGeoJSON(
   geometry: number[][][],
 ): GeoJSON.FeatureCollection {
-  const features: GeoJSON.Feature[] = geometry.map((segment, segIdx) => ({
+  const features: GeoJSON.Feature[] = geometry.map((segment) => ({
     type: "Feature",
-    properties: {
-      segmentIndex: segIdx,
-      afterPointIndex: 0,
-    },
+    properties: {},
     geometry: {
       type: "LineString",
       coordinates: segment,
     },
   }));
+
+  return { type: "FeatureCollection", features };
+}
+
+/** Create a GeoJSON FeatureCollection for the route lines with per-segment features */
+function createRouteGeoJSON(
+  geometry: number[][][],
+): GeoJSON.FeatureCollection {
+  const features: GeoJSON.Feature[] = [];
+
+  for (let segIdx = 0; segIdx < geometry.length; segIdx++) {
+    const segment = geometry[segIdx];
+    if (!segment || segment.length < 2) continue;
+
+    // Create per-segment line features with segmentIndex property
+    // Also create per-edge features so click events can identify where to add points
+    for (let ptIdx = 0; ptIdx < segment.length - 1; ptIdx++) {
+      const start = segment[ptIdx];
+      const end = segment[ptIdx + 1];
+      if (!start || !end) continue;
+
+      features.push({
+        type: "Feature",
+        properties: {
+          segmentIndex: segIdx,
+          afterPointIndex: ptIdx,
+        },
+        geometry: {
+          type: "LineString",
+          coordinates: [start, end],
+        },
+      });
+    }
+  }
 
   return { type: "FeatureCollection", features };
 }

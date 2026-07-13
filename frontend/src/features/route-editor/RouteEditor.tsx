@@ -512,6 +512,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
       <div className="flex-1 relative" aria-label="Map editing area">
         <EditorMap
           geometry={state.optimisticGeometry}
+          baseGeometry={state.baseGeometry}
           selection={state.selection}
           currentTool={state.currentTool}
           onSelectionChange={handleSelectionChange}
