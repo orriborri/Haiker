@@ -61,13 +61,16 @@ fn activity_error_to_api_error(err: ActivityCatalogError) -> ApiError {
             problem_type: "/problems/invalid-cursor".to_string(),
             title: "Invalid Cursor".to_string(),
         },
-        ActivityCatalogError::PersistenceError { message } => ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "INTERNAL_ERROR".to_string(),
-            detail: message,
-            problem_type: "/problems/internal-error".to_string(),
-            title: "Internal Server Error".to_string(),
-        },
+        ActivityCatalogError::PersistenceError { message } => {
+            tracing::error!(error = %message, "persistence error during activity operation");
+            ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "INTERNAL_ERROR".to_string(),
+                detail: "a persistence error occurred".to_string(),
+                problem_type: "/problems/internal-error".to_string(),
+                title: "Internal Server Error".to_string(),
+            }
+        }
     }
 }
 

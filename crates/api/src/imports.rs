@@ -150,20 +150,26 @@ fn import_error_to_api_error(err: ImportError) -> ApiError {
             problem_type: "/problems/validation-failed".to_string(),
             title: "Validation Failed".to_string(),
         },
-        ImportError::StorageError { message } => ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "STORAGE_ERROR".to_string(),
-            detail: message,
-            problem_type: "/problems/storage-error".to_string(),
-            title: "Storage Error".to_string(),
-        },
-        _ => ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "INTERNAL_ERROR".to_string(),
-            detail: err.to_string(),
-            problem_type: "/problems/internal-error".to_string(),
-            title: "Internal Server Error".to_string(),
-        },
+        ImportError::StorageError { message } => {
+            tracing::error!(error = %message, "storage error during import operation");
+            ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "STORAGE_ERROR".to_string(),
+                detail: "a storage error occurred".to_string(),
+                problem_type: "/problems/storage-error".to_string(),
+                title: "Storage Error".to_string(),
+            }
+        }
+        _ => {
+            tracing::error!(error = %err, "unexpected error during import operation");
+            ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "INTERNAL_ERROR".to_string(),
+                detail: "an unexpected error occurred".to_string(),
+                problem_type: "/problems/internal-error".to_string(),
+                title: "Internal Server Error".to_string(),
+            }
+        }
     }
 }
 
