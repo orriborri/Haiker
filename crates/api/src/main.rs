@@ -5,6 +5,7 @@ use haiker_platform::config::AppConfig;
 use haiker_platform::database;
 use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::object_storage::ObjectStorageClient;
+use haiker_platform::recorded_route_persistence::PgRecordedRouteRepository;
 use haiker_platform::request_id::request_id_middleware;
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use std::sync::Arc;
@@ -22,6 +23,8 @@ mod error;
 mod health;
 mod imports;
 mod imports_dto;
+mod recorded_route;
+mod recorded_route_dto;
 
 /// OpenAPI documentation specification.
 #[derive(OpenApi)]
@@ -85,6 +88,19 @@ async fn main() {
         )
         .with_state(activity_state);
 
+    // Recorded route subsystem state
+    let recorded_route_state = recorded_route::RecordedRouteAppState {
+        activity_repo: Arc::new(PgActivityRepository::new(pool.clone())),
+        route_repo: Arc::new(PgRecordedRouteRepository::new(pool.clone())),
+    };
+
+    let recorded_route_routes = Router::new()
+        .route(
+            "/v1/activities/{activityId}/recorded-route",
+            get(recorded_route::get_recorded_route_handler),
+        )
+        .with_state(recorded_route_state);
+
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
@@ -94,6 +110,7 @@ async fn main() {
         .route("/auth/logout", post(auth_handlers::post_logout))
         .merge(import_routes)
         .merge(activity_routes)
+        .merge(recorded_route_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());

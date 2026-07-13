@@ -76,3 +76,55 @@
           application/json:
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/activities/{activityId}/recorded-route:
+  get:
+    operationId: getRecordedRoute
+    summary: Get recorded route geometry for an activity
+    description: Returns the recorded route geometry as GeoJSON (full detail) or a simplified preview with bounding box and statistics. Returns 404 for missing, cross-owner, or deleted activities (non-disclosing).
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The unique activity identifier (UUID).
+        schema:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      - name: detail
+        in: query
+        required: false
+        description: Level of detail for the response. "full" returns complete GeoJSON geometry, "preview" returns bounding box and statistics only.
+        schema:
+          type: string
+          enum:
+            - full
+            - preview
+          default: full
+          example: full
+    responses:
+      "200":
+        description: The recorded route geometry (GeoJSON FeatureCollection for full, JSON for preview).
+        content:
+          application/geo+json:
+            schema:
+              $ref: "../components/activities.yaml#/RecordedRouteResponse"
+          application/json:
+            schema:
+              $ref: "../components/activities.yaml#/RecordedRoutePreviewResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Recorded route not found (also returned for cross-owner access, non-disclosing).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
