@@ -9,6 +9,7 @@ use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::object_storage::ObjectStorageClient;
 use haiker_platform::recorded_route_persistence::PgRecordedRouteRepository;
 use haiker_platform::request_id::request_id_middleware;
+use haiker_platform::route_editing_persistence::PgRouteDraftRepository;
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use std::sync::Arc;
 use std::time::Duration;
@@ -113,10 +114,9 @@ async fn main() {
         )
         .with_state(recorded_route_state);
 
-    // Route editing subsystem state (using in-memory repo placeholder for now)
-    // In production, this will use a PgRouteDraftRepository
+    // Route editing subsystem state with PostgreSQL persistence
     let route_editing_state = route_editing::RouteEditingAppState {
-        repo: Arc::new(InMemoryRouteDraftRepositoryPlaceholder::new()),
+        repo: Arc::new(PgRouteDraftRepository::new(pool.clone())),
     };
 
     let route_editing_routes = Router::new()
@@ -211,91 +211,6 @@ impl AuditSink for AuditSinkAdapter {
                 },
             )?;
         Ok(())
-    }
-}
-
-/// Temporary in-memory route draft repository for production startup.
-/// Will be replaced with PgRouteDraftRepository once persistence layer is implemented.
-struct InMemoryRouteDraftRepositoryPlaceholder {
-    drafts: std::sync::Mutex<
-        std::collections::HashMap<
-            haiker_app::route_editing::RouteDraftId,
-            haiker_app::route_editing::RouteDraft,
-        >,
-    >,
-}
-
-impl InMemoryRouteDraftRepositoryPlaceholder {
-    fn new() -> Self {
-        Self {
-            drafts: std::sync::Mutex::new(std::collections::HashMap::new()),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl haiker_app::route_editing::RouteDraftRepository for InMemoryRouteDraftRepositoryPlaceholder {
-    async fn save(
-        &self,
-        draft: &haiker_app::route_editing::RouteDraft,
-    ) -> Result<(), haiker_app::route_editing::RouteEditingError> {
-        self.drafts.lock().unwrap().insert(draft.id, draft.clone());
-        Ok(())
-    }
-
-    async fn find_by_id(
-        &self,
-        id: haiker_app::route_editing::RouteDraftId,
-    ) -> Result<
-        Option<haiker_app::route_editing::RouteDraft>,
-        haiker_app::route_editing::RouteEditingError,
-    > {
-        Ok(self.drafts.lock().unwrap().get(&id).cloned())
-    }
-
-    async fn find_active_by_activity(
-        &self,
-        activity_id: haiker_app::activity_catalog::ActivityId,
-        owner_id: haiker_app::identity::UserId,
-    ) -> Result<
-        Option<haiker_app::route_editing::RouteDraft>,
-        haiker_app::route_editing::RouteEditingError,
-    > {
-        Ok(self
-            .drafts
-            .lock()
-            .unwrap()
-            .values()
-            .find(|d| {
-                d.activity_id == activity_id
-                    && d.owner_id == owner_id
-                    && d.state == haiker_app::route_editing::DraftState::Active
-            })
-            .cloned())
-    }
-
-    async fn update(
-        &self,
-        draft: &haiker_app::route_editing::RouteDraft,
-    ) -> Result<(), haiker_app::route_editing::RouteEditingError> {
-        self.drafts.lock().unwrap().insert(draft.id, draft.clone());
-        Ok(())
-    }
-
-    async fn find_by_operation_id(
-        &self,
-        operation_id: haiker_app::route_editing::OperationId,
-    ) -> Result<
-        Option<haiker_app::route_editing::RouteDraftId>,
-        haiker_app::route_editing::RouteEditingError,
-    > {
-        Ok(self
-            .drafts
-            .lock()
-            .unwrap()
-            .values()
-            .find(|d| d.applied_operations.iter().any(|e| e.id == operation_id))
-            .map(|d| d.id))
     }
 }
 
