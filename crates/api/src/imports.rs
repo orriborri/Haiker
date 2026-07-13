@@ -416,6 +416,74 @@ mod tests {
         ("Authorization".to_string(), format!("Bearer {user_id}"))
     }
 
+    /// Extract the response body as a JSON value.
+    async fn response_json(response: axum::http::Response<Body>) -> serde_json::Value {
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    /// Assert that a JSON value matches the ProblemDetail schema with the expected status code.
+    ///
+    /// Validates:
+    /// - `type` is a string starting with `/problems/`
+    /// - `title` is a non-empty string
+    /// - `status` is an integer matching `expected_status`
+    /// - `code` is a non-empty UPPER_SNAKE_CASE string
+    /// - `detail` is a string
+    /// - `requestId` is a valid UUID string
+    fn assert_problem_detail(json: &serde_json::Value, expected_status: u16) {
+        // type: string starting with /problems/
+        let problem_type = json["type"]
+            .as_str()
+            .expect("ProblemDetail must have 'type' as string");
+        assert!(
+            problem_type.starts_with("/problems/"),
+            "type must start with /problems/, got: {problem_type}"
+        );
+
+        // title: non-empty string
+        let title = json["title"]
+            .as_str()
+            .expect("ProblemDetail must have 'title' as string");
+        assert!(!title.is_empty(), "title must not be empty");
+
+        // status: integer matching expected
+        let status = json["status"]
+            .as_u64()
+            .expect("ProblemDetail must have 'status' as integer");
+        assert_eq!(
+            status, expected_status as u64,
+            "status must match expected: {expected_status}"
+        );
+
+        // code: non-empty UPPER_SNAKE_CASE string
+        let code = json["code"]
+            .as_str()
+            .expect("ProblemDetail must have 'code' as string");
+        assert!(!code.is_empty(), "code must not be empty");
+        assert!(
+            code.chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()),
+            "code must be UPPER_SNAKE_CASE, got: {code}"
+        );
+
+        // detail: string (may be empty)
+        json["detail"]
+            .as_str()
+            .expect("ProblemDetail must have 'detail' as string");
+
+        // requestId: valid UUID string
+        let request_id = json["requestId"]
+            .as_str()
+            .expect("ProblemDetail must have 'requestId' as string");
+        assert!(
+            Uuid::parse_str(request_id).is_ok(),
+            "requestId must be a valid UUID, got: {request_id}"
+        );
+    }
+
     #[tokio::test]
     async fn start_import_returns_202() {
         let app = test_app();
@@ -1008,5 +1076,815 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
         assert_eq!(json["code"], "IDEMPOTENCY_PAYLOAD_MISMATCH");
+    }
+
+    // ===== Contract Tests: POST /v1/imports =====
+
+    #[tokio::test]
+    async fn contract_post_imports_202_response_matches_schema() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-202")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let json = response_json(response).await;
+
+        // importId must be a valid UUID
+        let import_id = json["importId"]
+            .as_str()
+            .expect("importId must be a string");
+        assert!(
+            Uuid::parse_str(import_id).is_ok(),
+            "importId must be a valid UUID"
+        );
+
+        // uploadUrl must be a non-empty string
+        let upload_url = json["uploadUrl"]
+            .as_str()
+            .expect("uploadUrl must be a string");
+        assert!(!upload_url.is_empty(), "uploadUrl must not be empty");
+
+        // status must be "uploading"
+        assert_eq!(json["status"], "uploading");
+    }
+
+    #[tokio::test]
+    async fn contract_post_imports_400_missing_idempotency_key_returns_problem_detail() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 400);
+        assert_eq!(json["code"], "MISSING_IDEMPOTENCY_KEY");
+    }
+
+    #[tokio::test]
+    async fn contract_post_imports_401_missing_auth_returns_problem_detail() {
+        let app = test_app();
+
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-401")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 401);
+        assert_eq!(json["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn contract_post_imports_422_file_too_large_returns_problem_detail() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+
+        let body = serde_json::json!({
+            "filename": "big.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 50 * 1024 * 1024 + 1
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-422-size")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 422);
+        assert_eq!(json["code"], "UPLOAD_TOO_LARGE");
+    }
+
+    #[tokio::test]
+    async fn contract_post_imports_422_invalid_content_type_returns_problem_detail() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+
+        let body = serde_json::json!({
+            "filename": "data.json",
+            "contentType": "application/json",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-422-ct")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 422);
+        assert_eq!(json["code"], "INVALID_MEDIA_TYPE");
+    }
+
+    #[tokio::test]
+    async fn contract_post_imports_409_payload_mismatch_returns_problem_detail() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        let body1 = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response1 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-409-key")
+                    .body(Body::from(serde_json::to_vec(&body1).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response1.status(), StatusCode::ACCEPTED);
+
+        let body2 = serde_json::json!({
+            "filename": "other.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response2 = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-409-key")
+                    .body(Body::from(serde_json::to_vec(&body2).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response2.status(), StatusCode::CONFLICT);
+        let json = response_json(response2).await;
+        assert_problem_detail(&json, 409);
+        assert_eq!(json["code"], "IDEMPOTENCY_PAYLOAD_MISMATCH");
+    }
+
+    // ===== Contract Tests: POST /v1/imports/:id/completion =====
+
+    #[tokio::test]
+    async fn contract_post_completion_200_response_matches_schema() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route(
+                "/v1/imports/{import_id}/completion",
+                post(post_complete_upload),
+            )
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 2048
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-complete-200")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        let complete_body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{import_id}/completion"))
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&complete_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+
+        // id: valid UUID matching the import
+        let id = json["id"].as_str().expect("id must be a string");
+        assert_eq!(id, import_id);
+        assert!(Uuid::parse_str(id).is_ok(), "id must be a valid UUID");
+
+        // status: string
+        let status = json["status"].as_str().expect("status must be a string");
+        assert_eq!(status, "uploaded");
+
+        // createdAt: required string (ISO 8601)
+        let created_at = json["createdAt"]
+            .as_str()
+            .expect("createdAt must be a string");
+        assert!(!created_at.is_empty(), "createdAt must not be empty");
+
+        // updatedAt: required string (ISO 8601)
+        let updated_at = json["updatedAt"]
+            .as_str()
+            .expect("updatedAt must be a string");
+        assert!(!updated_at.is_empty(), "updatedAt must not be empty");
+
+        // failureReason: optional (should be absent for non-failed)
+        assert!(
+            json.get("failureReason").is_none() || json["failureReason"].is_null(),
+            "failureReason should be absent or null for non-failed import"
+        );
+
+        // activityId: optional (should be absent before parsing)
+        assert!(
+            json.get("activityId").is_none() || json["activityId"].is_null(),
+            "activityId should be absent or null before parsing"
+        );
+    }
+
+    #[tokio::test]
+    async fn contract_post_completion_401_missing_auth_returns_problem_detail() {
+        let app = test_app();
+        let random_id = Uuid::new_v4();
+
+        let body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{random_id}/completion"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 401);
+        assert_eq!(json["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn contract_post_completion_403_wrong_owner_returns_problem_detail() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route(
+                "/v1/imports/{import_id}/completion",
+                post(post_complete_upload),
+            )
+            .with_state(state);
+
+        let user1 = Uuid::new_v4();
+        let user2 = Uuid::new_v4();
+
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", format!("Bearer {user1}"))
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-403")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        let complete_body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{import_id}/completion"))
+                    .header("Authorization", format!("Bearer {user2}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&complete_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 403);
+        assert_eq!(json["code"], "FORBIDDEN");
+    }
+
+    #[tokio::test]
+    async fn contract_post_completion_404_nonexistent_import_returns_problem_detail() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+        let random_id = Uuid::new_v4();
+
+        let body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{random_id}/completion"))
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 404);
+        assert_eq!(json["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn contract_post_completion_409_invalid_state_returns_problem_detail() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route(
+                "/v1/imports/{import_id}/completion",
+                post(post_complete_upload),
+            )
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        // Start and complete the import
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-409-state")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        let complete_body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        // First completion succeeds
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{import_id}/completion"))
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&complete_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Second completion fails with 409 (already uploaded)
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{import_id}/completion"))
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&complete_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 409);
+        assert_eq!(json["code"], "INVALID_STATE_TRANSITION");
+    }
+
+    // ===== Contract Tests: GET /v1/imports/:id =====
+
+    #[tokio::test]
+    async fn contract_get_import_200_response_matches_schema() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route("/v1/imports/{import_id}", get(get_import_status))
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-get-200")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{import_id}"))
+                    .header("Authorization", &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+
+        // id: valid UUID
+        let id = json["id"].as_str().expect("id must be a string");
+        assert_eq!(id, import_id);
+        assert!(Uuid::parse_str(id).is_ok(), "id must be a valid UUID");
+
+        // status: non-empty string
+        let status = json["status"].as_str().expect("status must be a string");
+        assert!(!status.is_empty(), "status must not be empty");
+
+        // createdAt: required string
+        let created_at = json["createdAt"]
+            .as_str()
+            .expect("createdAt must be a string");
+        assert!(!created_at.is_empty());
+
+        // updatedAt: required string
+        let updated_at = json["updatedAt"]
+            .as_str()
+            .expect("updatedAt must be a string");
+        assert!(!updated_at.is_empty());
+
+        // failureReason: absent or null for non-failed
+        assert!(
+            json.get("failureReason").is_none() || json["failureReason"].is_null(),
+            "failureReason should be absent for non-failed import"
+        );
+
+        // activityId: absent or null
+        assert!(
+            json.get("activityId").is_none() || json["activityId"].is_null(),
+            "activityId should be absent before parsing"
+        );
+    }
+
+    #[tokio::test]
+    async fn contract_get_import_401_missing_auth_returns_problem_detail() {
+        let app = test_app();
+        let random_id = Uuid::new_v4();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{random_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 401);
+        assert_eq!(json["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn contract_get_import_404_nonexistent_id_returns_problem_detail() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+        let random_id = Uuid::new_v4();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{random_id}"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 404);
+        assert_eq!(json["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn contract_get_import_404_wrong_owner_returns_problem_detail() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route("/v1/imports/{import_id}", get(get_import_status))
+            .with_state(state);
+
+        let user1 = Uuid::new_v4();
+        let user2 = Uuid::new_v4();
+
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", format!("Bearer {user1}"))
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-get-404-owner")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        // GET as different user returns 404 (not 403)
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{import_id}"))
+                    .header("Authorization", format!("Bearer {user2}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 404);
+        assert_eq!(json["code"], "NOT_FOUND");
+    }
+
+    // ===== Contract Test: Failed import sanitized failureReason =====
+
+    #[tokio::test]
+    async fn contract_get_failed_import_has_sanitized_failure_reason() {
+        let repo = Arc::new(InMemoryImportRepository::new());
+
+        // Create an import and manually transition it to failed with internal error
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import = Import::new(
+            owner_id,
+            haiker_app::imports::ImportFormat::Gpx,
+            "contract-fail-key".to_string(),
+            None,
+        )
+        .unwrap();
+        import.start_upload().unwrap();
+        import
+            .fail("sqlx error: connection refused at /var/lib/postgresql/data".to_string())
+            .unwrap();
+
+        repo.imports
+            .lock()
+            .unwrap()
+            .insert(import.id, import.clone());
+
+        let state = ImportAppState {
+            repo,
+            url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports/{import_id}", get(get_import_status))
+            .with_state(state);
+
+        let auth_val = format!("Bearer {}", owner_id.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{}", import.id.0))
+                    .header("Authorization", &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+
+        // Verify the response matches the schema
+        assert_eq!(json["id"], import.id.0.to_string());
+        assert_eq!(json["status"], "failed");
+
+        // The failure reason must be sanitized - no internal details
+        let failure_reason = json["failureReason"]
+            .as_str()
+            .expect("failureReason must be present for failed imports");
+        assert_eq!(
+            failure_reason, "an internal error occurred",
+            "Internal error details must be sanitized"
+        );
+        assert!(
+            !failure_reason.contains("sqlx"),
+            "Must not contain internal details"
+        );
+        assert!(
+            !failure_reason.contains("postgresql"),
+            "Must not contain infrastructure details"
+        );
     }
 }
