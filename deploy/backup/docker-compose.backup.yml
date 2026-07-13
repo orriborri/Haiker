@@ -1,0 +1,82 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-haiker}
+      POSTGRES_USER: ${POSTGRES_USER:-haiker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-haiker_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_wal_archive:/var/lib/postgresql/wal_archive
+      - ./postgresql/postgresql-backup.conf:/etc/postgresql/conf.d/backup.conf:ro
+      - ./postgresql/pg_hba_backup.conf:/etc/postgresql/pg_hba_backup.conf:ro
+    command: >
+      postgres
+        -c config_file=/etc/postgresql/conf.d/backup.conf
+        -c hba_file=/etc/postgresql/pg_hba_backup.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-haiker} -d ${POSTGRES_DB:-haiker}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backup-scheduler:
+    image: postgis/postgis:16-3.4
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        echo "Installing cron schedule: $${BACKUP_SCHEDULE}"
+        apt-get update -qq && apt-get install -y -qq cron gnupg > /dev/null 2>&1
+        echo "$${BACKUP_SCHEDULE} /scripts/backup-postgres.sh >> /var/log/backup.log 2>&1" | crontab -
+        cron -f
+    environment:
+      BACKUP_POSTGRES_HOST: postgres
+      BACKUP_POSTGRES_PORT: "5432"
+      BACKUP_POSTGRES_USER: ${BACKUP_POSTGRES_USER:-backup_user}
+      BACKUP_POSTGRES_PASSWORD: ${BACKUP_POSTGRES_PASSWORD:-backup_secure_password}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?BACKUP_ENCRYPTION_KEY must be set}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_STORAGE_PATH: /backups
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 2 * * *}
+    volumes:
+      - postgres_backups:/backups
+      - postgres_wal_archive:/var/lib/postgresql/wal_archive:ro
+      - ../../scripts/backup-postgres.sh:/scripts/backup-postgres.sh:ro
+      - ../../scripts/verify-backup.sh:/scripts/verify-backup.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backup-verify:
+    image: postgis/postgis:16-3.4
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        apt-get update -qq && apt-get install -y -qq gnupg > /dev/null 2>&1
+        while true; do
+          /scripts/verify-backup.sh || true
+          sleep 3600
+        done
+    environment:
+      BACKUP_STORAGE_PATH: /backups
+      WAL_ARCHIVE_PATH: /var/lib/postgresql/wal_archive
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      BACKUP_RPO_BASE_HOURS: ${BACKUP_RPO_BASE_HOURS:-24}
+      BACKUP_RPO_WAL_MINUTES: ${BACKUP_RPO_WAL_MINUTES:-15}
+      BACKUP_STORAGE_WARN_PERCENT: ${BACKUP_STORAGE_WARN_PERCENT:-80}
+    volumes:
+      - postgres_backups:/backups:ro
+      - postgres_wal_archive:/var/lib/postgresql/wal_archive:ro
+      - ../../scripts/verify-backup.sh:/scripts/verify-backup.sh:ro
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  postgres_wal_archive:
+  postgres_backups:
