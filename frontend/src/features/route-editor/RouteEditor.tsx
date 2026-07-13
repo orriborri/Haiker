@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { EditorMap } from "./EditorMap";
 import { EditorToolbar } from "./EditorToolbar";
@@ -15,10 +15,43 @@ import {
 import { useRecordedRoute } from "@/features/activity-detail/useRecordedRoute";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { ApiError } from "@/api/client";
+import type { RoutePointDto } from "@/api/client";
 import type { Selection, RouteOperation } from "./types";
 
 interface RouteEditorProps {
   activityId: string;
+}
+
+/**
+ * Convert a GeoJSON FeatureCollection (from recorded route) to the backend
+ * geometry format: array of segments, each segment is array of {latitude, longitude, elevation?}.
+ */
+function recordedRouteToGeometry(
+  recordedRoute: { features: Array<{ geometry: { type: string; coordinates: number[][] } }> },
+): RoutePointDto[][] {
+  const segments: RoutePointDto[][] = [];
+  for (const feature of recordedRoute.features) {
+    if (feature.geometry.type === "LineString") {
+      const segment: RoutePointDto[] = feature.geometry.coordinates
+        .filter((coord): coord is number[] => coord.length >= 2)
+        .map((coord) => ({
+          latitude: coord[1]!,
+          longitude: coord[0]!,
+          ...(coord[2] != null ? { elevation: coord[2] } : {}),
+        }));
+      if (segment.length >= 2) {
+        segments.push(segment);
+      }
+    }
+  }
+  // Ensure at least one valid segment
+  if (segments.length === 0) {
+    segments.push([
+      { latitude: 0, longitude: 0 },
+      { latitude: 1, longitude: 1 },
+    ]);
+  }
+  return segments;
 }
 
 export function RouteEditor({ activityId }: RouteEditorProps) {
@@ -36,6 +69,9 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     clearConflict,
     setCanUndoRedo,
   } = useEditorState();
+
+  // Track base geometry for reset operations
+  const baseGeometryRef = useRef<RoutePointDto[][] | null>(null);
 
   // Fetch recorded route as base geometry for creating draft
   const { data: recordedRoute, isLoading: routeLoading } =
@@ -73,28 +109,16 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   useEffect(() => {
     if (state.draftId || !recordedRoute || createDraft.isPending) return;
 
-    // Convert FeatureCollection to MultiLineString geometry
-    const coordinates: number[][] = [];
-    for (const feature of recordedRoute.features) {
-      if (feature.geometry.type === "LineString") {
-        coordinates.push(...feature.geometry.coordinates.map((c) => [...c]));
-      }
-    }
-
-    const geometry = {
-      type: "MultiLineString" as const,
-      coordinates: coordinates.length > 0 ? [coordinates] : [[
-        [0, 0],
-        [1, 1],
-      ]],
-    };
+    // Convert FeatureCollection to domain geometry format
+    const geometry = recordedRouteToGeometry(recordedRoute);
+    baseGeometryRef.current = geometry;
 
     createDraft.mutate(
       { activityId, geometry },
       {
         onSuccess: (data) => {
-          setDraft(data.id, data.revision, data.geometry.coordinates);
-          setCanUndoRedo(false, false);
+          setDraft(data.id, data.revision, data.geometry, geometry);
+          setCanUndoRedo(data.canUndo, data.canRedo);
         },
       },
     );
@@ -110,7 +134,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   // Sync draft data to state when it changes
   useEffect(() => {
     if (draft && state.draftId) {
-      setCanUndoRedo(draft.revision > 0, false);
+      setCanUndoRedo(draft.canUndo, draft.canRedo);
     }
   }, [draft, state.draftId, setCanUndoRedo]);
 
@@ -160,10 +184,12 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
             if (updatedDraft) {
               operationSuccess(
                 result.revision,
-                updatedDraft.geometry.coordinates,
+                updatedDraft.geometry,
+                result.canUndo,
+                result.canRedo,
               );
             } else {
-              operationSuccess(result.revision, state.optimisticGeometry ?? []);
+              operationSuccess(result.revision, state.optimisticGeometry ?? [], result.canUndo, result.canRedo);
             }
           },
           onError: (error) => {
@@ -203,10 +229,12 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
           if (updatedDraft) {
             operationSuccess(
               result.revision,
-              updatedDraft.geometry.coordinates,
+              updatedDraft.geometry,
+              result.canUndo,
+              result.canRedo,
             );
           } else {
-            operationSuccess(result.revision, state.optimisticGeometry ?? []);
+            operationSuccess(result.revision, state.optimisticGeometry ?? [], result.canUndo, result.canRedo);
           }
         },
         onError: (error) => {
@@ -236,10 +264,12 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
           if (updatedDraft) {
             operationSuccess(
               result.revision,
-              updatedDraft.geometry.coordinates,
+              updatedDraft.geometry,
+              result.canUndo,
+              result.canRedo,
             );
           } else {
-            operationSuccess(result.revision, state.optimisticGeometry ?? []);
+            operationSuccess(result.revision, state.optimisticGeometry ?? [], result.canUndo, result.canRedo);
           }
         },
         onError: (error) => {
@@ -260,19 +290,24 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
   const handleReset = useCallback(() => {
     if (!state.draftId) return;
+    const geometry = state.baseGeometry ?? baseGeometryRef.current;
+    if (!geometry) return;
+
     operationStart();
     resetOp.mutate(
-      { draftId: state.draftId, expectedRevision: state.revision },
+      { draftId: state.draftId, expectedRevision: state.revision, geometry },
       {
         onSuccess: async (result) => {
           const { data: updatedDraft } = await refetchDraft();
           if (updatedDraft) {
             operationSuccess(
               result.revision,
-              updatedDraft.geometry.coordinates,
+              updatedDraft.geometry,
+              result.canUndo,
+              result.canRedo,
             );
           } else {
-            operationSuccess(result.revision, state.optimisticGeometry ?? []);
+            operationSuccess(result.revision, state.optimisticGeometry ?? [], result.canUndo, result.canRedo);
           }
           clearSelection();
         },
@@ -285,6 +320,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     state.draftId,
     state.revision,
     state.optimisticGeometry,
+    state.baseGeometry,
     operationStart,
     resetOp,
     refetchDraft,
@@ -306,7 +342,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         type: "MovePoint",
         segmentIndex,
         pointIndex,
-        newPosition: { lat: newLat, lng: newLng },
+        newPosition: { latitude: newLat, longitude: newLng },
       });
     },
     [dispatchOperation],
@@ -318,7 +354,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         type: "AddPoint",
         segmentIndex,
         afterPointIndex,
-        point: { lat, lng: lng },
+        point: { latitude: lat, longitude: lng },
       });
     },
     [dispatchOperation],
@@ -369,7 +405,9 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     if (updatedDraft) {
       operationSuccess(
         updatedDraft.revision,
-        updatedDraft.geometry.coordinates,
+        updatedDraft.geometry,
+        updatedDraft.canUndo,
+        updatedDraft.canRedo,
       );
     }
   }, [clearConflict, refetchDraft, operationSuccess]);

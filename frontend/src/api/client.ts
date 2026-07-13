@@ -167,9 +167,10 @@ export function deleteActivity(activityId: string): Promise<undefined> {
 
 // Route Editing Schemas
 
-const RouteDraftGeometrySchema = z.object({
-  type: z.literal("MultiLineString"),
-  coordinates: z.array(z.array(z.array(z.number()))),
+const RoutePointDtoSchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+  elevation: z.number().optional(),
 });
 
 const RouteDraftResponseSchema = z.object({
@@ -177,7 +178,9 @@ const RouteDraftResponseSchema = z.object({
   activityId: z.string(),
   revision: z.number(),
   state: z.string(),
-  geometry: RouteDraftGeometrySchema,
+  geometry: z.array(z.array(RoutePointDtoSchema)),
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -185,21 +188,29 @@ const RouteDraftResponseSchema = z.object({
 const OperationResultResponseSchema = z.object({
   draftId: z.string(),
   revision: z.number(),
+  canUndo: z.boolean(),
+  canRedo: z.boolean(),
 });
 
-export type RouteDraftGeometry = z.infer<typeof RouteDraftGeometrySchema>;
+export type RoutePointDto = z.infer<typeof RoutePointDtoSchema>;
 export type RouteDraftResponse = z.infer<typeof RouteDraftResponseSchema>;
 export type OperationResultResponse = z.infer<typeof OperationResultResponseSchema>;
+
+/** Geometry payload for create/reset: array of segments, each segment is array of {latitude, longitude, elevation?} */
+export type RouteGeometryPayload = RoutePointDto[][];
 
 // Route Editing API Functions
 
 export function createRouteDraft(
   activityId: string,
-  geometry: RouteDraftGeometry,
+  geometry: RouteGeometryPayload,
 ): Promise<RouteDraftResponse> {
-  return apiFetch("/route-drafts", RouteDraftResponseSchema, {
+  return apiFetch(`/activities/${activityId}/route-drafts`, RouteDraftResponseSchema, {
     method: "POST",
-    body: JSON.stringify({ activityId, geometry }),
+    headers: {
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    body: JSON.stringify({ geometry }),
   });
 }
 
@@ -262,6 +273,7 @@ export function redoOperation(
 export function resetDraft(
   draftId: string,
   expectedRevision: number,
+  geometry: RouteGeometryPayload,
 ): Promise<OperationResultResponse> {
   return apiFetch(
     `/route-drafts/${draftId}/reset`,
@@ -271,7 +283,7 @@ export function resetDraft(
       headers: {
         "Idempotency-Key": crypto.randomUUID(),
       },
-      body: JSON.stringify({ expectedRevision }),
+      body: JSON.stringify({ expectedRevision, geometry }),
     },
   );
 }

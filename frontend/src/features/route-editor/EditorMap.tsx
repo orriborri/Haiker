@@ -2,10 +2,11 @@ import { useEffect, useRef, useCallback } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Selection, EditorTool } from "./types";
+import type { RoutePointDto } from "@/api/client";
 import { computeSelection } from "./SelectionModel";
 
 interface EditorMapProps {
-  geometry: number[][][] | null;
+  geometry: RoutePointDto[][] | null;
   selection: Selection;
   currentTool: EditorTool;
   onSelectionChange: (selection: Selection) => void;
@@ -21,6 +22,13 @@ interface EditorMapProps {
     lng: number,
     lat: number,
   ) => void;
+}
+
+/** Convert domain geometry to GeoJSON coordinate arrays for MapLibre rendering */
+function geometryToCoords(geometry: RoutePointDto[][]): number[][][] {
+  return geometry.map((segment) =>
+    segment.map((pt) => [pt.longitude, pt.latitude, ...(pt.elevation != null ? [pt.elevation] : [])]),
+  );
 }
 
 export function EditorMap({
@@ -255,20 +263,20 @@ export function EditorMap({
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
 
-    const geom = geometry ?? [];
+    const coords = geometry ? geometryToCoords(geometry) : [];
     const routeSource = map.getSource("route") as maplibregl.GeoJSONSource | undefined;
     if (routeSource) {
-      routeSource.setData(createRouteGeoJSON(geom));
+      routeSource.setData(createRouteGeoJSON(coords));
     }
 
     const pointsSource = map.getSource("route-points") as maplibregl.GeoJSONSource | undefined;
     if (pointsSource) {
-      pointsSource.setData(createPointsGeoJSON(geom, selection));
+      pointsSource.setData(createPointsGeoJSON(coords, selection));
     }
 
     const selectionSource = map.getSource("selection-highlight") as maplibregl.GeoJSONSource | undefined;
     if (selectionSource) {
-      selectionSource.setData(createSelectionGeoJSON(geom, selection));
+      selectionSource.setData(createSelectionGeoJSON(coords, selection));
     }
   }, [geometry, selection]);
 
@@ -284,13 +292,9 @@ export function EditorMap({
     const bounds = new maplibregl.LngLatBounds();
     let hasPoints = false;
     for (const segment of geometry) {
-      for (const coord of segment) {
-        const lng = coord[0];
-        const lat = coord[1];
-        if (lng !== undefined && lat !== undefined) {
-          bounds.extend([lng, lat]);
-          hasPoints = true;
-        }
+      for (const pt of segment) {
+        bounds.extend([pt.longitude, pt.latitude]);
+        hasPoints = true;
       }
     }
     if (hasPoints) {

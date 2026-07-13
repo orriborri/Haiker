@@ -216,6 +216,8 @@ pub struct RouteDraftResponse {
     pub revision: u64,
     pub state: String,
     pub geometry: Vec<Vec<RoutePointDto>>,
+    pub can_undo: bool,
+    pub can_redo: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -226,6 +228,8 @@ pub struct RouteDraftResponse {
 pub struct OperationResultResponse {
     pub draft_id: Uuid,
     pub revision: u64,
+    pub can_undo: bool,
+    pub can_redo: bool,
 }
 
 /// Convert geometry from DTO to domain.
@@ -260,6 +264,8 @@ pub fn draft_to_response(draft: &haiker_app::route_editing::RouteDraft) -> Route
             haiker_app::route_editing::DraftState::Discarded => "discarded".to_string(),
         },
         geometry: geometry_to_dto(&draft.geometry),
+        can_undo: !draft.applied_operations.is_empty(),
+        can_redo: !draft.undone_operations.is_empty(),
         created_at: draft.created_at,
         updated_at: draft.updated_at,
     }

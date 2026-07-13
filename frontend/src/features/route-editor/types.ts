@@ -1,3 +1,5 @@
+import type { RoutePointDto } from "@/api/client";
+
 /** Tool modes available in the route editor */
 export type EditorTool =
   | "select"
@@ -31,7 +33,7 @@ export interface MovePointOperation {
   type: "MovePoint";
   segmentIndex: number;
   pointIndex: number;
-  newPosition: { lat: number; lng: number };
+  newPosition: { latitude: number; longitude: number };
 }
 
 /** AddPoint operation payload */
@@ -39,7 +41,7 @@ export interface AddPointOperation {
   type: "AddPoint";
   segmentIndex: number;
   afterPointIndex: number;
-  point: { lat: number; lng: number; elevation?: number };
+  point: { latitude: number; longitude: number; elevation?: number };
 }
 
 /** DeletePoint operation payload */
@@ -63,7 +65,7 @@ export interface ReplaceSectionOperation {
   segmentIndex: number;
   startIndex: number;
   endIndex: number;
-  replacement: Array<{ lat: number; lng: number; elevation?: number }>;
+  replacement: Array<{ latitude: number; longitude: number; elevation?: number }>;
 }
 
 /** SplitSegment operation payload */
@@ -96,7 +98,8 @@ export interface EditorState {
   selection: Selection;
   draftId: string | null;
   revision: number;
-  optimisticGeometry: number[][][] | null;
+  optimisticGeometry: RoutePointDto[][] | null;
+  baseGeometry: RoutePointDto[][] | null;
   canUndo: boolean;
   canRedo: boolean;
   conflictError: string | null;
@@ -108,13 +111,13 @@ export type EditorAction =
   | { type: "SET_TOOL"; tool: EditorTool }
   | { type: "SET_SELECTION"; selection: Selection }
   | { type: "CLEAR_SELECTION" }
-  | { type: "SET_DRAFT"; draftId: string; revision: number; geometry: number[][][] }
+  | { type: "SET_DRAFT"; draftId: string; revision: number; geometry: RoutePointDto[][]; baseGeometry: RoutePointDto[][] }
   | { type: "OPERATION_START" }
-  | { type: "OPERATION_SUCCESS"; revision: number; geometry: number[][][] }
+  | { type: "OPERATION_SUCCESS"; revision: number; geometry: RoutePointDto[][]; canUndo: boolean; canRedo: boolean }
   | { type: "OPERATION_FAILURE"; error: string }
   | { type: "SET_CONFLICT"; message: string }
   | { type: "CLEAR_CONFLICT" }
-  | { type: "SET_OPTIMISTIC_GEOMETRY"; geometry: number[][][] }
+  | { type: "SET_OPTIMISTIC_GEOMETRY"; geometry: RoutePointDto[][] }
   | { type: "SET_CAN_UNDO_REDO"; canUndo: boolean; canRedo: boolean };
 
 /** Pending operation stored in IndexedDB for autosave/recovery */

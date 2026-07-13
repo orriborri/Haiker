@@ -279,15 +279,19 @@ impl RouteDraftRepository for PgRouteDraftRepository {
     async fn update(&self, draft: &RouteDraft) -> Result<(), RouteEditingError> {
         let mut tx = self.pool.begin().await.map_err(map_db_error)?;
 
-        // Update the draft row
-        sqlx::query(
+        // Optimistic lock: only update if the stored revision matches expected.
+        // After a domain mutation, draft.revision has been incremented, so the
+        // previous (stored) revision is draft.revision - 1.
+        let expected_revision = (draft.revision as i64) - 1;
+
+        let result = sqlx::query(
             r#"
             UPDATE route_editing.drafts
             SET revision = $2,
                 geometry = $3,
                 state = $4,
                 updated_at = $5
-            WHERE id = $1
+            WHERE id = $1 AND revision = $6
             "#,
         )
         .bind(draft.id.0)
@@ -295,15 +299,29 @@ impl RouteDraftRepository for PgRouteDraftRepository {
         .bind(geometry_to_json(&draft.geometry))
         .bind(state_to_str(draft.state))
         .bind(draft.updated_at)
+        .bind(expected_revision)
         .execute(&mut *tx)
         .await
         .map_err(map_db_error)?;
 
-        // Replace all operations: delete existing and re-insert current state.
-        // This ensures undo/redo stack changes are persisted correctly.
+        if result.rows_affected() == 0 {
+            return Err(RouteEditingError::RevisionConflict {
+                expected: draft.revision - 1,
+                actual: draft.revision,
+            });
+        }
+
+        // Append-only strategy for operations:
+        // 1. Update is_undone flags for existing operations that changed state
+        // 2. Insert only new operations that don't exist yet
+
+        // Mark all operations for this draft as undone, then set applied ones back.
+        // This handles undo/redo flag changes efficiently.
         sqlx::query(
             r#"
-            DELETE FROM route_editing.draft_operations WHERE draft_id = $1
+            UPDATE route_editing.draft_operations
+            SET is_undone = true
+            WHERE draft_id = $1 AND is_undone = false
             "#,
         )
         .bind(draft.id.0)
@@ -311,7 +329,24 @@ impl RouteDraftRepository for PgRouteDraftRepository {
         .await
         .map_err(map_db_error)?;
 
-        // Insert applied operations
+        // Re-mark applied operations as not undone
+        let applied_ids: Vec<Uuid> = draft.applied_operations.iter().map(|e| e.id.0).collect();
+        if !applied_ids.is_empty() {
+            sqlx::query(
+                r#"
+                UPDATE route_editing.draft_operations
+                SET is_undone = false
+                WHERE draft_id = $1 AND operation_id = ANY($2)
+                "#,
+            )
+            .bind(draft.id.0)
+            .bind(&applied_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+        }
+
+        // Insert new operations that don't exist yet (ON CONFLICT DO NOTHING for idempotency)
         for (seq, entry) in draft.applied_operations.iter().enumerate() {
             let op_data = serde_json::json!({
                 "operation": operation_to_json(&entry.operation),
@@ -324,7 +359,8 @@ impl RouteDraftRepository for PgRouteDraftRepository {
                     draft_id, operation_id, operation_type, operation_data,
                     sequence_number, is_undone, created_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, now())
+                VALUES ($1, $2, $3, $4, $5, false, now())
+                ON CONFLICT (operation_id) DO UPDATE SET sequence_number = $5, is_undone = false
                 "#,
             )
             .bind(draft.id.0)
@@ -332,13 +368,11 @@ impl RouteDraftRepository for PgRouteDraftRepository {
             .bind(operation_type_str(&entry.operation))
             .bind(op_data)
             .bind(seq as i32)
-            .bind(false)
             .execute(&mut *tx)
             .await
             .map_err(map_db_error)?;
         }
 
-        // Insert undone operations (with offset sequence numbers)
         let offset = draft.applied_operations.len();
         for (seq, entry) in draft.undone_operations.iter().enumerate() {
             let op_data = serde_json::json!({
@@ -352,7 +386,8 @@ impl RouteDraftRepository for PgRouteDraftRepository {
                     draft_id, operation_id, operation_type, operation_data,
                     sequence_number, is_undone, created_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6, now())
+                VALUES ($1, $2, $3, $4, $5, true, now())
+                ON CONFLICT (operation_id) DO UPDATE SET sequence_number = $5, is_undone = true
                 "#,
             )
             .bind(draft.id.0)
@@ -360,7 +395,38 @@ impl RouteDraftRepository for PgRouteDraftRepository {
             .bind(operation_type_str(&entry.operation))
             .bind(op_data)
             .bind((offset + seq) as i32)
-            .bind(true)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+        }
+
+        // Remove operations that are no longer in either stack (after reset clears stacks)
+        let all_ids: Vec<Uuid> = draft
+            .applied_operations
+            .iter()
+            .chain(draft.undone_operations.iter())
+            .map(|e| e.id.0)
+            .collect();
+        if all_ids.is_empty() {
+            // Reset cleared everything - delete all operations
+            sqlx::query(
+                r#"
+                DELETE FROM route_editing.draft_operations WHERE draft_id = $1
+                "#,
+            )
+            .bind(draft.id.0)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_db_error)?;
+        } else {
+            sqlx::query(
+                r#"
+                DELETE FROM route_editing.draft_operations
+                WHERE draft_id = $1 AND operation_id != ALL($2)
+                "#,
+            )
+            .bind(draft.id.0)
+            .bind(&all_ids)
             .execute(&mut *tx)
             .await
             .map_err(map_db_error)?;

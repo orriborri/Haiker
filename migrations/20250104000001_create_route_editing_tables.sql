@@ -26,14 +26,3 @@ CREATE TABLE route_editing.draft_operations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_draft_ops_draft_seq ON route_editing.draft_operations (draft_id, sequence_number);
-
--- Idempotency key storage
-CREATE TABLE route_editing.idempotency_keys (
-    key TEXT NOT NULL,
-    owner_id UUID NOT NULL,
-    draft_id UUID NOT NULL REFERENCES route_editing.drafts(id) ON DELETE CASCADE,
-    response_data JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '24 hours'),
-    PRIMARY KEY (owner_id, key)
-);

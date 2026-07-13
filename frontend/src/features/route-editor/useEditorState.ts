@@ -1,4 +1,5 @@
 import { useReducer, useCallback } from "react";
+import type { RoutePointDto } from "@/api/client";
 import type {
   EditorState,
   EditorAction,
@@ -12,6 +13,7 @@ const initialState: EditorState = {
   draftId: null,
   revision: 0,
   optimisticGeometry: null,
+  baseGeometry: null,
   canUndo: false,
   canRedo: false,
   conflictError: null,
@@ -32,6 +34,7 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         draftId: action.draftId,
         revision: action.revision,
         optimisticGeometry: action.geometry,
+        baseGeometry: action.baseGeometry,
         conflictError: null,
       };
     case "OPERATION_START":
@@ -41,6 +44,8 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         ...state,
         revision: action.revision,
         optimisticGeometry: action.geometry,
+        canUndo: action.canUndo,
+        canRedo: action.canRedo,
         isOperationPending: false,
         conflictError: null,
       };
@@ -81,8 +86,8 @@ export function useEditorState() {
   }, []);
 
   const setDraft = useCallback(
-    (draftId: string, revision: number, geometry: number[][][]) => {
-      dispatch({ type: "SET_DRAFT", draftId, revision, geometry });
+    (draftId: string, revision: number, geometry: RoutePointDto[][], baseGeometry: RoutePointDto[][]) => {
+      dispatch({ type: "SET_DRAFT", draftId, revision, geometry, baseGeometry });
     },
     [],
   );
@@ -92,8 +97,8 @@ export function useEditorState() {
   }, []);
 
   const operationSuccess = useCallback(
-    (revision: number, geometry: number[][][]) => {
-      dispatch({ type: "OPERATION_SUCCESS", revision, geometry });
+    (revision: number, geometry: RoutePointDto[][], canUndo: boolean, canRedo: boolean) => {
+      dispatch({ type: "OPERATION_SUCCESS", revision, geometry, canUndo, canRedo });
     },
     [],
   );
@@ -110,7 +115,7 @@ export function useEditorState() {
     dispatch({ type: "CLEAR_CONFLICT" });
   }, []);
 
-  const setOptimisticGeometry = useCallback((geometry: number[][][]) => {
+  const setOptimisticGeometry = useCallback((geometry: RoutePointDto[][]) => {
     dispatch({ type: "SET_OPTIMISTIC_GEOMETRY", geometry });
   }, []);
 

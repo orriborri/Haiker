@@ -239,6 +239,8 @@ pub async fn post_apply_operation(
             Json(OperationResultResponse {
                 draft_id: draft.id.0,
                 revision: draft.revision,
+                can_undo: !draft.applied_operations.is_empty(),
+                can_redo: !draft.undone_operations.is_empty(),
             }),
         ));
     }
@@ -282,6 +284,8 @@ pub async fn post_apply_operation(
         Json(OperationResultResponse {
             draft_id: draft.id.0,
             revision: draft.revision,
+            can_undo: !draft.applied_operations.is_empty(),
+            can_redo: !draft.undone_operations.is_empty(),
         }),
     ))
 }
@@ -289,6 +293,10 @@ pub async fn post_apply_operation(
 /// POST /v1/route-drafts/{draftId}/undo
 ///
 /// Undo the last applied operation. Requires Idempotency-Key header.
+/// Note: Idempotency for undo is enforced via expectedRevision. A retry with
+/// the same expectedRevision will fail with RevisionConflict if the first
+/// request already succeeded (which incremented the revision). This is safe
+/// because clients must always send the current known revision.
 pub async fn post_undo(
     State(state): State<RouteEditingAppState>,
     actor: AuthenticatedActor,
@@ -330,6 +338,8 @@ pub async fn post_undo(
         Json(OperationResultResponse {
             draft_id: draft.id.0,
             revision: draft.revision,
+            can_undo: !draft.applied_operations.is_empty(),
+            can_redo: !draft.undone_operations.is_empty(),
         }),
     ))
 }
@@ -337,6 +347,7 @@ pub async fn post_undo(
 /// POST /v1/route-drafts/{draftId}/redo
 ///
 /// Redo the last undone operation. Requires Idempotency-Key header.
+/// Note: Idempotency for redo is enforced via expectedRevision (same as undo).
 pub async fn post_redo(
     State(state): State<RouteEditingAppState>,
     actor: AuthenticatedActor,
@@ -378,6 +389,8 @@ pub async fn post_redo(
         Json(OperationResultResponse {
             draft_id: draft.id.0,
             revision: draft.revision,
+            can_undo: !draft.applied_operations.is_empty(),
+            can_redo: !draft.undone_operations.is_empty(),
         }),
     ))
 }
@@ -385,6 +398,7 @@ pub async fn post_redo(
 /// POST /v1/route-drafts/{draftId}/reset
 ///
 /// Reset the draft to new base geometry. Requires Idempotency-Key header.
+/// Note: Idempotency for reset is enforced via expectedRevision (same as undo/redo).
 pub async fn post_reset(
     State(state): State<RouteEditingAppState>,
     actor: AuthenticatedActor,
@@ -433,6 +447,8 @@ pub async fn post_reset(
         Json(OperationResultResponse {
             draft_id: draft.id.0,
             revision: draft.revision,
+            can_undo: !draft.applied_operations.is_empty(),
+            can_redo: !draft.undone_operations.is_empty(),
         }),
     ))
 }

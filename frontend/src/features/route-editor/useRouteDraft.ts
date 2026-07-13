@@ -8,7 +8,7 @@ import {
   resetDraft,
   discardDraft,
   type RouteDraftResponse,
-  type RouteDraftGeometry,
+  type RouteGeometryPayload,
   type OperationResultResponse,
   ApiError,
 } from "@/api/client";
@@ -27,7 +27,7 @@ export function useCreateRouteDraft() {
   return useMutation<
     RouteDraftResponse,
     Error,
-    { activityId: string; geometry: RouteDraftGeometry }
+    { activityId: string; geometry: RouteGeometryPayload }
   >({
     mutationFn: ({ activityId, geometry }) =>
       createRouteDraft(activityId, geometry),
@@ -120,10 +120,10 @@ export function useResetDraft(
   return useMutation<
     OperationResultResponse,
     Error,
-    { draftId: string; expectedRevision: number }
+    { draftId: string; expectedRevision: number; geometry: RouteGeometryPayload }
   >({
-    mutationFn: ({ draftId, expectedRevision }) =>
-      resetDraft(draftId, expectedRevision),
+    mutationFn: ({ draftId, expectedRevision, geometry }) =>
+      resetDraft(draftId, expectedRevision, geometry),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({
         queryKey: ["routeDraft", variables.draftId],
