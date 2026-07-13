@@ -4,6 +4,20 @@ set -euo pipefail
 # =============================================================================
 # PostgreSQL Point-in-Time Recovery (PITR) Restore Script
 # Restores from a base backup and replays WAL to a specified target timestamp.
+#
+# USAGE CONTEXT:
+# This script requires pg_ctl, psql, and direct access to PGDATA. It is designed
+# to run INSIDE the postgres container, not as a standalone service.
+#
+# To perform a restore:
+#   docker compose -f deploy/backup/docker-compose.backup.yml exec postgres bash
+#   /scripts/restore-postgres.sh --target-time "2024-01-15T10:30:00Z" --yes
+#
+# Or from the host (if the script is mounted):
+#   docker compose -f deploy/backup/docker-compose.backup.yml exec postgres \
+#     /scripts/restore-postgres.sh --target-time "2024-01-15T10:30:00Z" --yes
+#
+# See docs/runbooks/backup-operations.md for the full disaster recovery procedure.
 # =============================================================================
 
 # --- Configuration (from environment) ---

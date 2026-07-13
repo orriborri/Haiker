@@ -113,6 +113,89 @@ enforce_retention() {
     done < <(find "${search_path}" -name "${pattern}" -type f 2>/dev/null)
 }
 
+# --- WAL retention tied to oldest retained base backup ---
+# Instead of a fixed day threshold, WAL segments are retained as long as the
+# oldest base backup needs them for PITR. Any WAL file older than the oldest
+# retained base backup is safe to remove.
+enforce_wal_retention() {
+    local wal_path="$1"
+    local base_backup_path="$2"
+
+    if [[ ! -d "${wal_path}" ]]; then
+        log "INFO: WAL path does not exist, skipping: ${wal_path}"
+        return
+    fi
+
+    local wal_count
+    wal_count=$(find "${wal_path}" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ "${wal_count}" -eq 0 ]]; then
+        log "INFO: No WAL archive files found in ${wal_path}"
+        return
+    fi
+
+    # Find the oldest retained base backup to use as the WAL retention boundary
+    local oldest_base_backup=""
+    local oldest_base_epoch=""
+
+    if [[ -d "${base_backup_path}" ]]; then
+        oldest_base_backup=$(find "${base_backup_path}" -name "*.tar.gz.gpg" -type f 2>/dev/null \
+            | xargs ls -tr 2>/dev/null \
+            | head -n1)
+    fi
+
+    if [[ -z "${oldest_base_backup}" ]]; then
+        log "INFO: No base backups found; falling back to BACKUP_RETENTION_DAYS (${BACKUP_RETENTION_DAYS}) for WAL retention"
+        enforce_retention "${wal_path}" "*" "${BACKUP_RETENTION_DAYS}" "wal_archive"
+        return
+    fi
+
+    # Get the modification time of the oldest base backup
+    if stat --version >/dev/null 2>&1; then
+        oldest_base_epoch=$(stat -c %Y "${oldest_base_backup}")
+    else
+        oldest_base_epoch=$(stat -f %m "${oldest_base_backup}")
+    fi
+
+    log "INFO: Oldest retained base backup: ${oldest_base_backup}"
+    log "INFO: WAL retention boundary epoch: ${oldest_base_epoch}"
+    log "INFO: Enforcing WAL retention (keeping all WAL newer than oldest base backup) on ${wal_count} files"
+
+    # Identify the newest WAL file (NEVER delete this)
+    local newest_wal
+    newest_wal=$(get_newest_file "${wal_path}" "*")
+
+    local now_epoch
+    now_epoch=$(date +%s)
+
+    while IFS= read -r file; do
+        [[ -z "${file}" ]] && continue
+
+        # SAFETY: Never delete the newest WAL file
+        if [[ -n "${newest_wal}" && "${file}" == "${newest_wal}" ]]; then
+            continue
+        fi
+
+        local file_epoch
+        if stat --version >/dev/null 2>&1; then
+            file_epoch=$(stat -c %Y "${file}")
+        else
+            file_epoch=$(stat -f %m "${file}")
+        fi
+
+        # Delete WAL files older than the oldest retained base backup
+        if [[ ${file_epoch} -lt ${oldest_base_epoch} ]]; then
+            local age_days=$(( (now_epoch - file_epoch) / 86400 ))
+            if [[ "${DRY_RUN}" == "true" ]]; then
+                log "DRY-RUN: Would delete wal_archive: ${file} (age: ${age_days} days, older than oldest base backup)"
+            else
+                rm -f "${file}"
+                log_deletion "${file}" "wal_archive" "${age_days}"
+            fi
+        fi
+    done < <(find "${wal_path}" -type f 2>/dev/null)
+}
+
 # --- Main ---
 main() {
     log "=== Backup Retention Enforcement Started ==="
@@ -131,11 +214,12 @@ main() {
         "pg_base_backup"
 
     # 2. Encrypted WAL archives
-    enforce_retention \
+    # WAL retention is tied to the oldest retained base backup, not to a fixed
+    # day count. This ensures WAL segments needed for PITR from the oldest valid
+    # base backup are never deleted prematurely.
+    enforce_wal_retention \
         "${WAL_ARCHIVE_PATH}" \
-        "*" \
-        "${BACKUP_RETENTION_DAYS}" \
-        "wal_archive"
+        "${BACKUP_STORAGE_PATH}"
 
     # 3. MinIO backup snapshots
     enforce_retention \

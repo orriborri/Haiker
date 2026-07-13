@@ -1,7 +1,19 @@
 # =============================================================================
-# Backup Monitoring Alert Rules
-# Declarative alert conditions evaluated by scripts/backup-monitor.sh.
-# Each rule defines a condition, severity, and description for automated alerting.
+# Backup Monitoring Alert Rules - REFERENCE DOCUMENTATION ONLY
+#
+# NOTE: This file is NOT machine-consumed by backup-monitor.sh. The monitoring
+# script reads alert thresholds from environment variables:
+#   - BACKUP_RPO_WAL_MINUTES (default: 15)
+#   - BACKUP_RPO_BASE_HOURS  (default: 24)
+#   - CAPACITY_WARNING_PERCENT (default: 80)
+#   - CAPACITY_CRITICAL_PERCENT (default: 90)
+#
+# This YAML serves as human-readable documentation of the alerting logic
+# implemented in scripts/backup-monitor.sh. To change thresholds, update the
+# environment variables in env.backup (see deploy/backup/env.backup.example).
+#
+# If you need machine-parseable alert configuration, consider extending
+# backup-monitor.sh to read this file with yq or python3 yaml.safe_load.
 # =============================================================================
 
 rules:
