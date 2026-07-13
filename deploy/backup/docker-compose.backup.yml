@@ -47,6 +47,13 @@ services:
       - postgres_wal_archive:/var/lib/postgresql/wal_archive:ro
       - ../../scripts/backup-postgres.sh:/scripts/backup-postgres.sh:ro
       - ../../scripts/verify-backup.sh:/scripts/verify-backup.sh:ro
+      - ./monitoring/healthcheck.sh:/scripts/healthcheck.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/scripts/healthcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,6 +81,13 @@ services:
       - postgres_backups:/backups:ro
       - postgres_wal_archive:/var/lib/postgresql/wal_archive:ro
       - ../../scripts/verify-backup.sh:/scripts/verify-backup.sh:ro
+      - ./monitoring/healthcheck.sh:/scripts/healthcheck.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/scripts/healthcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   minio-backup:
@@ -126,6 +140,13 @@ services:
     volumes:
       - ../../scripts/backup-minio.sh:/scripts/backup-minio.sh:ro
       - ../../scripts/verify-minio-backup.sh:/scripts/verify-minio-backup.sh:ro
+      - ./monitoring/healthcheck.sh:/scripts/healthcheck.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     depends_on:
       minio-backup:
         condition: service_healthy

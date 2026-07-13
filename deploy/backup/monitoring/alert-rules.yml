@@ -1,0 +1,52 @@
+# =============================================================================
+# Backup Monitoring Alert Rules
+# Declarative alert conditions evaluated by scripts/backup-monitor.sh.
+# Each rule defines a condition, severity, and description for automated alerting.
+# =============================================================================
+
+rules:
+  - name: backup_age_critical
+    description: "PostgreSQL WAL archive is older than expected RPO threshold"
+    condition: "wal_archive_age_minutes > threshold"
+    threshold_minutes: 15
+    severity: critical
+    source: postgresql
+    check: wal_archive_age
+
+  - name: backup_age_warning
+    description: "PostgreSQL base backup is older than expected schedule"
+    condition: "base_backup_age_hours > threshold"
+    threshold_hours: 24
+    severity: warning
+    source: postgresql
+    check: base_backup_age
+
+  - name: backup_failure
+    description: "Backup verification script returned a non-zero exit code"
+    condition: "verify_exit_code != 0"
+    severity: critical
+    source: any
+    check: script_exit_code
+
+  - name: capacity_warning
+    description: "Backup storage utilization exceeds warning threshold"
+    condition: "storage_used_percent >= threshold"
+    threshold_percent: 80
+    severity: warning
+    source: any
+    check: storage_capacity
+
+  - name: capacity_critical
+    description: "Backup storage utilization exceeds critical threshold"
+    condition: "storage_used_percent >= threshold"
+    threshold_percent: 90
+    severity: critical
+    source: any
+    check: storage_capacity
+
+  - name: retention_violation
+    description: "Backup older than retention policy still exists, or the newest backup is missing"
+    condition: "retention_policy_violated == true"
+    severity: warning
+    source: any
+    check: retention_compliance
