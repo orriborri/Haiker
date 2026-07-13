@@ -77,12 +77,8 @@ log_info "Backup integrity verified"
 BACKUP_SIZE=$(stat -c%s "${BACKUP_ENCRYPTED}" 2>/dev/null || stat -f%z "${BACKUP_ENCRYPTED}" 2>/dev/null || echo "unknown")
 log_info "Backup completed: file=${BACKUP_ENCRYPTED}, size=${BACKUP_SIZE}, timestamp=${TIMESTAMP}"
 
-# --- Step 6: Apply retention policy ---
-log_info "Applying retention policy: removing backups older than ${BACKUP_RETENTION_DAYS} days"
-find "${BACKUP_STORAGE_PATH}" -name "*.tar.gz.gpg" -mtime "+${BACKUP_RETENTION_DAYS}" -delete 2>/dev/null || true
-
-# Count remaining backups
-REMAINING=$(find "${BACKUP_STORAGE_PATH}" -name "*.tar.gz.gpg" | wc -l)
-log_info "Retention complete: ${REMAINING} backup(s) retained"
+# --- Retention is handled by scripts/backup-retention.sh ---
+# Retention enforcement (with newest-file protection) is delegated to the dedicated
+# backup-retention.sh script, which should be scheduled independently.
 
 log_info "Backup process finished successfully"
