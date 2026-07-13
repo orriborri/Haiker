@@ -374,7 +374,8 @@ mod tests {
 
     /// Helper to create an import in Queued state with the given checksum.
     fn queued_import(owner_id: UserId, checksum_str: &str) -> Import {
-        let mut import = Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string()).unwrap();
+        let mut import =
+            Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string(), None).unwrap();
         import.start_upload().unwrap();
         let artifact_id = SourceArtifactId::generate();
         let checksum = Checksum::new(checksum_str).unwrap();
@@ -691,7 +692,8 @@ mod tests {
     async fn orchestrator_wrong_status_returns_error() {
         let owner_id = UserId::new(Uuid::new_v4());
         // Create import in Uploading state (not Queued)
-        let mut import = Import::new(owner_id, ImportFormat::Gpx, "key-2".to_string()).unwrap();
+        let mut import =
+            Import::new(owner_id, ImportFormat::Gpx, "key-2".to_string(), None).unwrap();
         import.start_upload().unwrap();
         let import_id = import.id;
 

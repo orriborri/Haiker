@@ -53,11 +53,42 @@ fn import_to_status_response(import: &Import) -> ImportStatusResponse {
     ImportStatusResponse {
         id: import.id.0,
         status: import.status.to_string(),
-        failure_reason: import.failure_reason.clone(),
+        failure_reason: import
+            .failure_reason
+            .as_deref()
+            .map(sanitize_failure_reason),
         activity_id: None, // Activity ID populated after parsing completes
         created_at: import.created_at,
         updated_at: import.updated_at,
     }
+}
+
+/// Known client-safe failure reason prefixes that can be exposed to users.
+const SAFE_FAILURE_REASONS: &[&str] = &[
+    "unsupported file format",
+    "parsing failed",
+    "file too large",
+    "invalid media type",
+    "checksum mismatch",
+    "duplicate checksum",
+    "upload too large",
+    "validation failed",
+];
+
+/// Sanitize a failure reason before exposing it in API responses.
+///
+/// Only known safe failure reasons are passed through to the client.
+/// Any failure reason that does not match a known safe prefix is replaced
+/// with a generic message to prevent leaking internal details such as SQL
+/// errors, file paths, or connection strings.
+fn sanitize_failure_reason(reason: &str) -> String {
+    let lower = reason.to_lowercase();
+    for safe in SAFE_FAILURE_REASONS {
+        if lower.starts_with(safe) {
+            return reason.to_string();
+        }
+    }
+    "an internal error occurred".to_string()
 }
 
 /// Convert an ImportError to an ApiError.
@@ -808,5 +839,174 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn sanitize_failure_reason_passes_through_known_safe_reasons() {
+        let safe_reasons = vec![
+            "unsupported file format",
+            "parsing failed: invalid GPX structure",
+            "file too large",
+            "invalid media type",
+            "checksum mismatch",
+            "duplicate checksum",
+            "upload too large",
+            "validation failed: missing required field",
+        ];
+
+        for reason in safe_reasons {
+            assert_eq!(
+                sanitize_failure_reason(reason),
+                reason,
+                "Expected safe reason to pass through: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_failure_reason_replaces_sql_errors_with_generic_message() {
+        let internal_reason = "sqlx error: connection refused at /var/lib/postgresql/data";
+        assert_eq!(
+            sanitize_failure_reason(internal_reason),
+            "an internal error occurred"
+        );
+    }
+
+    #[test]
+    fn sanitize_failure_reason_replaces_file_path_errors_with_generic_message() {
+        let internal_reason = "IO error: /tmp/imports/abc123/file.gpx: permission denied";
+        assert_eq!(
+            sanitize_failure_reason(internal_reason),
+            "an internal error occurred"
+        );
+    }
+
+    #[test]
+    fn sanitize_failure_reason_replaces_connection_string_errors() {
+        let internal_reason = "connection pool timeout: postgres://user:pass@host:5432/db";
+        assert_eq!(
+            sanitize_failure_reason(internal_reason),
+            "an internal error occurred"
+        );
+    }
+
+    #[test]
+    fn sanitize_failure_reason_replaces_stack_traces() {
+        let internal_reason = "thread 'main' panicked at src/imports/orchestrator.rs:42";
+        assert_eq!(
+            sanitize_failure_reason(internal_reason),
+            "an internal error occurred"
+        );
+    }
+
+    #[test]
+    fn import_status_response_does_not_expose_internal_failure_reason() {
+        let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
+        let mut import = haiker_app::imports::Import::new(
+            owner_id,
+            haiker_app::imports::ImportFormat::Gpx,
+            "key-sanitize".to_string(),
+            None,
+        )
+        .unwrap();
+        import
+            .fail("sqlx error: connection refused at /var/lib/db".to_string())
+            .unwrap();
+
+        let response = import_to_status_response(&import);
+        assert_eq!(
+            response.failure_reason.as_deref(),
+            Some("an internal error occurred")
+        );
+    }
+
+    #[test]
+    fn import_status_response_preserves_safe_failure_reason() {
+        let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
+        let mut import = haiker_app::imports::Import::new(
+            owner_id,
+            haiker_app::imports::ImportFormat::Gpx,
+            "key-safe".to_string(),
+            None,
+        )
+        .unwrap();
+        import
+            .fail("parsing failed: invalid GPX root element".to_string())
+            .unwrap();
+
+        let response = import_to_status_response(&import);
+        assert_eq!(
+            response.failure_reason.as_deref(),
+            Some("parsing failed: invalid GPX root element")
+        );
+    }
+
+    #[tokio::test]
+    async fn idempotency_key_with_different_payload_returns_409() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        // First request
+        let body1 = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response1 = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "mismatch-key")
+                    .body(Body::from(serde_json::to_vec(&body1).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response1.status(), StatusCode::ACCEPTED);
+
+        // Second request with different payload
+        let body2 = serde_json::json!({
+            "filename": "different.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response2 = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "mismatch-key")
+                    .body(Body::from(serde_json::to_vec(&body2).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response2.status(), StatusCode::CONFLICT);
+
+        let b = axum::body::to_bytes(response2.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+        assert_eq!(json["code"], "IDEMPOTENCY_PAYLOAD_MISMATCH");
     }
 }

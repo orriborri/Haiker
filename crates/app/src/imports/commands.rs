@@ -4,6 +4,7 @@
 //! interfaces for repository and storage, with no infrastructure dependencies.
 
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
 
 use crate::identity::UserId;
 
@@ -53,6 +54,20 @@ pub trait UploadUrlGenerator: Send + Sync {
     async fn generate_upload_url(&self, key: &str) -> Result<String, ImportError>;
 }
 
+/// Compute a deterministic SHA-256 hash of the import payload fields.
+///
+/// Hashes the canonical representation of (filename, content_type, file_size_bytes)
+/// to produce a stable fingerprint for idempotency payload comparison.
+pub fn compute_payload_hash(filename: &str, content_type: &str, file_size_bytes: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(filename.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update(content_type.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update(file_size_bytes.to_le_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
 /// Handle the start import command.
 ///
 /// Validates inputs, checks idempotency, creates the import aggregate,
@@ -79,11 +94,21 @@ pub async fn handle_start_import(
         });
     }
 
+    // Compute payload hash for idempotency comparison
+    let payload_hash = compute_payload_hash(&cmd.filename, &cmd.content_type, cmd.file_size_bytes);
+
     // Check idempotency key for replay
     if let Some(existing) = repo
         .find_by_idempotency_key(cmd.owner_id, &cmd.idempotency_key)
         .await?
     {
+        // Verify payload matches the original request
+        if let Some(ref stored_hash) = existing.payload_hash {
+            if *stored_hash != payload_hash {
+                return Err(ImportError::IdempotencyPayloadMismatch);
+            }
+        }
+
         // Return existing import (idempotent replay)
         let storage_key = format!("imports/{}/{}", cmd.owner_id, existing.id);
         let upload_url = url_generator.generate_upload_url(&storage_key).await?;
@@ -94,7 +119,12 @@ pub async fn handle_start_import(
     }
 
     // Create new import
-    let mut import = Import::new(cmd.owner_id, ImportFormat::Gpx, cmd.idempotency_key)?;
+    let mut import = Import::new(
+        cmd.owner_id,
+        ImportFormat::Gpx,
+        cmd.idempotency_key,
+        Some(payload_hash),
+    )?;
     import.start_upload()?;
 
     // Generate presigned upload URL
@@ -319,6 +349,133 @@ mod tests {
             .unwrap();
         let second = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
         assert_eq!(first.import.id, second.import.id);
+    }
+
+    #[tokio::test]
+    async fn start_import_same_key_different_filename_returns_payload_mismatch() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd1 = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-mismatch-fn".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        handle_start_import(cmd1, &repo, &url_gen).await.unwrap();
+
+        let cmd2 = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-mismatch-fn".to_string(),
+            filename: "different.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let err = handle_start_import(cmd2, &repo, &url_gen)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::IdempotencyPayloadMismatch));
+    }
+
+    #[tokio::test]
+    async fn start_import_same_key_different_file_size_returns_payload_mismatch() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd1 = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-mismatch-sz".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        handle_start_import(cmd1, &repo, &url_gen).await.unwrap();
+
+        let cmd2 = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-mismatch-sz".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 2048,
+        };
+
+        let err = handle_start_import(cmd2, &repo, &url_gen)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::IdempotencyPayloadMismatch));
+    }
+
+    #[tokio::test]
+    async fn start_import_same_key_different_content_type_returns_payload_mismatch() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd1 = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-mismatch-ct".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        handle_start_import(cmd1, &repo, &url_gen).await.unwrap();
+
+        let cmd2 = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-mismatch-ct".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let err = handle_start_import(cmd2, &repo, &url_gen)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::IdempotencyPayloadMismatch));
+    }
+
+    #[tokio::test]
+    async fn start_import_same_key_same_payload_replays_original() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-replay".to_string(),
+            filename: "trail.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 4096,
+        };
+
+        let first = handle_start_import(cmd.clone(), &repo, &url_gen)
+            .await
+            .unwrap();
+        let second = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+
+        assert_eq!(first.import.id, second.import.id);
+        assert_eq!(first.import.status, second.import.status);
+    }
+
+    #[tokio::test]
+    async fn compute_payload_hash_is_deterministic() {
+        let hash1 = compute_payload_hash("file.gpx", "application/gpx+xml", 1024);
+        let hash2 = compute_payload_hash("file.gpx", "application/gpx+xml", 1024);
+        assert_eq!(hash1, hash2);
+    }
+
+    #[tokio::test]
+    async fn compute_payload_hash_differs_for_different_inputs() {
+        let hash1 = compute_payload_hash("file.gpx", "application/gpx+xml", 1024);
+        let hash2 = compute_payload_hash("other.gpx", "application/gpx+xml", 1024);
+        assert_ne!(hash1, hash2);
     }
 
     #[tokio::test]
