@@ -177,7 +177,13 @@ export function EditorMap({
         type: "circle",
         source: "route-points",
         paint: {
-          "circle-radius": 22,
+          "circle-radius": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            10, 12,
+            16, 22,
+          ],
           "circle-color": "transparent",
           "circle-stroke-width": 0,
         },
@@ -372,13 +378,21 @@ export function EditorMap({
       />
       {tileError && (
         <div
-          className="absolute inset-x-0 top-0 flex items-center justify-center bg-black/60 px-4 py-3"
+          className="absolute inset-x-0 top-0 flex items-center justify-center gap-3 bg-black/60 px-4 py-3"
           role="alert"
           aria-live="polite"
         >
           <p className="text-sm font-medium text-white">
             Map tiles failed to load. Check your connection.
           </p>
+          <button
+            type="button"
+            className="ml-2 rounded bg-white/20 px-2 py-1 text-xs font-medium text-white hover:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white"
+            onClick={() => setTileError(false)}
+            aria-label="Dismiss tile error"
+          >
+            Dismiss
+          </button>
         </div>
       )}
     </div>

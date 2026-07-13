@@ -15,7 +15,6 @@ interface EditorToolbarProps {
   hasSelection: boolean;
   isOperationPending: boolean;
   selectionDescription: string | null;
-  onClearSelection: () => void;
 }
 
 const TOOLS: Array<{
@@ -48,7 +47,6 @@ export function EditorToolbar({
   hasSelection,
   isOperationPending,
   selectionDescription,
-  onClearSelection,
 }: EditorToolbarProps) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const toolbarRef = useRef<HTMLElement>(null);
@@ -66,12 +64,18 @@ export function EditorToolbar({
     setShowResetConfirm(false);
   }, []);
 
-  // Keyboard shortcuts scoped to toolbar focus or global via RouteEditor
+  // Keyboard shortcuts: only number keys 1-7 for tool switching.
+  // Escape, Delete/Backspace, and undo/redo are handled by RouteEditor.tsx.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Ignore if focus is inside an input/textarea
+      // Ignore if focus is inside an input/textarea/contenteditable
       const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable ||
+        target.getAttribute("role") === "textbox"
+      ) return;
 
       // Number keys 1-7 to switch tools
       const keyNum = parseInt(e.key, 10);
@@ -81,28 +85,12 @@ export function EditorToolbar({
           e.preventDefault();
           onToolChange(tool.id);
         }
-        return;
-      }
-
-      // Escape clears selection
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClearSelection();
-        return;
-      }
-
-      // Delete/Backspace triggers delete on selection
-      if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey) {
-        if (hasSelection && !isOperationPending) {
-          e.preventDefault();
-          onDelete();
-        }
       }
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onToolChange, onClearSelection, onDelete, hasSelection, isOperationPending]);
+  }, [onToolChange, isOperationPending]);
 
   // Build the status announcement text
   const currentToolDef = TOOLS.find((t) => t.id === currentTool);

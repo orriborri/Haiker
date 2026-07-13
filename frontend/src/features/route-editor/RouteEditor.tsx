@@ -138,51 +138,6 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     }
   }, [draft, state.draftId, setCanUndoRedo]);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      // Ignore if focus is inside an input/textarea
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-
-      // Ctrl+Z or Cmd+Z for undo
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        if (state.canUndo && !state.isOperationPending) {
-          handleUndo();
-        }
-        return;
-      }
-      // Ctrl+Shift+Z or Cmd+Shift+Z for redo
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) {
-        e.preventDefault();
-        if (state.canRedo && !state.isOperationPending) {
-          handleRedo();
-        }
-        return;
-      }
-
-      // Escape clears selection
-      if (e.key === "Escape") {
-        e.preventDefault();
-        clearSelection();
-        return;
-      }
-
-      // Delete/Backspace triggers delete on selection
-      if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey) {
-        if (state.selection && !state.isOperationPending) {
-          e.preventDefault();
-          handleDelete();
-        }
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.canUndo, state.canRedo, state.isOperationPending, state.draftId, state.revision, state.selection]);
-
   // Operation handlers
   const dispatchOperation = useCallback(
     async (operation: RouteOperation) => {
@@ -413,6 +368,55 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     clearSelection();
   }, [state.selection, dispatchOperation, clearSelection]);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Ignore if focus is inside an input, textarea, contenteditable, or textbox role
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable ||
+        target.getAttribute("role") === "textbox"
+      ) return;
+
+      // Ctrl+Z or Cmd+Z for undo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        if (state.canUndo && !state.isOperationPending) {
+          handleUndo();
+        }
+        return;
+      }
+      // Ctrl+Shift+Z or Cmd+Shift+Z for redo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        if (state.canRedo && !state.isOperationPending) {
+          handleRedo();
+        }
+        return;
+      }
+
+      // Escape clears selection
+      if (e.key === "Escape") {
+        e.preventDefault();
+        clearSelection();
+        return;
+      }
+
+      // Delete/Backspace triggers delete on selection
+      if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey) {
+        if (state.selection && !state.isOperationPending) {
+          e.preventDefault();
+          handleDelete();
+        }
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [state.canUndo, state.canRedo, state.isOperationPending, state.selection, handleUndo, handleRedo, handleDelete, clearSelection]);
+
   const handleSplit = useCallback(() => {
     if (!state.selection || state.selection.type !== "point") return;
     void dispatchOperation({
@@ -541,7 +545,6 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         hasSelection={state.selection !== null}
         isOperationPending={state.isOperationPending}
         selectionDescription={selectionDescription}
-        onClearSelection={clearSelection}
       />
 
       {/* Map area */}
