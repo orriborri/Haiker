@@ -1086,6 +1086,79 @@ async fn create_draft_valid_base_route_version_succeeds() {
 }
 
 #[tokio::test]
+async fn create_draft_idempotent_return_with_different_base_version_returns_409() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id_1 = Uuid::new_v4();
+    let version_id_2 = Uuid::new_v4();
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![
+            (version_id_1, activity_id),
+            (version_id_2, activity_id),
+        ])),
+    };
+    let app = test_app_with_state(state);
+
+    // First request: create draft with version_id_1
+    let body1 = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id_1
+    });
+
+    let response1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body1).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response1.status(), StatusCode::CREATED);
+
+    // Second request: same activity but different baseRouteVersionId
+    let body2 = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id_2
+    });
+
+    let response2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body2).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response2.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response2.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["error"]["code"], "IDEMPOTENCY_CONFLICT");
+}
+
+#[tokio::test]
 async fn get_draft_returns_base_route_version_id() {
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());

@@ -166,6 +166,33 @@ pub async fn post_create_draft(
         details: None,
     })?;
 
+    // Check if there is already an active draft for this activity (idempotency).
+    // This runs before gateway validation so that retries succeed even if the
+    // activity is later soft-deleted.
+    let existing = state
+        .repo
+        .find_active_by_activity(ActivityId(activity_id), actor.0.user_id)
+        .await
+        .map_err(route_editing_error_to_api_error)?;
+
+    if let Some(existing_draft) = existing {
+        // Same key + different payload -> return error (idempotency contract)
+        if let Some(requested_base) = body.base_route_version_id {
+            if Some(requested_base) != existing_draft.base_route_version_id {
+                return Err(ApiError {
+                    status: StatusCode::CONFLICT,
+                    code: "IDEMPOTENCY_CONFLICT".to_string(),
+                    message: "existing draft has a different baseRouteVersionId".to_string(),
+                    details: None,
+                });
+            }
+        }
+
+        // Idempotent: return existing draft
+        let response = draft_to_response(&existing_draft);
+        return Ok((StatusCode::CREATED, Json(response)));
+    }
+
     // Validate activity existence, ownership, and lifecycle
     state
         .activity_gateway
@@ -180,19 +207,6 @@ pub async fn post_create_draft(
             .validate_route_version_exists(base_version_id, ActivityId(activity_id))
             .await
             .map_err(route_editing_error_to_api_error)?;
-    }
-
-    // Check if there is already an active draft for this activity
-    let existing = state
-        .repo
-        .find_active_by_activity(ActivityId(activity_id), actor.0.user_id)
-        .await
-        .map_err(route_editing_error_to_api_error)?;
-
-    if let Some(existing_draft) = existing {
-        // Idempotent: return existing draft
-        let response = draft_to_response(&existing_draft);
-        return Ok((StatusCode::CREATED, Json(response)));
     }
 
     let draft = RouteDraft::create_from_geometry(
