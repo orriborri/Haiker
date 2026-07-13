@@ -76,7 +76,63 @@ services:
       - ../../scripts/verify-backup.sh:/scripts/verify-backup.sh:ro
     restart: unless-stopped
 
+  minio-backup:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${BACKUP_MINIO_ROOT_USER:?BACKUP_MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${BACKUP_MINIO_ROOT_PASSWORD:?BACKUP_MINIO_ROOT_PASSWORD must be set}
+      MINIO_KMS_SECRET_KEY: "backup-key:${MINIO_BACKUP_ENCRYPTION_KEY:-must-be-at-least-32-characters-long}"
+    volumes:
+      - minio_backups:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  minio-backup-scheduler:
+    image: minio/mc:latest
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "MinIO backup scheduler starting..."
+        echo "$${MINIO_BACKUP_SCHEDULE} /scripts/backup-minio.sh >> /var/log/minio-backup.log 2>&1" > /tmp/crontab
+        mkdir -p /var/log
+        touch /var/log/minio-backup.log
+        # Run initial backup
+        /scripts/backup-minio.sh || true
+        # Install and start cron
+        crond -f -c /tmp/crontab 2>/dev/null || cron -f 2>/dev/null || \
+          while true; do sleep $${MINIO_BACKUP_INTERVAL_SECONDS:-21600}; /scripts/backup-minio.sh || true; done
+    environment:
+      MINIO_SOURCE_ALIAS: ${MINIO_SOURCE_ALIAS:-source}
+      MINIO_BACKUP_ALIAS: ${MINIO_BACKUP_ALIAS:-backup}
+      MINIO_SOURCE_ENDPOINT: ${MINIO_SOURCE_ENDPOINT:-http://minio:9000}
+      BACKUP_MINIO_ENDPOINT: ${BACKUP_MINIO_ENDPOINT:-http://minio-backup:9000}
+      MINIO_SOURCE_ACCESS_KEY: ${MINIO_SOURCE_ACCESS_KEY:-}
+      MINIO_SOURCE_SECRET_KEY: ${MINIO_SOURCE_SECRET_KEY:-}
+      BACKUP_MINIO_ROOT_USER: ${BACKUP_MINIO_ROOT_USER:-}
+      BACKUP_MINIO_ROOT_PASSWORD: ${BACKUP_MINIO_ROOT_PASSWORD:-}
+      MINIO_BACKUP_BUCKETS: ${MINIO_BACKUP_BUCKETS:-haiker-artifacts,haiker-uploads}
+      MINIO_BACKUP_ENCRYPTION_KEY: ${MINIO_BACKUP_ENCRYPTION_KEY:-}
+      MINIO_BACKUP_RETENTION_DAYS: ${MINIO_BACKUP_RETENTION_DAYS:-30}
+      MINIO_BACKUP_SCHEDULE: ${MINIO_BACKUP_SCHEDULE:-0 3 * * *}
+      MINIO_BACKUP_INTERVAL_SECONDS: ${MINIO_BACKUP_INTERVAL_SECONDS:-21600}
+      MINIO_BACKUP_LOG: /var/log/minio-backup.log
+    volumes:
+      - ../../scripts/backup-minio.sh:/scripts/backup-minio.sh:ro
+      - ../../scripts/verify-minio-backup.sh:/scripts/verify-minio-backup.sh:ro
+    depends_on:
+      minio-backup:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   postgres_wal_archive:
   postgres_backups:
+  minio_backups:
