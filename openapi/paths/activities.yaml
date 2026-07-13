@@ -77,6 +77,56 @@
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
 
+/v1/activities/{activityId}/title:
+  patch:
+    operationId: updateActivityTitle
+    summary: Rename an activity
+    description: Updates the title of an activity owned by the authenticated user. Returns 404 for missing, cross-owner, or deleted activities (non-disclosing). Returns 422 for invalid titles.
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The unique activity identifier (UUID).
+        schema:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/activities.yaml#/RenameActivityRequest"
+    responses:
+      "200":
+        description: The updated activity detail.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/activities.yaml#/ActivityDetailResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity not found (also returned for cross-owner access, non-disclosing).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Validation failed (e.g. empty title).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
 /v1/activities/{activityId}/recorded-route:
   get:
     operationId: getRecordedRoute

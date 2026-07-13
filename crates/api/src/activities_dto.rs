@@ -53,6 +53,14 @@ pub struct ActivityListResponse {
     pub pagination: PaginationMeta,
 }
 
+/// Request body for PATCH /v1/activities/{activityId}/title.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RenameActivityRequest {
+    /// The new title for the activity.
+    pub title: String,
+}
+
 /// Response body for GET /v1/activities/{activityId}.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

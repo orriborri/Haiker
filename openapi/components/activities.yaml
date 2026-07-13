@@ -167,6 +167,20 @@ ActivityDetailResponse:
       description: When the activity was last updated (ISO 8601).
       example: "2024-01-15T14:30:00Z"
 
+RenameActivityRequest:
+  type: object
+  description: Request body for renaming an activity.
+  required:
+    - title
+  additionalProperties: false
+  properties:
+    title:
+      type: string
+      description: The new title for the activity. Must not be empty after trimming. Truncated at 500 characters.
+      minLength: 1
+      maxLength: 500
+      example: "Afternoon Hike in the Mountains"
+
 RecordedRouteResponse:
   type: object
   description: GeoJSON FeatureCollection containing the full recorded route geometry.

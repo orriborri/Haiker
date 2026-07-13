@@ -3,6 +3,7 @@
 //! Owns activity identity, title, type, timestamps, current route version,
 //! summary statistics, and lifecycle management.
 
+pub mod commands;
 pub mod queries;
 pub mod repository;
 

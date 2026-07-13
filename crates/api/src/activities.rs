@@ -1,6 +1,7 @@
 //! Activity API handlers.
 //!
-//! Implements GET /v1/activities and GET /v1/activities/{activityId}.
+//! Implements GET /v1/activities, GET /v1/activities/{activityId},
+//! and PATCH /v1/activities/{activityId}/title.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -9,13 +10,14 @@ use axum::Json;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use haiker_app::activity_catalog::commands::{self, AuditSink};
 use haiker_app::activity_catalog::queries::{get_activity, list_activities};
 use haiker_app::activity_catalog::repository::ActivityRepository;
 use haiker_app::activity_catalog::{ActivityCatalogError, ActivityId};
 
 use crate::activities_dto::{
     ActivityDetailResponse, ActivityListResponse, ActivitySummaryResponse, ListActivitiesParams,
-    PaginationMeta,
+    PaginationMeta, RenameActivityRequest,
 };
 use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
@@ -24,6 +26,7 @@ use crate::error::ApiError;
 #[derive(Clone)]
 pub struct ActivityAppState {
     pub repo: Arc<dyn ActivityRepository>,
+    pub audit: Arc<dyn AuditSink>,
 }
 
 /// Convert an ActivityCatalogError to an ApiError.
@@ -143,6 +146,46 @@ pub async fn get_activity_detail(
     Ok((StatusCode::OK, Json(response)))
 }
 
+/// PATCH /v1/activities/{activityId}/title
+///
+/// Rename an activity. Validates the title, enforces ownership, and records
+/// an audit event on success.
+#[tracing::instrument(skip(state, actor, body))]
+pub async fn patch_activity_title(
+    State(state): State<ActivityAppState>,
+    actor: AuthenticatedActor,
+    Path(activity_id): Path<Uuid>,
+    Json(body): Json<RenameActivityRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let owner_id = actor.0.user_id;
+
+    let activity = commands::rename_activity(
+        ActivityId::new(activity_id),
+        owner_id,
+        &body.title,
+        state.repo.as_ref(),
+        state.audit.as_ref(),
+    )
+    .await
+    .map_err(activity_error_to_api_error)?;
+
+    let response = ActivityDetailResponse {
+        id: activity.id.0,
+        title: activity.title.as_str().to_string(),
+        activity_type: activity.activity_type.to_string(),
+        started_at: activity.started_at,
+        ended_at: activity.ended_at,
+        lifecycle_state: activity.lifecycle_state.to_string(),
+        recorded_summary: activity.recorded_summary,
+        corrected_summary: activity.corrected_summary,
+        current_route_version_id: None,
+        created_at: activity.created_at,
+        updated_at: activity.updated_at,
+    };
+
+    Ok((StatusCode::OK, Json(response)))
+}
+
 // -- In-memory implementations for use in tests --
 
 #[cfg(test)]
@@ -152,6 +195,8 @@ use std::collections::HashMap;
 #[cfg(test)]
 use std::sync::Mutex;
 
+#[cfg(test)]
+use haiker_app::activity_catalog::commands::NoOpAuditSink;
 #[cfg(test)]
 use haiker_app::activity_catalog::queries::{decode_cursor, encode_cursor, CursorPayload};
 #[cfg(test)]
@@ -306,7 +351,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
-    use axum::routing::get;
+    use axum::routing::{get, patch};
     use axum::Router;
     use chrono::{Duration, Utc};
     use haiker_app::activity_catalog::{ActivityTitle, ActivityType};
@@ -316,22 +361,32 @@ mod tests {
     fn test_app() -> Router {
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::new()),
+            audit: Arc::new(NoOpAuditSink),
         };
 
         Router::new()
             .route("/v1/activities", get(get_activities))
             .route("/v1/activities/{activityId}", get(get_activity_detail))
+            .route(
+                "/v1/activities/{activityId}/title",
+                patch(patch_activity_title),
+            )
             .with_state(state)
     }
 
     fn test_app_with_activities(activities: Vec<Activity>) -> Router {
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
+            audit: Arc::new(NoOpAuditSink),
         };
 
         Router::new()
             .route("/v1/activities", get(get_activities))
             .route("/v1/activities/{activityId}", get(get_activity_detail))
+            .route(
+                "/v1/activities/{activityId}/title",
+                patch(patch_activity_title),
+            )
             .with_state(state)
     }
 
@@ -443,6 +498,7 @@ mod tests {
 
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
+            audit: Arc::new(NoOpAuditSink),
         };
 
         let app = Router::new()
@@ -549,6 +605,7 @@ mod tests {
 
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
+            audit: Arc::new(NoOpAuditSink),
         };
 
         let app = Router::new()
@@ -864,6 +921,190 @@ mod tests {
                     .method("GET")
                     .uri(format!("/v1/activities/{random_id}"))
                     .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // --- Activity Rename (PATCH /v1/activities/{activityId}/title) tests ---
+
+    #[tokio::test]
+    async fn patch_activity_title_succeeds() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let activity = make_activity(user, "Old Title", Some(now));
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/v1/activities/{activity_id}/title"))
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"New Title"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["id"], activity_id.to_string());
+        assert_eq!(json["title"], "New Title");
+        assert_eq!(json["lifecycleState"], "active");
+    }
+
+    #[tokio::test]
+    async fn patch_activity_title_empty_returns_422() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let activity = make_activity(user, "Existing", Some(now));
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/v1/activities/{activity_id}/title"))
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":""}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "VALIDATION_FAILED");
+    }
+
+    #[tokio::test]
+    async fn patch_activity_title_unknown_fields_returns_422() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let activity = make_activity(user, "Existing", Some(now));
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/v1/activities/{activity_id}/title"))
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"Valid","unknownField":"value"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // deny_unknown_fields causes deserialization failure -> 422
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn patch_activity_title_cross_owner_returns_404() {
+        let owner = UserId::new(Uuid::new_v4());
+        let other_user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let activity = make_activity(owner, "Owner's Activity", Some(now));
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(other_user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/v1/activities/{activity_id}/title"))
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"Hijacked"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["error"]["code"], "NOT_FOUND");
+        assert_eq!(json["error"]["message"], "activity not found");
+    }
+
+    #[tokio::test]
+    async fn patch_activity_title_deleted_returns_404() {
+        let user = UserId::new(Uuid::new_v4());
+        let now = Utc::now();
+
+        let mut activity = make_activity(user, "Deleted Activity", Some(now));
+        activity.lifecycle_state = LifecycleState::Deleted;
+        let activity_id = activity.id.0;
+
+        let app = test_app_with_activities(vec![activity]);
+        let (auth_key, auth_val) = auth_header_for(user.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/v1/activities/{activity_id}/title"))
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"Rename Deleted"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn patch_activity_title_without_auth_returns_401() {
+        let random_id = Uuid::new_v4();
+        let app = test_app();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/v1/activities/{random_id}/title"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"title":"New"}"#))
                     .unwrap(),
             )
             .await
