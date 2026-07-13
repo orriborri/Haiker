@@ -265,12 +265,15 @@ pub async fn post_complete_upload(
             correlation_id,
         };
 
-        let payload_json = serde_json::to_value(&job_payload).map_err(|e| ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "INTERNAL_ERROR".to_string(),
-            detail: format!("failed to serialize job payload: {e}"),
-            problem_type: "/problems/internal-error".to_string(),
-            title: "Internal Server Error".to_string(),
+        let payload_json = serde_json::to_value(&job_payload).map_err(|e| {
+            tracing::error!("failed to serialize job payload: {e}");
+            ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "INTERNAL_ERROR".to_string(),
+                detail: "an unexpected error occurred".to_string(),
+                problem_type: "/problems/internal-error".to_string(),
+                title: "Internal Server Error".to_string(),
+            }
         })?;
 
         job_queue
@@ -280,12 +283,15 @@ pub async fn post_complete_upload(
                 correlation_id,
             )
             .await
-            .map_err(|e| ApiError {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "JOB_ENQUEUE_FAILED".to_string(),
-                detail: format!("failed to enqueue parsing job: {e}"),
-                problem_type: "/problems/job-enqueue-failed".to_string(),
-                title: "Job Enqueue Failed".to_string(),
+            .map_err(|e| {
+                tracing::error!("failed to enqueue parsing job: {e}");
+                ApiError {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    code: "JOB_ENQUEUE_FAILED".to_string(),
+                    detail: "an unexpected error occurred".to_string(),
+                    problem_type: "/problems/internal-error".to_string(),
+                    title: "Internal Server Error".to_string(),
+                }
             })?;
     }
 
