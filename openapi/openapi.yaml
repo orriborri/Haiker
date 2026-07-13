@@ -29,6 +29,18 @@ paths:
     $ref: "paths/imports.yaml#/~1v1~1imports~1{importId}"
   /v1/activities:
     $ref: "paths/activities.yaml#/~1v1~1activities"
+  /v1/activities/{activityId}/route-drafts:
+    $ref: "paths/route-editing.yaml#/~1v1~1activities~1{activityId}~1route-drafts"
+  /v1/route-drafts/{draftId}:
+    $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}"
+  /v1/route-drafts/{draftId}/operations:
+    $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1operations"
+  /v1/route-drafts/{draftId}/undo:
+    $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1undo"
+  /v1/route-drafts/{draftId}/redo:
+    $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1redo"
+  /v1/route-drafts/{draftId}/reset:
+    $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1reset"
 components:
   securitySchemes:
     $ref: "components/security.yaml"
@@ -41,3 +53,15 @@ components:
       $ref: "components/activities.yaml#/ActivitySummary"
     ActivityListResponse:
       $ref: "components/activities.yaml#/ActivityListResponse"
+    CreateRouteDraftRequest:
+      $ref: "components/route-editing.yaml#/CreateRouteDraftRequest"
+    RouteDraftResponse:
+      $ref: "components/route-editing.yaml#/RouteDraftResponse"
+    ApplyOperationRequest:
+      $ref: "components/route-editing.yaml#/ApplyOperationRequest"
+    OperationResultResponse:
+      $ref: "components/route-editing.yaml#/OperationResultResponse"
+    UndoRedoRequest:
+      $ref: "components/route-editing.yaml#/UndoRedoRequest"
+    ResetRequest:
+      $ref: "components/route-editing.yaml#/ResetRequest"

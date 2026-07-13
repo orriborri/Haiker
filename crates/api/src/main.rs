@@ -27,6 +27,8 @@ mod imports;
 mod imports_dto;
 mod recorded_route;
 mod recorded_route_dto;
+mod route_editing;
+mod route_editing_dto;
 
 /// OpenAPI documentation specification.
 #[derive(OpenApi)]
@@ -111,6 +113,39 @@ async fn main() {
         )
         .with_state(recorded_route_state);
 
+    // Route editing subsystem state (using in-memory repo placeholder for now)
+    // In production, this will use a PgRouteDraftRepository
+    let route_editing_state = route_editing::RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepositoryPlaceholder::new()),
+    };
+
+    let route_editing_routes = Router::new()
+        .route(
+            "/v1/activities/{activityId}/route-drafts",
+            post(route_editing::post_create_draft),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}",
+            get(route_editing::get_draft).delete(route_editing::delete_draft),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/operations",
+            post(route_editing::post_apply_operation),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/undo",
+            post(route_editing::post_undo),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/redo",
+            post(route_editing::post_redo),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/reset",
+            post(route_editing::post_reset),
+        )
+        .with_state(route_editing_state);
+
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
@@ -121,6 +156,7 @@ async fn main() {
         .merge(import_routes)
         .merge(activity_routes)
         .merge(recorded_route_routes)
+        .merge(route_editing_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());
@@ -175,6 +211,91 @@ impl AuditSink for AuditSinkAdapter {
                 },
             )?;
         Ok(())
+    }
+}
+
+/// Temporary in-memory route draft repository for production startup.
+/// Will be replaced with PgRouteDraftRepository once persistence layer is implemented.
+struct InMemoryRouteDraftRepositoryPlaceholder {
+    drafts: std::sync::Mutex<
+        std::collections::HashMap<
+            haiker_app::route_editing::RouteDraftId,
+            haiker_app::route_editing::RouteDraft,
+        >,
+    >,
+}
+
+impl InMemoryRouteDraftRepositoryPlaceholder {
+    fn new() -> Self {
+        Self {
+            drafts: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl haiker_app::route_editing::RouteDraftRepository for InMemoryRouteDraftRepositoryPlaceholder {
+    async fn save(
+        &self,
+        draft: &haiker_app::route_editing::RouteDraft,
+    ) -> Result<(), haiker_app::route_editing::RouteEditingError> {
+        self.drafts.lock().unwrap().insert(draft.id, draft.clone());
+        Ok(())
+    }
+
+    async fn find_by_id(
+        &self,
+        id: haiker_app::route_editing::RouteDraftId,
+    ) -> Result<
+        Option<haiker_app::route_editing::RouteDraft>,
+        haiker_app::route_editing::RouteEditingError,
+    > {
+        Ok(self.drafts.lock().unwrap().get(&id).cloned())
+    }
+
+    async fn find_active_by_activity(
+        &self,
+        activity_id: haiker_app::activity_catalog::ActivityId,
+        owner_id: haiker_app::identity::UserId,
+    ) -> Result<
+        Option<haiker_app::route_editing::RouteDraft>,
+        haiker_app::route_editing::RouteEditingError,
+    > {
+        Ok(self
+            .drafts
+            .lock()
+            .unwrap()
+            .values()
+            .find(|d| {
+                d.activity_id == activity_id
+                    && d.owner_id == owner_id
+                    && d.state == haiker_app::route_editing::DraftState::Active
+            })
+            .cloned())
+    }
+
+    async fn update(
+        &self,
+        draft: &haiker_app::route_editing::RouteDraft,
+    ) -> Result<(), haiker_app::route_editing::RouteEditingError> {
+        self.drafts.lock().unwrap().insert(draft.id, draft.clone());
+        Ok(())
+    }
+
+    async fn find_by_operation_id(
+        &self,
+        operation_id: haiker_app::route_editing::OperationId,
+    ) -> Result<
+        Option<haiker_app::route_editing::RouteDraftId>,
+        haiker_app::route_editing::RouteEditingError,
+    > {
+        Ok(self
+            .drafts
+            .lock()
+            .unwrap()
+            .values()
+            .find(|d| d.applied_operations.iter().any(|e| e.id == operation_id))
+            .map(|d| d.id))
     }
 }
 

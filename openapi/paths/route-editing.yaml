@@ -1,0 +1,415 @@
+/v1/activities/{activityId}/route-drafts:
+  post:
+    operationId: createRouteDraft
+    summary: Create a new route draft
+    description: |
+      Creates a new route editing draft for the specified activity.
+      The draft is initialized with the provided base geometry.
+
+      Requires an Idempotency-Key header to ensure safe retries.
+      If a draft already exists for the given activity and owner, returns the existing draft.
+    tags:
+      - Route Editing
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Unique key to ensure idempotent request handling
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/route-editing.yaml#/CreateRouteDraftRequest"
+    responses:
+      "201":
+        description: Draft created successfully
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-editing.yaml#/RouteDraftResponse"
+      "400":
+        description: Missing Idempotency-Key header
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "401":
+        description: Missing or invalid authentication
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Validation failed (invalid geometry)
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/route-drafts/{draftId}:
+  get:
+    operationId: getRouteDraft
+    summary: Get a route draft
+    description: Returns the current state of a route draft including its geometry.
+    tags:
+      - Route Editing
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: draftId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: Draft retrieved successfully
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-editing.yaml#/RouteDraftResponse"
+      "403":
+        description: Not authorized to access this draft
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Draft not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+  delete:
+    operationId: discardDraft
+    summary: Discard a route draft
+    description: |
+      Permanently discards a route draft. The draft transitions to the Discarded
+      state and can no longer be edited.
+    tags:
+      - Route Editing
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: draftId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "204":
+        description: Draft discarded successfully
+      "403":
+        description: Not authorized to access this draft
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Draft not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: Draft is not in active state
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/route-drafts/{draftId}/operations:
+  post:
+    operationId: applyRouteOperation
+    summary: Apply an operation to the draft
+    description: |
+      Applies a geometry operation to the route draft. Requires an Idempotency-Key
+      header (UUID) which serves as the operation ID for deduplication.
+
+      If the same Idempotency-Key is sent again, the original response is replayed
+      without side effects.
+
+      The expectedRevision field enables optimistic concurrency control.
+      If it does not match the current draft revision, a 409 Conflict is returned.
+    tags:
+      - Route Editing
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: draftId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: UUID used as operation identifier for idempotent deduplication
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/route-editing.yaml#/ApplyOperationRequest"
+    responses:
+      "200":
+        description: Operation applied successfully
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-editing.yaml#/OperationResultResponse"
+      "400":
+        description: Missing or invalid Idempotency-Key header
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "403":
+        description: Not authorized to access this draft
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Draft not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: Revision conflict (stale expectedRevision) or draft not active
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Invalid operation or operation failed
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/route-drafts/{draftId}/undo:
+  post:
+    operationId: undoOperation
+    summary: Undo the last applied operation
+    description: |
+      Undoes the most recently applied operation, restoring the geometry to its
+      previous state. Requires Idempotency-Key header for safe retries.
+    tags:
+      - Route Editing
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: draftId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Unique key to ensure idempotent request handling
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/route-editing.yaml#/UndoRedoRequest"
+    responses:
+      "200":
+        description: Undo applied successfully
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-editing.yaml#/OperationResultResponse"
+      "400":
+        description: Missing Idempotency-Key header
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "403":
+        description: Not authorized to access this draft
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Draft not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: Revision conflict or draft not active
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Nothing to undo
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/route-drafts/{draftId}/redo:
+  post:
+    operationId: redoOperation
+    summary: Redo the last undone operation
+    description: |
+      Redoes the most recently undone operation, re-applying it to the geometry.
+      Requires Idempotency-Key header for safe retries.
+    tags:
+      - Route Editing
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: draftId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Unique key to ensure idempotent request handling
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/route-editing.yaml#/UndoRedoRequest"
+    responses:
+      "200":
+        description: Redo applied successfully
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-editing.yaml#/OperationResultResponse"
+      "400":
+        description: Missing Idempotency-Key header
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "403":
+        description: Not authorized to access this draft
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Draft not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: Revision conflict or draft not active
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Nothing to redo
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/route-drafts/{draftId}/reset:
+  post:
+    operationId: resetDraft
+    summary: Reset draft to new base geometry
+    description: |
+      Resets the draft geometry to the provided base geometry, clearing all
+      operation history (undo/redo stacks). Requires Idempotency-Key header.
+    tags:
+      - Route Editing
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: draftId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Unique key to ensure idempotent request handling
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/route-editing.yaml#/ResetRequest"
+    responses:
+      "200":
+        description: Draft reset successfully
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-editing.yaml#/OperationResultResponse"
+      "400":
+        description: Missing Idempotency-Key header
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "403":
+        description: Not authorized to access this draft
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Draft not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: Revision conflict or draft not active
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Invalid geometry
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

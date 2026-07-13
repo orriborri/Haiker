@@ -5,10 +5,12 @@
 
 mod draft;
 mod operations;
+pub mod repository;
 mod value_objects;
 
 pub use self::draft::{DraftState, OperationEntry, RouteDraft, RouteDraftId};
 pub use self::operations::RouteOperation;
+pub use self::repository::RouteDraftRepository;
 pub use self::value_objects::{
     Coordinate, Elevation, OperationId, PointIndex, RoutePoint, SegmentIndex,
 };
