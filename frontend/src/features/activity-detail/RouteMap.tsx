@@ -48,7 +48,7 @@ export function RouteMap({ route }: RouteMapProps) {
     map.on("load", () => {
       map.addSource("route", {
         type: "geojson",
-        data: route as unknown as GeoJSON.Feature,
+        data: route as unknown as GeoJSON.FeatureCollection,
       });
 
       map.addLayer({
@@ -97,12 +97,20 @@ export function RouteMap({ route }: RouteMapProps) {
 }
 
 function extractCoordinates(route: RecordedRoute): [number, number][] {
-  const geom = route.geometry;
-  if (geom.type === "LineString") {
-    return geom.coordinates as [number, number][];
+  const coords: [number, number][] = [];
+  for (const feature of route.features) {
+    const geom = feature.geometry;
+    if (geom.type === "LineString") {
+      for (const coord of geom.coordinates) {
+        coords.push(coord as unknown as [number, number]);
+      }
+    } else if (geom.type === "MultiLineString") {
+      for (const line of geom.coordinates as unknown as number[][][]) {
+        for (const coord of line) {
+          coords.push(coord as unknown as [number, number]);
+        }
+      }
+    }
   }
-  if (geom.type === "MultiLineString") {
-    return (geom.coordinates as [number, number][][]).flat();
-  }
-  return [];
+  return coords;
 }

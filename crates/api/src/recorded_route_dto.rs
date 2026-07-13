@@ -8,11 +8,19 @@ use serde::{Deserialize, Serialize};
 pub struct RecordedRouteParams {
     /// Level of detail: "preview" or "full" (default: "full").
     #[serde(default = "default_detail")]
-    pub detail: String,
+    pub detail: RouteDetail,
 }
 
-fn default_detail() -> String {
-    "full".to_string()
+/// Allowed values for the `detail` query parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RouteDetail {
+    Full,
+    Preview,
+}
+
+fn default_detail() -> RouteDetail {
+    RouteDetail::Full
 }
 
 /// GeoJSON FeatureCollection response for full recorded route geometry.

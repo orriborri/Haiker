@@ -138,7 +138,6 @@ pub async fn get_activity_detail(
         lifecycle_state: activity.lifecycle_state.to_string(),
         recorded_summary: activity.recorded_summary,
         corrected_summary: activity.corrected_summary,
-        current_route_version_id: None,
         created_at: activity.created_at,
         updated_at: activity.updated_at,
     };
@@ -178,7 +177,6 @@ pub async fn patch_activity_title(
         lifecycle_state: activity.lifecycle_state.to_string(),
         recorded_summary: activity.recorded_summary,
         corrected_summary: activity.corrected_summary,
-        current_route_version_id: None,
         created_at: activity.created_at,
         updated_at: activity.updated_at,
     };

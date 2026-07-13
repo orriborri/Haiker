@@ -75,8 +75,6 @@ pub struct ActivityDetailResponse {
     pub recorded_summary: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corrected_summary: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_route_version_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

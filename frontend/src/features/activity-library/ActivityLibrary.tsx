@@ -5,20 +5,6 @@ import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { EmptyState } from "@/components/EmptyState";
 import type { ActivitySummary } from "@/api/client";
 
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
-function formatDistance(meters: number): string {
-  if (meters >= 1000) {
-    return `${(meters / 1000).toFixed(1)} km`;
-  }
-  return `${Math.round(meters)} m`;
-}
-
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
   return date.toLocaleDateString(undefined, {
@@ -63,17 +49,13 @@ function ActivityRow({ activity }: { activity: ActivitySummary }) {
         </h3>
         <p className="mt-0.5 text-xs text-gray-500">
           <span className="capitalize">{activity.activityType}</span>
-          {" \u00B7 "}
-          {formatDate(activity.startedAt)}
+          {activity.startedAt && (
+            <>
+              {" \u00B7 "}
+              {formatDate(activity.startedAt)}
+            </>
+          )}
         </p>
-      </div>
-      <div className="flex shrink-0 flex-col items-end gap-0.5 text-xs text-gray-500">
-        {activity.distanceMeters != null && (
-          <span>{formatDistance(activity.distanceMeters)}</span>
-        )}
-        {activity.durationSeconds != null && (
-          <span>{formatDuration(activity.durationSeconds)}</span>
-        )}
       </div>
     </li>
   );

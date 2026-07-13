@@ -60,41 +60,53 @@ const ActivitySummarySchema = z.object({
   id: z.string(),
   title: z.string(),
   activityType: z.string(),
-  startedAt: z.string(),
-  finishedAt: z.string().nullable(),
-  distanceMeters: z.number().nullable(),
-  durationSeconds: z.number().nullable(),
-  elevationGainMeters: z.number().nullable(),
+  startedAt: z.string().nullable(),
+  endedAt: z.string().nullable(),
+  recordedSummary: z.unknown().nullable().optional(),
+  correctedSummary: z.unknown().nullable().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const PaginationMetaSchema = z.object({
+  cursor: z.string().nullable().optional(),
+  hasMore: z.boolean(),
+  pageSize: z.number(),
 });
 
 const ActivitiesPageSchema = z.object({
   items: z.array(ActivitySummarySchema),
-  cursor: z.string().nullable(),
+  pagination: PaginationMetaSchema,
 });
 
 const ActivityDetailSchema = z.object({
   id: z.string(),
   title: z.string(),
   activityType: z.string(),
-  startedAt: z.string(),
-  finishedAt: z.string().nullable(),
-  distanceMeters: z.number().nullable(),
-  durationSeconds: z.number().nullable(),
-  elevationGainMeters: z.number().nullable(),
-  elevationLossMeters: z.number().nullable(),
-  averageSpeedMps: z.number().nullable(),
-  maxSpeedMps: z.number().nullable(),
-  averageHeartRate: z.number().nullable(),
-  maxHeartRate: z.number().nullable(),
+  startedAt: z.string().nullable(),
+  endedAt: z.string().nullable(),
+  lifecycleState: z.string(),
+  recordedSummary: z.unknown().nullable().optional(),
+  correctedSummary: z.unknown().nullable().optional(),
   createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const GeoJsonGeometrySchema = z.object({
+  type: z.string(),
+  coordinates: z.array(z.array(z.number())),
+});
+
+const GeoJsonFeatureSchema = z.object({
+  type: z.literal("Feature"),
+  geometry: GeoJsonGeometrySchema,
+  properties: z.record(z.unknown()).nullable(),
 });
 
 const RecordedRouteSchema = z.object({
-  type: z.literal("Feature"),
-  geometry: z.object({
-    type: z.string(),
-    coordinates: z.array(z.unknown()),
-  }),
+  type: z.literal("FeatureCollection"),
+  bbox: z.array(z.number()),
+  features: z.array(GeoJsonFeatureSchema),
   properties: z.record(z.unknown()).nullable(),
 });
 

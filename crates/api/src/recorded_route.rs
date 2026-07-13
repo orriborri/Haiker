@@ -17,7 +17,7 @@ use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
 use crate::recorded_route_dto::{
     GeoJsonFeature, GeoJsonGeometry, RecordedRouteParams, RecordedRoutePreviewResponse,
-    RecordedRouteResponse, RouteProperties, SegmentProperties,
+    RecordedRouteResponse, RouteDetail, RouteProperties, SegmentProperties,
 };
 
 /// Shared application state for recorded route handlers.
@@ -63,7 +63,7 @@ pub async fn get_recorded_route_handler(
     Query(params): Query<RecordedRouteParams>,
 ) -> Result<impl IntoResponse, ApiError> {
     let owner_id = actor.0.user_id;
-    let preview = params.detail == "preview";
+    let preview = params.detail == RouteDetail::Preview;
 
     let result = get_recorded_route(
         activity_id,
@@ -702,5 +702,38 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn invalid_detail_param_returns_400() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity = make_activity(owner, "Detail Test");
+        let activity_id = activity.id.0;
+        let route_data = make_route_data(activity_id);
+
+        let app = test_app(
+            vec![activity],
+            Arc::new(TestRecordedRouteRepository::with_route(
+                activity_id,
+                route_data,
+            )),
+        );
+        let (auth_key, auth_val) = auth_header_for(owner.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!(
+                        "/v1/activities/{activity_id}/recorded-route?detail=typo"
+                    ))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

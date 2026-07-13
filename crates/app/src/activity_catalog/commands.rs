@@ -82,15 +82,22 @@ pub async fn rename_activity(
     // Persist
     repo.update(&activity).await?;
 
-    // Record audit event
-    audit
+    // Record audit event (best-effort: log and continue on failure)
+    if let Err(e) = audit
         .record(
             owner_id.0,
             "activity.title.updated",
             "activity",
             &activity_id.to_string(),
         )
-        .await?;
+        .await
+    {
+        tracing::warn!(
+            error = %e,
+            activity_id = %activity_id,
+            "failed to record audit event for activity rename"
+        );
+    }
 
     Ok(activity)
 }
@@ -131,15 +138,22 @@ pub async fn delete_activity(
     // Persist
     repo.update(&activity).await?;
 
-    // Record audit event
-    audit
+    // Record audit event (best-effort: log and continue on failure)
+    if let Err(e) = audit
         .record(
             owner_id.0,
             "activity.deleted",
             "activity",
             &activity_id.to_string(),
         )
-        .await?;
+        .await
+    {
+        tracing::warn!(
+            error = %e,
+            activity_id = %activity_id,
+            "failed to record audit event for activity deletion"
+        );
+    }
 
     Ok(())
 }

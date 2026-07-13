@@ -5,20 +5,6 @@ import { useRecordedRoute } from "./useRecordedRoute";
 import { RouteMap } from "./RouteMap";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 
-function formatDuration(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
-function formatDistance(meters: number): string {
-  if (meters >= 1000) {
-    return `${(meters / 1000).toFixed(1)} km`;
-  }
-  return `${Math.round(meters)} m`;
-}
-
 function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr);
   return date.toLocaleString(undefined, {
@@ -157,49 +143,18 @@ export function ActivityDetailPage({ activityId }: ActivityDetailPageProps) {
       <section aria-label="Activity details">
         <h2 className="mb-3 text-lg font-semibold text-gray-900">Details</h2>
         <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <MetadataItem label="Started" value={formatDateTime(activity.startedAt)} />
-          {activity.finishedAt && (
+          {activity.startedAt && (
+            <MetadataItem label="Started" value={formatDateTime(activity.startedAt)} />
+          )}
+          {activity.endedAt && (
             <MetadataItem
-              label="Finished"
-              value={formatDateTime(activity.finishedAt)}
+              label="Ended"
+              value={formatDateTime(activity.endedAt)}
             />
           )}
-          {activity.distanceMeters != null && (
-            <MetadataItem
-              label="Distance"
-              value={formatDistance(activity.distanceMeters)}
-            />
-          )}
-          {activity.durationSeconds != null && (
-            <MetadataItem
-              label="Duration"
-              value={formatDuration(activity.durationSeconds)}
-            />
-          )}
-          {activity.elevationGainMeters != null && (
-            <MetadataItem
-              label="Elevation gain"
-              value={`${Math.round(activity.elevationGainMeters)} m`}
-            />
-          )}
-          {activity.elevationLossMeters != null && (
-            <MetadataItem
-              label="Elevation loss"
-              value={`${Math.round(activity.elevationLossMeters)} m`}
-            />
-          )}
-          {activity.averageHeartRate != null && (
-            <MetadataItem
-              label="Avg heart rate"
-              value={`${Math.round(activity.averageHeartRate)} bpm`}
-            />
-          )}
-          {activity.maxHeartRate != null && (
-            <MetadataItem
-              label="Max heart rate"
-              value={`${Math.round(activity.maxHeartRate)} bpm`}
-            />
-          )}
+          <MetadataItem label="State" value={activity.lifecycleState} />
+          <MetadataItem label="Created" value={formatDateTime(activity.createdAt)} />
+          <MetadataItem label="Updated" value={formatDateTime(activity.updatedAt)} />
         </dl>
       </section>
     </div>

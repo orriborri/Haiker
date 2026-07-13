@@ -136,8 +136,12 @@ impl ActivityRepository for PgActivityRepository {
                         FROM activity_catalog.activities
                         WHERE owner_id = $1
                           AND lifecycle_state != 'deleted'
-                          AND (started_at, id) < ($2, $3)
-                        ORDER BY started_at DESC, id DESC
+                          AND (
+                            (started_at < $2)
+                            OR (started_at = $2 AND id < $3)
+                            OR (started_at IS NULL)
+                          )
+                        ORDER BY started_at DESC NULLS LAST, id DESC
                         LIMIT $4
                         "#,
                 )
@@ -163,7 +167,7 @@ impl ActivityRepository for PgActivityRepository {
                         WHERE owner_id = $1
                           AND lifecycle_state != 'deleted'
                           AND (started_at IS NULL AND id < $2)
-                        ORDER BY started_at DESC, id DESC
+                        ORDER BY started_at DESC NULLS LAST, id DESC
                         LIMIT $3
                         "#,
                     )
@@ -186,7 +190,7 @@ impl ActivityRepository for PgActivityRepository {
                 FROM activity_catalog.activities
                 WHERE owner_id = $1
                   AND lifecycle_state != 'deleted'
-                ORDER BY started_at DESC, id DESC
+                ORDER BY started_at DESC NULLS LAST, id DESC
                 LIMIT $2
                 "#,
             )
