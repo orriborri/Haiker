@@ -4,11 +4,13 @@
 //! and validation.
 
 mod draft;
+pub mod gateway;
 mod operations;
 pub mod repository;
 mod value_objects;
 
 pub use self::draft::{DraftState, OperationEntry, RouteDraft, RouteDraftId};
+pub use self::gateway::{ActivityGateway, RouteVersionGateway};
 pub use self::operations::RouteOperation;
 pub use self::repository::RouteDraftRepository;
 pub use self::value_objects::{
@@ -68,6 +70,18 @@ pub enum RouteEditingError {
     /// A coordinate value is out of valid range.
     #[error("invalid coordinate: {message}")]
     InvalidCoordinate { message: String },
+
+    /// The referenced activity does not exist or is not accessible to the caller.
+    #[error("activity not found")]
+    ActivityNotFound,
+
+    /// The activity exists but is in deleted lifecycle state.
+    #[error("activity is deleted")]
+    ActivityDeleted,
+
+    /// The provided base route version ID does not exist or does not belong to the activity.
+    #[error("invalid base route version")]
+    InvalidBaseRouteVersion,
 }
 
 #[cfg(test)]

@@ -123,6 +123,33 @@ fn create_draft_rejects_insufficient_points() {
     ));
 }
 
+#[test]
+fn create_draft_stores_base_route_version_id() {
+    let base_version_id = Uuid::new_v4();
+    let d = RouteDraft::create_from_geometry(
+        UserId::new(Uuid::new_v4()),
+        ActivityId::generate(),
+        Some(base_version_id),
+        sample_geo(),
+    )
+    .unwrap();
+    assert_eq!(d.base_route_version_id, Some(base_version_id));
+    assert_eq!(d.revision, 0);
+}
+
+#[test]
+fn create_draft_without_base_route_version_id() {
+    let d = RouteDraft::create_from_geometry(
+        UserId::new(Uuid::new_v4()),
+        ActivityId::generate(),
+        None,
+        sample_geo(),
+    )
+    .unwrap();
+    assert_eq!(d.base_route_version_id, None);
+    assert_eq!(d.revision, 0);
+}
+
 // --- MovePoint ---
 
 #[test]

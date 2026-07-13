@@ -15,6 +15,9 @@ use haiker_app::route_editing::{
 pub struct CreateRouteDraftRequest {
     /// Initial geometry as array of segments, each segment is array of points.
     pub geometry: Vec<Vec<RoutePointDto>>,
+    /// Optional base route version ID to anchor the draft to.
+    #[serde(default)]
+    pub base_route_version_id: Option<Uuid>,
 }
 
 /// A route point in DTO form.
@@ -213,6 +216,8 @@ pub struct ResetRequest {
 pub struct RouteDraftResponse {
     pub id: Uuid,
     pub activity_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_route_version_id: Option<Uuid>,
     pub revision: u64,
     pub state: String,
     pub geometry: Vec<Vec<RoutePointDto>>,
@@ -257,6 +262,7 @@ pub fn draft_to_response(draft: &haiker_app::route_editing::RouteDraft) -> Route
     RouteDraftResponse {
         id: draft.id.0,
         activity_id: draft.activity_id.0,
+        base_route_version_id: draft.base_route_version_id,
         revision: draft.revision,
         state: match draft.state {
             haiker_app::route_editing::DraftState::Active => "active".to_string(),

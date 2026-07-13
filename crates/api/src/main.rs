@@ -9,6 +9,7 @@ use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::object_storage::ObjectStorageClient;
 use haiker_platform::recorded_route_persistence::PgRecordedRouteRepository;
 use haiker_platform::request_id::request_id_middleware;
+use haiker_platform::route_editing_gateways::{PgActivityGateway, PgRouteVersionGateway};
 use haiker_platform::route_editing_persistence::PgRouteDraftRepository;
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use std::sync::Arc;
@@ -117,6 +118,8 @@ async fn main() {
     // Route editing subsystem state with PostgreSQL persistence
     let route_editing_state = route_editing::RouteEditingAppState {
         repo: Arc::new(PgRouteDraftRepository::new(pool.clone())),
+        activity_gateway: Arc::new(PgActivityGateway::new()),
+        route_version_gateway: Arc::new(PgRouteVersionGateway::new()),
     };
 
     let route_editing_routes = Router::new()
