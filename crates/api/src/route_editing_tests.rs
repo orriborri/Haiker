@@ -1230,3 +1230,200 @@ async fn get_draft_returns_base_route_version_id() {
     // Verify geometry is preserved
     assert_eq!(json["geometry"], sample_geometry());
 }
+
+#[tokio::test]
+async fn apply_with_same_key_different_payload_returns_409() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let op_id = Uuid::new_v4();
+
+    // First request: apply a movePoint operation
+    let body1 = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", op_id.to_string())
+                .body(Body::from(serde_json::to_vec(&body1).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response1.status(), StatusCode::OK);
+
+    // Second request: same idempotency key but DIFFERENT operation payload
+    let body2 = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 1,
+            "newPosition": {"latitude": 49.0, "longitude": 13.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", op_id.to_string())
+                .body(Body::from(serde_json::to_vec(&body2).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response2.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response2.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "IDEMPOTENCY_PAYLOAD_MISMATCH");
+    assert_eq!(json["type"], "/problems/idempotency-conflict");
+    assert_eq!(json["status"], 409);
+}
+
+#[tokio::test]
+async fn error_response_has_problem_details_shape() {
+    let app = test_app();
+    let (auth_key, auth_val) = auth_header();
+    let random_id = Uuid::new_v4();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/route-drafts/{random_id}"))
+                .header(&auth_key, &auth_val)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+
+    // Verify Problem Details envelope fields are present
+    assert!(json["type"].is_string(), "type field must be present");
+    assert!(json["title"].is_string(), "title field must be present");
+    assert!(json["status"].is_number(), "status field must be present");
+    assert!(json["code"].is_string(), "code field must be present");
+    assert!(json["detail"].is_string(), "detail field must be present");
+    // requestId is null when middleware is not present
+    assert!(
+        json.get("requestId").is_some(),
+        "requestId field must be present"
+    );
+
+    assert_eq!(json["code"], "NOT_FOUND");
+    assert_eq!(json["status"], 404);
+}
+
+#[tokio::test]
+async fn stale_revision_returns_409_with_problem_details() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Apply first operation to bump revision to 1
+    let body1 = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body1).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Try with stale revision 0
+    let body2 = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 1,
+            "newPosition": {"latitude": 48.5, "longitude": 12.5}
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body2).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["type"], "/problems/stale-route-draft");
+    assert_eq!(json["title"], "Route draft revision is stale");
+    assert_eq!(json["code"], "ROUTE_DRAFT_REVISION_CONFLICT");
+    assert_eq!(json["status"], 409);
+}
