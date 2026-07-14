@@ -1,15 +1,17 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { Selection, EditorTool } from "./types";
+import type { Selection, EditorTool, DragState } from "./types";
 import type { RoutePointDto } from "@/api/client";
 import { computeSelection } from "./SelectionModel";
+import { haversineDistance, formatDistance } from "./geo-utils";
 
 interface EditorMapProps {
   geometry: RoutePointDto[][] | null;
   baseGeometry: RoutePointDto[][] | null;
   selection: Selection;
   currentTool: EditorTool;
+  drag: DragState | null;
   onSelectionChange: (selection: Selection) => void;
   onMovePoint: (
     segmentIndex: number,
@@ -23,6 +25,15 @@ interface EditorMapProps {
     lng: number,
     lat: number,
   ) => void;
+  onDragStart: (
+    segmentIndex: number,
+    pointIndex: number,
+    latitude: number,
+    longitude: number,
+  ) => void;
+  onDragPreview: (latitude: number, longitude: number) => void;
+  onDragEnd: () => void;
+  onDragCancel: () => void;
 }
 
 /** Convert domain geometry to GeoJSON coordinate arrays for MapLibre rendering */
@@ -37,9 +48,14 @@ export function EditorMap({
   baseGeometry,
   selection,
   currentTool,
+  drag,
   onSelectionChange,
   onMovePoint,
   onAddPoint,
+  onDragStart,
+  onDragPreview,
+  onDragEnd,
+  onDragCancel,
 }: EditorMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -61,6 +77,14 @@ export function EditorMap({
   onMovePointRef.current = onMovePoint;
   const onAddPointRef = useRef(onAddPoint);
   onAddPointRef.current = onAddPoint;
+  const onDragStartRef = useRef(onDragStart);
+  onDragStartRef.current = onDragStart;
+  const onDragPreviewRef = useRef(onDragPreview);
+  onDragPreviewRef.current = onDragPreview;
+  const onDragEndRef = useRef(onDragEnd);
+  onDragEndRef.current = onDragEnd;
+  const onDragCancelRef = useRef(onDragCancel);
+  onDragCancelRef.current = onDragCancel;
 
   // Initialize map
   useEffect(() => {
@@ -258,24 +282,31 @@ export function EditorMap({
         if (!feature || !feature.properties) return;
 
         e.preventDefault();
+        const segIdx = feature.properties["segmentIndex"] as number;
+        const ptIdx = feature.properties["pointIndex"] as number;
         dragPointRef.current = {
-          segmentIndex: feature.properties["segmentIndex"] as number,
-          pointIndex: feature.properties["pointIndex"] as number,
+          segmentIndex: segIdx,
+          pointIndex: ptIdx,
         };
         isDraggingRef.current = true;
         map.getCanvas().style.cursor = "grabbing";
+
+        // Get original point coordinates from feature geometry
+        const coords = (feature.geometry as GeoJSON.Point).coordinates;
+        onDragStartRef.current(segIdx, ptIdx, coords[1]!, coords[0]!);
       });
 
       map.on("mousemove", (e) => {
         if (!isDraggingRef.current || !dragPointRef.current) return;
-        // Visual feedback during drag (cursor already set)
-        void e;
+        const lngLat = e.lngLat;
+        onDragPreviewRef.current(lngLat.lat, lngLat.lng);
       });
 
       map.on("mouseup", (e) => {
         if (!isDraggingRef.current || !dragPointRef.current) return;
         const { segmentIndex, pointIndex } = dragPointRef.current;
         const lngLat = e.lngLat;
+        onDragEndRef.current();
         onMovePointRef.current(
           segmentIndex,
           pointIndex,
@@ -308,6 +339,25 @@ export function EditorMap({
     return () => {
       map.remove();
       mapRef.current = null;
+    };
+  }, []);
+
+  // Escape key handler to cancel drag
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isDraggingRef.current) {
+        isDraggingRef.current = false;
+        dragPointRef.current = null;
+        onDragCancelRef.current();
+        const map = mapRef.current;
+        if (map) {
+          map.getCanvas().style.cursor = "";
+        }
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
 
@@ -376,6 +426,23 @@ export function EditorMap({
         aria-roledescription="Interactive map for editing route geometry"
         tabIndex={0}
       />
+      {drag && (
+        <div
+          className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded bg-black/75 px-3 py-1.5 text-sm font-medium text-white shadow-lg"
+          role="status"
+          aria-live="polite"
+          aria-label="Drag distance"
+        >
+          {formatDistance(
+            haversineDistance(
+              drag.originalLatitude,
+              drag.originalLongitude,
+              drag.previewLatitude,
+              drag.previewLongitude,
+            ),
+          )}
+        </div>
+      )}
       {tileError && (
         <div
           className="absolute inset-x-0 top-0 flex items-center justify-center gap-3 bg-black/60 px-4 py-3"

@@ -967,3 +967,29 @@ fn undo_delete_section_at_start() {
     d.undo(1).unwrap();
     assert_eq!(d.geometry, geo);
 }
+
+#[test]
+fn move_point_rejects_invalid_coordinates_latitude_too_high() {
+    let result = Coordinate::new(91.0, 0.0);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    match err {
+        RouteEditingError::InvalidCoordinate { message } => {
+            assert!(message.contains("latitude"));
+        }
+        other => panic!("expected InvalidCoordinate, got: {:?}", other),
+    }
+}
+
+#[test]
+fn move_point_rejects_invalid_coordinates_longitude_too_high() {
+    let result = Coordinate::new(0.0, 181.0);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    match err {
+        RouteEditingError::InvalidCoordinate { message } => {
+            assert!(message.contains("longitude"));
+        }
+        other => panic!("expected InvalidCoordinate, got: {:?}", other),
+    }
+}

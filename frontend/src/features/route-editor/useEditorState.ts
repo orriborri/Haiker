@@ -6,6 +6,7 @@ import type {
   EditorTool,
   Selection,
   PendingOperation,
+  DragState,
 } from "./types";
 
 const initialState: EditorState = {
@@ -22,6 +23,7 @@ const initialState: EditorState = {
   isOffline: false,
   conflictServerDraft: null,
   conflictLocalOps: [],
+  drag: null,
 };
 
 function editorReducer(state: EditorState, action: EditorAction): EditorState {
@@ -103,6 +105,49 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       };
     case "SET_ONLINE_STATUS":
       return { ...state, isOffline: !action.isOnline };
+    case "DRAG_START": {
+      const drag: DragState = {
+        segmentIndex: action.segmentIndex,
+        pointIndex: action.pointIndex,
+        originalLatitude: action.latitude,
+        originalLongitude: action.longitude,
+        previewLatitude: action.latitude,
+        previewLongitude: action.longitude,
+      };
+      return { ...state, drag };
+    }
+    case "DRAG_PREVIEW": {
+      if (!state.drag) return state;
+      const updatedDrag: DragState = {
+        ...state.drag,
+        previewLatitude: action.latitude,
+        previewLongitude: action.longitude,
+      };
+      // Update geometry optimistically for live preview
+      if (!state.optimisticGeometry) return { ...state, drag: updatedDrag };
+      const previewGeometry = state.optimisticGeometry.map((segment, sIdx) => {
+        if (sIdx !== updatedDrag.segmentIndex) return segment;
+        return segment.map((pt, pIdx) => {
+          if (pIdx !== updatedDrag.pointIndex) return pt;
+          return { ...pt, latitude: action.latitude, longitude: action.longitude };
+        });
+      });
+      return { ...state, drag: updatedDrag, optimisticGeometry: previewGeometry };
+    }
+    case "DRAG_END":
+      return { ...state, drag: null };
+    case "DRAG_CANCEL": {
+      // Restore original geometry from before drag
+      if (!state.drag || !state.optimisticGeometry) return { ...state, drag: null };
+      const restored = state.optimisticGeometry.map((segment, sIdx) => {
+        if (sIdx !== state.drag!.segmentIndex) return segment;
+        return segment.map((pt, pIdx) => {
+          if (pIdx !== state.drag!.pointIndex) return pt;
+          return { ...pt, latitude: state.drag!.originalLatitude, longitude: state.drag!.originalLongitude };
+        });
+      });
+      return { ...state, drag: null, optimisticGeometry: restored };
+    }
   }
 }
 
@@ -178,6 +223,25 @@ export function useEditorState() {
     dispatch({ type: "SET_ONLINE_STATUS", isOnline });
   }, []);
 
+  const dragStart = useCallback(
+    (segmentIndex: number, pointIndex: number, latitude: number, longitude: number) => {
+      dispatch({ type: "DRAG_START", segmentIndex, pointIndex, latitude, longitude });
+    },
+    [],
+  );
+
+  const dragPreview = useCallback((latitude: number, longitude: number) => {
+    dispatch({ type: "DRAG_PREVIEW", latitude, longitude });
+  }, []);
+
+  const dragEnd = useCallback(() => {
+    dispatch({ type: "DRAG_END" });
+  }, []);
+
+  const dragCancel = useCallback(() => {
+    dispatch({ type: "DRAG_CANCEL" });
+  }, []);
+
   return {
     state,
     dispatch,
@@ -196,5 +260,9 @@ export function useEditorState() {
     resolveConflictReload,
     resolveConflictRetry,
     setOnlineStatus,
+    dragStart,
+    dragPreview,
+    dragEnd,
+    dragCancel,
   };
 }

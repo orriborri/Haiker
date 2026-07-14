@@ -77,6 +77,10 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     resolveConflictReload,
     resolveConflictRetry,
     setOnlineStatus,
+    dragStart,
+    dragPreview,
+    dragEnd,
+    dragCancel,
   } = useEditorState();
 
   // Track base geometry for reset operations
@@ -810,9 +814,14 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
           baseGeometry={state.baseGeometry}
           selection={state.selection}
           currentTool={state.currentTool}
+          drag={state.drag}
           onSelectionChange={handleSelectionChange}
           onMovePoint={handleMovePoint}
           onAddPoint={handleAddPoint}
+          onDragStart={dragStart}
+          onDragPreview={dragPreview}
+          onDragEnd={dragEnd}
+          onDragCancel={dragCancel}
         />
       </div>
     </div>
