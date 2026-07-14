@@ -107,6 +107,7 @@ export interface EditorState {
   isOffline: boolean;
   conflictServerDraft: RouteDraftResponse | null;
   conflictLocalOps: PendingOperation[];
+  drag: DragState | null;
 }
 
 /** Actions dispatched to the editor state reducer */
@@ -125,7 +126,11 @@ export type EditorAction =
   | { type: "SET_CONFLICT_STATE"; serverDraft: RouteDraftResponse; localOps: PendingOperation[] }
   | { type: "RESOLVE_CONFLICT_RELOAD" }
   | { type: "RESOLVE_CONFLICT_RETRY" }
-  | { type: "SET_ONLINE_STATUS"; isOnline: boolean };
+  | { type: "SET_ONLINE_STATUS"; isOnline: boolean }
+  | { type: "DRAG_START"; segmentIndex: number; pointIndex: number; latitude: number; longitude: number }
+  | { type: "DRAG_PREVIEW"; latitude: number; longitude: number }
+  | { type: "DRAG_END" }
+  | { type: "DRAG_CANCEL" };
 
 /** Pending operation stored in IndexedDB for autosave/recovery */
 export interface PendingOperation {
@@ -135,4 +140,14 @@ export interface PendingOperation {
   expectedRevision: number;
   timestamp: number;
   confirmed: boolean;
+}
+
+/** State tracked during a point drag operation */
+export interface DragState {
+  segmentIndex: number;
+  pointIndex: number;
+  originalLatitude: number;
+  originalLongitude: number;
+  previewLatitude: number;
+  previewLongitude: number;
 }
