@@ -11,6 +11,7 @@ class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public problemType: string | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -39,10 +40,12 @@ async function apiFetch<T>(
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
+    const parsed = body as Record<string, unknown>;
     throw new ApiError(
       response.status,
-      (body as Record<string, unknown>).code as string ?? "unknown",
-      (body as Record<string, unknown>).detail as string ?? response.statusText,
+      (parsed.code as string) ?? "unknown",
+      (parsed.detail as string) ?? response.statusText,
+      (parsed.type as string) ?? null,
     );
   }
 

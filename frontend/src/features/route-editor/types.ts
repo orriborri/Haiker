@@ -1,4 +1,4 @@
-import type { RoutePointDto } from "@/api/client";
+import type { RoutePointDto, RouteDraftResponse } from "@/api/client";
 
 /** Tool modes available in the route editor */
 export type EditorTool =
@@ -104,6 +104,8 @@ export interface EditorState {
   canRedo: boolean;
   conflictError: string | null;
   isOperationPending: boolean;
+  conflictServerDraft: RouteDraftResponse | null;
+  conflictLocalOps: PendingOperation[];
 }
 
 /** Actions dispatched to the editor state reducer */
@@ -118,7 +120,10 @@ export type EditorAction =
   | { type: "SET_CONFLICT"; message: string }
   | { type: "CLEAR_CONFLICT" }
   | { type: "SET_OPTIMISTIC_GEOMETRY"; geometry: RoutePointDto[][] }
-  | { type: "SET_CAN_UNDO_REDO"; canUndo: boolean; canRedo: boolean };
+  | { type: "SET_CAN_UNDO_REDO"; canUndo: boolean; canRedo: boolean }
+  | { type: "SET_CONFLICT_STATE"; serverDraft: RouteDraftResponse; localOps: PendingOperation[] }
+  | { type: "RESOLVE_CONFLICT_RELOAD" }
+  | { type: "RESOLVE_CONFLICT_RETRY" };
 
 /** Pending operation stored in IndexedDB for autosave/recovery */
 export interface PendingOperation {

@@ -33,111 +33,140 @@ pub struct RouteEditingAppState {
     pub route_version_gateway: Arc<dyn RouteVersionGateway>,
 }
 
-/// Convert a RouteEditingError to an ApiError.
+/// Convert a RouteEditingError to an ApiError with Problem Details fields.
 fn route_editing_error_to_api_error(err: RouteEditingError) -> ApiError {
     match err {
         RouteEditingError::DraftNotFound => ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            detail: "route draft not found".to_string(),
-            problem_type: "/problems/not-found".to_string(),
-            title: "Not Found".to_string(),
+            message: "route draft not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::RevisionConflict { expected, actual } => ApiError {
             status: StatusCode::CONFLICT,
-            code: "REVISION_CONFLICT".to_string(),
-            detail: format!("revision conflict: expected {expected}, got {actual}"),
-            problem_type: "/problems/revision-conflict".to_string(),
-            title: "Revision Conflict".to_string(),
+            code: "ROUTE_DRAFT_REVISION_CONFLICT".to_string(),
+            message: format!("revision conflict: expected {expected}, got {actual}"),
+            problem_type: Some("/problems/stale-route-draft".to_string()),
+            title: Some("Route draft revision is stale".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::DraftNotActive => ApiError {
             status: StatusCode::CONFLICT,
             code: "DRAFT_NOT_ACTIVE".to_string(),
-            detail: "draft is not in active state".to_string(),
-            problem_type: "/problems/draft-not-active".to_string(),
-            title: "Draft Not Active".to_string(),
+            message: "draft is not in active state".to_string(),
+            problem_type: Some("/problems/draft-not-active".to_string()),
+            title: Some("Draft Not Active".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::InvalidOperation { message } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_OPERATION".to_string(),
-            detail: message,
-            problem_type: "/problems/invalid-operation".to_string(),
-            title: "Invalid Operation".to_string(),
+            message,
+            problem_type: Some("/problems/invalid-operation".to_string()),
+            title: Some("Invalid Operation".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::OperationFailed { message } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "OPERATION_FAILED".to_string(),
-            detail: message,
-            problem_type: "/problems/operation-failed".to_string(),
-            title: "Operation Failed".to_string(),
+            message,
+            problem_type: Some("/problems/operation-failed".to_string()),
+            title: Some("Operation Failed".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::InsufficientPoints { minimum, actual } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INSUFFICIENT_POINTS".to_string(),
-            detail: format!("insufficient points: minimum {minimum}, got {actual}"),
-            problem_type: "/problems/insufficient-points".to_string(),
-            title: "Insufficient Points".to_string(),
+            message: format!("insufficient points: minimum {minimum}, got {actual}"),
+            problem_type: Some("/problems/insufficient-points".to_string()),
+            title: Some("Insufficient Points".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::InvalidSegmentIndex { index, count } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_SEGMENT_INDEX".to_string(),
-            detail: format!("invalid segment index: {index}, segment count: {count}"),
-            problem_type: "/problems/invalid-segment-index".to_string(),
-            title: "Invalid Segment Index".to_string(),
+            message: format!("invalid segment index: {index}, segment count: {count}"),
+            problem_type: Some("/problems/invalid-segment-index".to_string()),
+            title: Some("Invalid Segment Index".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::InvalidPointIndex { index, count } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_POINT_INDEX".to_string(),
-            detail: format!("invalid point index: {index}, point count: {count}"),
-            problem_type: "/problems/invalid-point-index".to_string(),
-            title: "Invalid Point Index".to_string(),
+            message: format!("invalid point index: {index}, point count: {count}"),
+            problem_type: Some("/problems/invalid-point-index".to_string()),
+            title: Some("Invalid Point Index".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::NothingToUndo => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "NOTHING_TO_UNDO".to_string(),
-            detail: "nothing to undo".to_string(),
-            problem_type: "/problems/nothing-to-undo".to_string(),
-            title: "Nothing To Undo".to_string(),
+            message: "nothing to undo".to_string(),
+            problem_type: Some("/problems/nothing-to-undo".to_string()),
+            title: Some("Nothing To Undo".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::NothingToRedo => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "NOTHING_TO_REDO".to_string(),
-            detail: "nothing to redo".to_string(),
-            problem_type: "/problems/nothing-to-redo".to_string(),
-            title: "Nothing To Redo".to_string(),
+            message: "nothing to redo".to_string(),
+            problem_type: Some("/problems/nothing-to-redo".to_string()),
+            title: Some("Nothing To Redo".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::InvalidCoordinate { message } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_COORDINATE".to_string(),
-            detail: message,
-            problem_type: "/problems/invalid-coordinate".to_string(),
-            title: "Invalid Coordinate".to_string(),
+            message,
+            problem_type: Some("/problems/invalid-coordinate".to_string()),
+            title: Some("Invalid Coordinate".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::ActivityNotFound => ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            detail: "activity not found".to_string(),
-            problem_type: "/problems/not-found".to_string(),
-            title: "Not Found".to_string(),
+            message: "activity not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::ActivityDeleted => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "ACTIVITY_DELETED".to_string(),
-            detail: "activity is deleted".to_string(),
-            problem_type: "/problems/activity-deleted".to_string(),
-            title: "Activity Deleted".to_string(),
+            message: "activity is deleted".to_string(),
+            problem_type: Some("/problems/activity-deleted".to_string()),
+            title: Some("Activity Deleted".to_string()),
+            request_id: None,
+            details: None,
         },
         RouteEditingError::InvalidBaseRouteVersion => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_BASE_ROUTE_VERSION".to_string(),
-            detail: "invalid base route version".to_string(),
-            problem_type: "/problems/invalid-base-route-version".to_string(),
-            title: "Invalid Base Route Version".to_string(),
+            message: "invalid base route version".to_string(),
+            problem_type: Some("/problems/invalid-base-route-version".to_string()),
+            title: Some("Invalid Base Route Version".to_string()),
+            request_id: None,
+            details: None,
         },
     }
 }
 
 /// Extract the Idempotency-Key header value.
+#[allow(clippy::result_large_err)]
 fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     let key = headers
         .get("idempotency-key")
@@ -145,18 +174,22 @@ fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
         .ok_or_else(|| ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "MISSING_IDEMPOTENCY_KEY".to_string(),
-            detail: "Idempotency-Key header is required".to_string(),
-            problem_type: "/problems/missing-idempotency-key".to_string(),
-            title: "Missing Idempotency Key".to_string(),
+            message: "Idempotency-Key header is required".to_string(),
+            problem_type: Some("/problems/missing-idempotency-key".to_string()),
+            title: Some("Missing Idempotency Key".to_string()),
+            request_id: None,
+            details: None,
         })?;
 
     if key.trim().is_empty() {
         return Err(ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "MISSING_IDEMPOTENCY_KEY".to_string(),
-            detail: "Idempotency-Key header must not be empty".to_string(),
-            problem_type: "/problems/missing-idempotency-key".to_string(),
-            title: "Missing Idempotency Key".to_string(),
+            message: "Idempotency-Key header must not be empty".to_string(),
+            problem_type: Some("/problems/missing-idempotency-key".to_string()),
+            title: Some("Missing Idempotency Key".to_string()),
+            request_id: None,
+            details: None,
         });
     }
 
@@ -178,9 +211,11 @@ pub async fn post_create_draft(
     let geometry = geometry_to_domain(&body.geometry).map_err(|msg| ApiError {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         code: "VALIDATION_FAILED".to_string(),
-        detail: msg,
-        problem_type: "/problems/validation-failed".to_string(),
-        title: "Validation Failed".to_string(),
+        message: msg,
+        problem_type: Some("/problems/validation-failed".to_string()),
+        title: Some("Validation Failed".to_string()),
+        request_id: None,
+        details: None,
     })?;
 
     // Check if there is already an active draft for this activity (idempotency).
@@ -199,9 +234,11 @@ pub async fn post_create_draft(
                 return Err(ApiError {
                     status: StatusCode::CONFLICT,
                     code: "IDEMPOTENCY_CONFLICT".to_string(),
-                    detail: "existing draft has a different baseRouteVersionId".to_string(),
-                    problem_type: "/problems/idempotency-conflict".to_string(),
-                    title: "Idempotency Conflict".to_string(),
+                    message: "existing draft has a different baseRouteVersionId".to_string(),
+                    problem_type: Some("/problems/idempotency-conflict".to_string()),
+                    title: Some("Idempotency Conflict".to_string()),
+                    request_id: None,
+                    details: None,
                 });
             }
         }
@@ -265,9 +302,11 @@ pub async fn get_draft(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            detail: "not authorized to access this draft".to_string(),
-            problem_type: "/problems/forbidden".to_string(),
-            title: "Forbidden".to_string(),
+            message: "not authorized to access this draft".to_string(),
+            problem_type: Some("/problems/forbidden".to_string()),
+            title: Some("Forbidden".to_string()),
+            request_id: None,
+            details: None,
         });
     }
 
@@ -289,9 +328,11 @@ pub async fn post_apply_operation(
     let operation_id = parse_idempotency_key(&idempotency_key).map_err(|msg| ApiError {
         status: StatusCode::BAD_REQUEST,
         code: "INVALID_IDEMPOTENCY_KEY".to_string(),
-        detail: msg,
-        problem_type: "/problems/invalid-idempotency-key".to_string(),
-        title: "Invalid Idempotency Key".to_string(),
+        message: msg,
+        problem_type: Some("/problems/invalid-idempotency-key".to_string()),
+        title: Some("Invalid Idempotency Key".to_string()),
+        request_id: None,
+        details: None,
     })?;
 
     // Check if this operation was already applied (idempotency)
@@ -301,7 +342,7 @@ pub async fn post_apply_operation(
         .await
         .map_err(route_editing_error_to_api_error)?
     {
-        // Replay: return the current state
+        // Load the draft to compare the stored operation with the incoming one
         let draft = state
             .repo
             .find_by_id(existing_draft_id)
@@ -309,6 +350,64 @@ pub async fn post_apply_operation(
             .map_err(route_editing_error_to_api_error)?
             .ok_or_else(|| route_editing_error_to_api_error(RouteEditingError::DraftNotFound))?;
 
+        // Find the stored operation entry for this operation_id
+        let stored_entry = draft
+            .applied_operations
+            .iter()
+            .find(|e| e.id == operation_id);
+
+        if let Some(entry) = stored_entry {
+            // Convert incoming operation to domain form for comparison
+            let incoming_operation = body.operation.to_domain().map_err(|msg| ApiError {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "INVALID_OPERATION".to_string(),
+                message: msg,
+                problem_type: None,
+                title: None,
+                request_id: None,
+                details: None,
+            })?;
+
+            // Payload mismatch detection: same key but different operation
+            if entry.operation != incoming_operation {
+                return Err(ApiError {
+                    status: StatusCode::CONFLICT,
+                    code: "IDEMPOTENCY_PAYLOAD_MISMATCH".to_string(),
+                    message: "idempotency key reused with a different operation payload"
+                        .to_string(),
+                    problem_type: Some("/problems/idempotency-conflict".to_string()),
+                    title: Some("Idempotency conflict".to_string()),
+                    request_id: None,
+                    details: None,
+                });
+            }
+
+            // Derive the revision this operation produced from its stack position.
+            // Each operation increments revision by 1 starting from 0, so the
+            // operation at index N produced revision N+1.
+            let entry_index = draft
+                .applied_operations
+                .iter()
+                .position(|e| e.id == operation_id)
+                .unwrap_or(0);
+            let snapshot_revision = (entry_index as u64) + 1;
+
+            // Replay: return the state as it was when this operation was originally applied.
+            // can_undo is true (at least this operation exists), can_redo is false
+            // (new operations clear the redo stack at the time of application).
+            return Ok((
+                StatusCode::OK,
+                Json(OperationResultResponse {
+                    draft_id: draft.id.0,
+                    revision: snapshot_revision,
+                    can_undo: true,
+                    can_redo: false,
+                }),
+            ));
+        }
+
+        // Operation ID was found in the repository but not in applied_operations
+        // (should not normally happen). Fall through to return current state.
         return Ok((
             StatusCode::OK,
             Json(OperationResultResponse {
@@ -332,18 +431,22 @@ pub async fn post_apply_operation(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            detail: "not authorized to access this draft".to_string(),
-            problem_type: "/problems/forbidden".to_string(),
-            title: "Forbidden".to_string(),
+            message: "not authorized to access this draft".to_string(),
+            problem_type: Some("/problems/forbidden".to_string()),
+            title: Some("Forbidden".to_string()),
+            request_id: None,
+            details: None,
         });
     }
 
     let operation = body.operation.to_domain().map_err(|msg| ApiError {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         code: "INVALID_OPERATION".to_string(),
-        detail: msg,
-        problem_type: "/problems/invalid-operation".to_string(),
-        title: "Invalid Operation".to_string(),
+        message: msg,
+        problem_type: Some("/problems/invalid-operation".to_string()),
+        title: Some("Invalid Operation".to_string()),
+        request_id: None,
+        details: None,
     })?;
 
     draft
@@ -395,9 +498,11 @@ pub async fn post_undo(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            detail: "not authorized to access this draft".to_string(),
-            problem_type: "/problems/forbidden".to_string(),
-            title: "Forbidden".to_string(),
+            message: "not authorized to access this draft".to_string(),
+            problem_type: Some("/problems/forbidden".to_string()),
+            title: Some("Forbidden".to_string()),
+            request_id: None,
+            details: None,
         });
     }
 
@@ -447,9 +552,11 @@ pub async fn post_redo(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            detail: "not authorized to access this draft".to_string(),
-            problem_type: "/problems/forbidden".to_string(),
-            title: "Forbidden".to_string(),
+            message: "not authorized to access this draft".to_string(),
+            problem_type: Some("/problems/forbidden".to_string()),
+            title: Some("Forbidden".to_string()),
+            request_id: None,
+            details: None,
         });
     }
 
@@ -490,9 +597,11 @@ pub async fn post_reset(
     let geometry = geometry_to_domain(&body.geometry).map_err(|msg| ApiError {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         code: "VALIDATION_FAILED".to_string(),
-        detail: msg,
-        problem_type: "/problems/validation-failed".to_string(),
-        title: "Validation Failed".to_string(),
+        message: msg,
+        problem_type: Some("/problems/validation-failed".to_string()),
+        title: Some("Validation Failed".to_string()),
+        request_id: None,
+        details: None,
     })?;
 
     let mut draft = state
@@ -507,9 +616,11 @@ pub async fn post_reset(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            detail: "not authorized to access this draft".to_string(),
-            problem_type: "/problems/forbidden".to_string(),
-            title: "Forbidden".to_string(),
+            message: "not authorized to access this draft".to_string(),
+            problem_type: Some("/problems/forbidden".to_string()),
+            title: Some("Forbidden".to_string()),
+            request_id: None,
+            details: None,
         });
     }
 
@@ -554,9 +665,11 @@ pub async fn delete_draft(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            detail: "not authorized to access this draft".to_string(),
-            problem_type: "/problems/forbidden".to_string(),
-            title: "Forbidden".to_string(),
+            message: "not authorized to access this draft".to_string(),
+            problem_type: Some("/problems/forbidden".to_string()),
+            title: Some("Forbidden".to_string()),
+            request_id: None,
+            details: None,
         });
     }
 

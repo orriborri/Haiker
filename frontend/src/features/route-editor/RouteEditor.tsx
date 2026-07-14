@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { EditorMap } from "./EditorMap";
 import { EditorToolbar } from "./EditorToolbar";
+import { ConflictDialog } from "./ConflictDialog";
 import { useEditorState } from "./useEditorState";
 import { useAutosave } from "./useAutosave";
 import {
@@ -16,7 +17,7 @@ import { useRecordedRoute } from "@/features/activity-detail/useRecordedRoute";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { ApiError } from "@/api/client";
 import type { RoutePointDto } from "@/api/client";
-import type { Selection, RouteOperation } from "./types";
+import type { Selection, RouteOperation, PendingOperation } from "./types";
 
 interface RouteEditorProps {
   activityId: string;
@@ -68,6 +69,9 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     setConflict,
     clearConflict,
     setCanUndoRedo,
+    setConflictState,
+    resolveConflictReload,
+    resolveConflictRetry,
   } = useEditorState();
 
   // Track base geometry for reset operations
@@ -84,14 +88,25 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
   // Mutations
   const createDraft = useCreateRouteDraft();
+
+  // Use a ref for getUnconfirmedOps to avoid circular dependency with handleConflict
+  const getUnconfirmedOpsRef = useRef<() => Promise<PendingOperation[]>>(async () => []);
+
   const handleConflict = useCallback(
-    (error: ApiError) => {
-      setConflict(
-        `Revision conflict: the draft was modified elsewhere. Current revision is stale. Please reload the draft.`,
-      );
+    async (error: ApiError) => {
       void error;
+      // Fetch fresh server state and local pending ops
+      const { data: serverDraft } = await refetchDraft();
+      const localOps = await getUnconfirmedOpsRef.current();
+      if (serverDraft) {
+        setConflictState(serverDraft, localOps);
+      } else {
+        setConflict(
+          `Revision conflict: the draft was modified elsewhere. Current revision is stale. Please reload the draft.`,
+        );
+      }
     },
-    [setConflict],
+    [refetchDraft, setConflictState, setConflict],
   );
 
   const applyOp = useApplyOperation(handleConflict);
@@ -100,10 +115,13 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   const resetOp = useResetDraft(handleConflict);
 
   // Autosave
-  const { saveOperation, confirmSaved, hasRecovery, dismissRecovery } =
+  const { saveOperation, confirmSaved, hasRecovery, dismissRecovery, getUnconfirmedOps, clearRecovery } =
     useAutosave({
       draftId: state.draftId,
     });
+
+  // Keep the ref in sync
+  getUnconfirmedOpsRef.current = getUnconfirmedOps;
 
   // Create draft from recorded route when we have the route data
   useEffect(() => {
@@ -450,6 +468,67 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     }
   }, [clearConflict, refetchDraft, operationSuccess]);
 
+  const handleAcceptServerState = useCallback(async () => {
+    await clearRecovery();
+    resolveConflictReload();
+  }, [clearRecovery, resolveConflictReload]);
+
+  const handleRetryOperations = useCallback(async () => {
+    const opsToRetry: PendingOperation[] = [...state.conflictLocalOps];
+    const serverRevision = state.conflictServerDraft?.revision ?? state.revision;
+    resolveConflictRetry();
+    await clearRecovery();
+
+    // Re-apply each pending operation sequentially against the new server state
+    let currentRevision = serverRevision;
+    let successCount = 0;
+    for (const pendingOp of opsToRetry) {
+      if (!state.draftId) break;
+      try {
+        const result = await applyOp.mutateAsync({
+          draftId: state.draftId,
+          operation: pendingOp.operation as unknown as Record<string, unknown>,
+          expectedRevision: currentRevision,
+        });
+        currentRevision = result.revision;
+        successCount++;
+      } catch {
+        // If a retry fails, surface which operations were lost
+        setConflict(
+          `Retry failed: ${successCount} of ${opsToRetry.length} operations were re-applied successfully. The remaining ${opsToRetry.length - successCount} operation(s) could not be applied.`,
+        );
+        break;
+      }
+    }
+
+    // Refresh to get the latest server state after retries
+    const { data: updatedDraft } = await refetchDraft();
+    if (updatedDraft) {
+      operationSuccess(
+        updatedDraft.revision,
+        updatedDraft.geometry,
+        updatedDraft.canUndo,
+        updatedDraft.canRedo,
+      );
+    }
+  }, [
+    state.conflictLocalOps,
+    state.conflictServerDraft,
+    state.revision,
+    state.draftId,
+    resolveConflictRetry,
+    clearRecovery,
+    applyOp,
+    refetchDraft,
+    operationSuccess,
+    setConflict,
+  ]);
+
+  const handleDismissConflict = useCallback(() => {
+    clearConflict();
+    resolveConflictReload();
+  }, [clearConflict, resolveConflictReload]);
+
   const handleBack = useCallback(() => {
     void navigate({ to: "/activities/$activityId", params: { activityId } });
   }, [navigate, activityId]);
@@ -478,8 +557,19 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         <h1 className="text-lg font-semibold text-gray-900">Edit Route</h1>
       </header>
 
-      {/* Conflict banner */}
-      {state.conflictError && (
+      {/* Conflict dialog */}
+      {state.conflictServerDraft && (
+        <ConflictDialog
+          serverDraft={state.conflictServerDraft}
+          localPendingOps={state.conflictLocalOps}
+          onReloadServerState={() => void handleAcceptServerState()}
+          onRetryOperations={() => void handleRetryOperations()}
+          onDismiss={handleDismissConflict}
+        />
+      )}
+
+      {/* Conflict banner (fallback when no server draft available) */}
+      {state.conflictError && !state.conflictServerDraft && (
         <div
           className="flex items-center gap-3 bg-amber-50 border-b border-amber-200 px-4 py-2"
           role="alert"

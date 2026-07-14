@@ -5,14 +5,13 @@
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use uuid::Uuid;
 
 use haiker_app::identity::{Actor, UserId};
 
-use crate::error::ProblemDetailBody;
+use crate::error::ApiError;
 
 /// Axum extractor wrapper for the authenticated actor.
 ///
@@ -63,16 +62,7 @@ impl IntoResponse for AuthError {
             AuthError::InvalidToken => "invalid bearer token",
         };
 
-        let body = ProblemDetailBody {
-            problem_type: "/problems/unauthorized".to_string(),
-            title: "Unauthorized".to_string(),
-            status: StatusCode::UNAUTHORIZED.as_u16(),
-            code: "UNAUTHORIZED".to_string(),
-            detail: detail.to_string(),
-            request_id: Uuid::new_v4().to_string(),
-        };
-
-        (StatusCode::UNAUTHORIZED, Json(body)).into_response()
+        ApiError::unauthorized(detail).into_response()
     }
 }
 
@@ -101,6 +91,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Response as HttpResponse;
+    use axum::http::StatusCode;
 
     async fn extract_problem_detail(response: HttpResponse<Body>) -> serde_json::Value {
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)

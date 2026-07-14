@@ -2,6 +2,7 @@
 //!
 //! Maps domain errors to structured JSON responses following the
 //! [RFC 9457 Problem Details](https://www.rfc-editor.org/rfc/rfc9457) format.
+//! Response shape: { type, title, status, code, detail, requestId }
 
 #![allow(dead_code)]
 
@@ -45,57 +46,93 @@ pub struct ApiError {
     pub status: StatusCode,
     /// Machine-readable error code (UPPER_SNAKE_CASE).
     pub code: String,
-    /// Instance-specific error explanation.
-    pub detail: String,
+    /// Human-readable error message (becomes `detail` in Problem Details).
+    pub message: String,
     /// URI path identifying the problem type (e.g., "/problems/not-found").
-    pub problem_type: String,
+    /// Falls back to a slug derived from `code` when not set.
+    pub problem_type: Option<String>,
     /// Stable human-readable summary for the problem type.
-    pub title: String,
+    /// Falls back to the HTTP status's canonical reason when not set.
+    pub title: Option<String>,
+    /// Request ID for correlation, set from the request-id middleware extension.
+    /// Falls back to a freshly generated ID if not set before the response is built.
+    pub request_id: Option<String>,
+    /// Optional additional details (unused in the Problem Details output, kept for internal use).
+    pub details: Option<serde_json::Value>,
 }
 
 impl ApiError {
-    /// Create an ApiError with all required Problem Details fields.
+    /// Create an ApiError with all Problem Details fields explicit.
     pub fn new(
         status: StatusCode,
         code: impl Into<String>,
-        detail: impl Into<String>,
+        message: impl Into<String>,
         problem_type: impl Into<String>,
         title: impl Into<String>,
     ) -> Self {
         Self {
             status,
             code: code.into(),
-            detail: detail.into(),
-            problem_type: problem_type.into(),
-            title: title.into(),
+            message: message.into(),
+            problem_type: Some(problem_type.into()),
+            title: Some(title.into()),
+            request_id: None,
+            details: None,
         }
     }
 
+    /// Attach a request ID to this error for correlation.
+    pub fn with_request_id(mut self, request_id: Option<String>) -> Self {
+        self.request_id = request_id;
+        self
+    }
+
     /// Create an unauthorized error (for authentication failures).
-    pub fn unauthorized(detail: impl Into<String>) -> Self {
+    pub fn unauthorized(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
             code: "UNAUTHORIZED".to_string(),
-            detail: detail.into(),
-            problem_type: "/problems/unauthorized".to_string(),
-            title: "Unauthorized".to_string(),
+            message: message.into(),
+            problem_type: Some("/problems/unauthorized".to_string()),
+            title: Some("Unauthorized".to_string()),
+            request_id: None,
+            details: None,
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        let problem_type = self
+            .problem_type
+            .unwrap_or_else(|| default_problem_type(&self.code));
+        let title = self.title.unwrap_or_else(|| default_title(self.status));
+        let request_id = self
+            .request_id
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+
         let body = ProblemDetailBody {
-            problem_type: self.problem_type,
-            title: self.title,
+            problem_type,
+            title,
             status: self.status.as_u16(),
             code: self.code,
-            detail: self.detail,
-            request_id: Uuid::new_v4().to_string(),
+            detail: self.message,
+            request_id,
         };
 
         (self.status, Json(body)).into_response()
     }
+}
+
+/// Derive a default problem type URI from the error code.
+fn default_problem_type(code: &str) -> String {
+    let slug = code.to_lowercase().replace('_', "-");
+    format!("/problems/{slug}")
+}
+
+/// Derive a default title from the HTTP status code.
+fn default_title(status: StatusCode) -> String {
+    status.canonical_reason().unwrap_or("Error").to_string()
 }
 
 impl From<DomainError> for ApiError {
@@ -104,44 +141,56 @@ impl From<DomainError> for ApiError {
             DomainError::NotFound { message } => ApiError {
                 status: StatusCode::NOT_FOUND,
                 code: "NOT_FOUND".to_string(),
-                detail: message,
-                problem_type: "/problems/not-found".to_string(),
-                title: "Not Found".to_string(),
+                message,
+                problem_type: Some("/problems/not-found".to_string()),
+                title: Some("Not Found".to_string()),
+                request_id: None,
+                details: None,
             },
             DomainError::Unauthorized { message } => ApiError {
                 status: StatusCode::UNAUTHORIZED,
                 code: "UNAUTHORIZED".to_string(),
-                detail: message,
-                problem_type: "/problems/unauthorized".to_string(),
-                title: "Unauthorized".to_string(),
+                message,
+                problem_type: Some("/problems/unauthorized".to_string()),
+                title: Some("Unauthorized".to_string()),
+                request_id: None,
+                details: None,
             },
             DomainError::Forbidden { message } => ApiError {
                 status: StatusCode::FORBIDDEN,
                 code: "FORBIDDEN".to_string(),
-                detail: message,
-                problem_type: "/problems/forbidden".to_string(),
-                title: "Forbidden".to_string(),
+                message,
+                problem_type: Some("/problems/forbidden".to_string()),
+                title: Some("Forbidden".to_string()),
+                request_id: None,
+                details: None,
             },
             DomainError::Conflict { message } => ApiError {
                 status: StatusCode::CONFLICT,
                 code: "CONFLICT".to_string(),
-                detail: message,
-                problem_type: "/problems/conflict".to_string(),
-                title: "Conflict".to_string(),
+                message,
+                problem_type: Some("/problems/conflict".to_string()),
+                title: Some("Conflict".to_string()),
+                request_id: None,
+                details: None,
             },
             DomainError::ValidationFailed { message } => ApiError {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
                 code: "VALIDATION_FAILED".to_string(),
-                detail: message,
-                problem_type: "/problems/validation-failed".to_string(),
-                title: "Validation Failed".to_string(),
+                message,
+                problem_type: Some("/problems/validation-failed".to_string()),
+                title: Some("Validation Failed".to_string()),
+                request_id: None,
+                details: None,
             },
             DomainError::Internal { message } => ApiError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "INTERNAL_ERROR".to_string(),
-                detail: message,
-                problem_type: "/problems/internal-error".to_string(),
-                title: "Internal Server Error".to_string(),
+                message,
+                problem_type: Some("/problems/internal-error".to_string()),
+                title: Some("Internal Server Error".to_string()),
+                request_id: None,
+                details: None,
             },
         }
     }
@@ -165,9 +214,11 @@ mod tests {
         let err = ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            detail: "resource not found".to_string(),
-            problem_type: "/problems/not-found".to_string(),
-            title: "Not Found".to_string(),
+            message: "resource not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
+            request_id: None,
+            details: None,
         };
 
         let response = err.into_response();
@@ -182,7 +233,24 @@ mod tests {
         assert!(json["requestId"].is_string());
         // Verify requestId is a valid UUID
         let request_id = json["requestId"].as_str().unwrap();
-        assert!(Uuid::parse_str(request_id).is_ok());
+        assert!(uuid::Uuid::parse_str(request_id).is_ok());
+    }
+
+    #[tokio::test]
+    async fn api_error_with_request_id_preserves_it_in_response() {
+        let err = ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "resource not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
+            request_id: Some("abc-123".to_string()),
+            details: None,
+        };
+
+        let response = err.into_response();
+        let json = extract_problem_detail(response).await;
+        assert_eq!(json["requestId"], "abc-123");
     }
 
     #[tokio::test]
@@ -190,9 +258,9 @@ mod tests {
         let err: ApiError = DomainError::not_found("resource").into();
         assert_eq!(err.status, StatusCode::NOT_FOUND);
         assert_eq!(err.code, "NOT_FOUND");
-        assert_eq!(err.problem_type, "/problems/not-found");
-        assert_eq!(err.title, "Not Found");
-        assert_eq!(err.detail, "resource");
+        assert_eq!(err.problem_type, Some("/problems/not-found".to_string()));
+        assert_eq!(err.title, Some("Not Found".to_string()));
+        assert_eq!(err.message, "resource");
     }
 
     #[tokio::test]
@@ -200,9 +268,9 @@ mod tests {
         let err: ApiError = DomainError::unauthorized("bad token").into();
         assert_eq!(err.status, StatusCode::UNAUTHORIZED);
         assert_eq!(err.code, "UNAUTHORIZED");
-        assert_eq!(err.problem_type, "/problems/unauthorized");
-        assert_eq!(err.title, "Unauthorized");
-        assert_eq!(err.detail, "bad token");
+        assert_eq!(err.problem_type, Some("/problems/unauthorized".to_string()));
+        assert_eq!(err.title, Some("Unauthorized".to_string()));
+        assert_eq!(err.message, "bad token");
     }
 
     #[tokio::test]
@@ -210,9 +278,9 @@ mod tests {
         let err: ApiError = DomainError::forbidden("no access").into();
         assert_eq!(err.status, StatusCode::FORBIDDEN);
         assert_eq!(err.code, "FORBIDDEN");
-        assert_eq!(err.problem_type, "/problems/forbidden");
-        assert_eq!(err.title, "Forbidden");
-        assert_eq!(err.detail, "no access");
+        assert_eq!(err.problem_type, Some("/problems/forbidden".to_string()));
+        assert_eq!(err.title, Some("Forbidden".to_string()));
+        assert_eq!(err.message, "no access");
     }
 
     #[tokio::test]
@@ -220,9 +288,9 @@ mod tests {
         let err: ApiError = DomainError::conflict("duplicate").into();
         assert_eq!(err.status, StatusCode::CONFLICT);
         assert_eq!(err.code, "CONFLICT");
-        assert_eq!(err.problem_type, "/problems/conflict");
-        assert_eq!(err.title, "Conflict");
-        assert_eq!(err.detail, "duplicate");
+        assert_eq!(err.problem_type, Some("/problems/conflict".to_string()));
+        assert_eq!(err.title, Some("Conflict".to_string()));
+        assert_eq!(err.message, "duplicate");
     }
 
     #[tokio::test]
@@ -230,9 +298,12 @@ mod tests {
         let err: ApiError = DomainError::validation_failed("bad data").into();
         assert_eq!(err.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(err.code, "VALIDATION_FAILED");
-        assert_eq!(err.problem_type, "/problems/validation-failed");
-        assert_eq!(err.title, "Validation Failed");
-        assert_eq!(err.detail, "bad data");
+        assert_eq!(
+            err.problem_type,
+            Some("/problems/validation-failed".to_string())
+        );
+        assert_eq!(err.title, Some("Validation Failed".to_string()));
+        assert_eq!(err.message, "bad data");
     }
 
     #[tokio::test]
@@ -240,9 +311,12 @@ mod tests {
         let err: ApiError = DomainError::internal("oops").into();
         assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(err.code, "INTERNAL_ERROR");
-        assert_eq!(err.problem_type, "/problems/internal-error");
-        assert_eq!(err.title, "Internal Server Error");
-        assert_eq!(err.detail, "oops");
+        assert_eq!(
+            err.problem_type,
+            Some("/problems/internal-error".to_string())
+        );
+        assert_eq!(err.title, Some("Internal Server Error".to_string()));
+        assert_eq!(err.message, "oops");
     }
 
     #[tokio::test]
@@ -257,5 +331,65 @@ mod tests {
         assert_eq!(json["status"], 401);
         assert_eq!(json["code"], "UNAUTHORIZED");
         assert_eq!(json["detail"], "missing token");
+    }
+
+    #[test]
+    fn into_response_produces_problem_details_shape() {
+        let err = ApiError {
+            status: StatusCode::CONFLICT,
+            code: "REVISION_CONFLICT".to_string(),
+            message: "revision conflict".to_string(),
+            problem_type: Some("/problems/stale-route-draft".to_string()),
+            title: Some("Route draft revision is stale".to_string()),
+            request_id: Some("abc-123".to_string()),
+            details: None,
+        };
+
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn default_problem_type_derives_from_code() {
+        assert_eq!(
+            default_problem_type("REVISION_CONFLICT"),
+            "/problems/revision-conflict"
+        );
+        assert_eq!(default_problem_type("NOT_FOUND"), "/problems/not-found");
+    }
+
+    #[test]
+    fn default_title_derives_from_status() {
+        assert_eq!(default_title(StatusCode::NOT_FOUND), "Not Found");
+        assert_eq!(
+            default_title(StatusCode::INTERNAL_SERVER_ERROR),
+            "Internal Server Error"
+        );
+    }
+
+    #[test]
+    fn new_constructor_sets_all_fields() {
+        let err = ApiError::new(
+            StatusCode::CONFLICT,
+            "REVISION_CONFLICT",
+            "revision conflict",
+            "/problems/stale-route-draft",
+            "Route draft revision is stale",
+        );
+        assert_eq!(err.status, StatusCode::CONFLICT);
+        assert_eq!(err.code, "REVISION_CONFLICT");
+        assert_eq!(err.message, "revision conflict");
+        assert_eq!(
+            err.problem_type,
+            Some("/problems/stale-route-draft".to_string())
+        );
+        assert_eq!(err.title, Some("Route draft revision is stale".to_string()));
+        assert_eq!(err.request_id, None);
+    }
+
+    #[test]
+    fn with_request_id_attaches_id() {
+        let err = ApiError::unauthorized("missing token").with_request_id(Some("req-1".into()));
+        assert_eq!(err.request_id, Some("req-1".to_string()));
     }
 }

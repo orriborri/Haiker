@@ -97,67 +97,85 @@ fn import_error_to_api_error(err: ImportError) -> ApiError {
         ImportError::NotFound => ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            detail: "import not found".to_string(),
-            problem_type: "/problems/not-found".to_string(),
-            title: "Not Found".to_string(),
+            message: "import not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
+            request_id: None,
+            details: None,
         },
         ImportError::Unauthorized => ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            detail: "not authorized to access this import".to_string(),
-            problem_type: "/problems/forbidden".to_string(),
-            title: "Forbidden".to_string(),
+            message: "not authorized to access this import".to_string(),
+            problem_type: Some("/problems/forbidden".to_string()),
+            title: Some("Forbidden".to_string()),
+            request_id: None,
+            details: None,
         },
         ImportError::UploadTooLarge => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "UPLOAD_TOO_LARGE".to_string(),
-            detail: "file size exceeds the 50MB limit".to_string(),
-            problem_type: "/problems/upload-too-large".to_string(),
-            title: "Upload Too Large".to_string(),
+            message: "file size exceeds the 50MB limit".to_string(),
+            problem_type: Some("/problems/upload-too-large".to_string()),
+            title: Some("Upload Too Large".to_string()),
+            request_id: None,
+            details: None,
         },
         ImportError::InvalidMediaType => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_MEDIA_TYPE".to_string(),
-            detail: "content type must be application/gpx+xml or application/xml".to_string(),
-            problem_type: "/problems/invalid-media-type".to_string(),
-            title: "Invalid Media Type".to_string(),
+            message: "content type must be application/gpx+xml or application/xml".to_string(),
+            problem_type: Some("/problems/invalid-media-type".to_string()),
+            title: Some("Invalid Media Type".to_string()),
+            request_id: None,
+            details: None,
         },
         ImportError::InvalidTransition { from, to } => ApiError {
             status: StatusCode::CONFLICT,
             code: "INVALID_STATE_TRANSITION".to_string(),
-            detail: format!("cannot transition from {from} to {to}"),
-            problem_type: "/problems/invalid-state-transition".to_string(),
-            title: "Invalid State Transition".to_string(),
+            message: format!("cannot transition from {from} to {to}"),
+            problem_type: Some("/problems/invalid-state-transition".to_string()),
+            title: Some("Invalid State Transition".to_string()),
+            request_id: None,
+            details: None,
         },
         ImportError::DuplicateIdempotencyKey => ApiError {
             status: StatusCode::CONFLICT,
             code: "DUPLICATE_IDEMPOTENCY_KEY".to_string(),
-            detail: "an import with this idempotency key already exists".to_string(),
-            problem_type: "/problems/duplicate-idempotency-key".to_string(),
-            title: "Duplicate Idempotency Key".to_string(),
+            message: "an import with this idempotency key already exists".to_string(),
+            problem_type: Some("/problems/duplicate-idempotency-key".to_string()),
+            title: Some("Duplicate Idempotency Key".to_string()),
+            request_id: None,
+            details: None,
         },
         ImportError::IdempotencyPayloadMismatch => ApiError {
             status: StatusCode::CONFLICT,
             code: "IDEMPOTENCY_PAYLOAD_MISMATCH".to_string(),
-            detail: "idempotency key reused with different payload".to_string(),
-            problem_type: "/problems/idempotency-conflict".to_string(),
-            title: "Idempotency Conflict".to_string(),
+            message: "idempotency key reused with different payload".to_string(),
+            problem_type: Some("/problems/idempotency-conflict".to_string()),
+            title: Some("Idempotency Conflict".to_string()),
+            request_id: None,
+            details: None,
         },
         ImportError::ValidationFailed { message } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "VALIDATION_FAILED".to_string(),
-            detail: message,
-            problem_type: "/problems/validation-failed".to_string(),
-            title: "Validation Failed".to_string(),
+            message,
+            problem_type: Some("/problems/validation-failed".to_string()),
+            title: Some("Validation Failed".to_string()),
+            request_id: None,
+            details: None,
         },
         ImportError::StorageError { message } => {
             tracing::error!(error = %message, "storage error during import operation");
             ApiError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "STORAGE_ERROR".to_string(),
-                detail: "a storage error occurred".to_string(),
-                problem_type: "/problems/storage-error".to_string(),
-                title: "Storage Error".to_string(),
+                message: "a storage error occurred".to_string(),
+                problem_type: Some("/problems/storage-error".to_string()),
+                title: Some("Storage Error".to_string()),
+                request_id: None,
+                details: None,
             }
         }
         _ => {
@@ -165,15 +183,18 @@ fn import_error_to_api_error(err: ImportError) -> ApiError {
             ApiError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "INTERNAL_ERROR".to_string(),
-                detail: "an unexpected error occurred".to_string(),
-                problem_type: "/problems/internal-error".to_string(),
-                title: "Internal Server Error".to_string(),
+                message: "an unexpected error occurred".to_string(),
+                problem_type: Some("/problems/internal-error".to_string()),
+                title: Some("Internal Server Error".to_string()),
+                request_id: None,
+                details: None,
             }
         }
     }
 }
 
 /// Extract the Idempotency-Key header value.
+#[allow(clippy::result_large_err)]
 fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     let key = headers
         .get("idempotency-key")
@@ -181,18 +202,22 @@ fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
         .ok_or_else(|| ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "MISSING_IDEMPOTENCY_KEY".to_string(),
-            detail: "Idempotency-Key header is required".to_string(),
-            problem_type: "/problems/missing-idempotency-key".to_string(),
-            title: "Missing Idempotency Key".to_string(),
+            message: "Idempotency-Key header is required".to_string(),
+            problem_type: Some("/problems/missing-idempotency-key".to_string()),
+            title: Some("Missing Idempotency Key".to_string()),
+            request_id: None,
+            details: None,
         })?;
 
     if key.trim().is_empty() {
         return Err(ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "MISSING_IDEMPOTENCY_KEY".to_string(),
-            detail: "Idempotency-Key header must not be empty".to_string(),
-            problem_type: "/problems/missing-idempotency-key".to_string(),
-            title: "Missing Idempotency Key".to_string(),
+            message: "Idempotency-Key header must not be empty".to_string(),
+            problem_type: Some("/problems/missing-idempotency-key".to_string()),
+            title: Some("Missing Idempotency Key".to_string()),
+            request_id: None,
+            details: None,
         });
     }
 
@@ -270,9 +295,11 @@ pub async fn post_complete_upload(
             ApiError {
                 status: StatusCode::INTERNAL_SERVER_ERROR,
                 code: "INTERNAL_ERROR".to_string(),
-                detail: "an unexpected error occurred".to_string(),
-                problem_type: "/problems/internal-error".to_string(),
-                title: "Internal Server Error".to_string(),
+                message: "an unexpected error occurred".to_string(),
+                problem_type: Some("/problems/internal-error".to_string()),
+                title: Some("Internal Server Error".to_string()),
+                request_id: None,
+                details: None,
             }
         })?;
 
@@ -288,9 +315,11 @@ pub async fn post_complete_upload(
                 ApiError {
                     status: StatusCode::INTERNAL_SERVER_ERROR,
                     code: "JOB_ENQUEUE_FAILED".to_string(),
-                    detail: "an unexpected error occurred".to_string(),
-                    problem_type: "/problems/internal-error".to_string(),
-                    title: "Internal Server Error".to_string(),
+                    message: "an unexpected error occurred".to_string(),
+                    problem_type: Some("/problems/internal-error".to_string()),
+                    title: Some("Internal Server Error".to_string()),
+                    request_id: None,
+                    details: None,
                 }
             })?;
     }

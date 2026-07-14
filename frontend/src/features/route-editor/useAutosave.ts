@@ -147,6 +147,11 @@ export function useAutosave({ draftId, onRecoveryAvailable }: UseAutosaveOptions
     }
   }, [draftId]);
 
+  const getUnconfirmedOps = useCallback(async (): Promise<PendingOperation[]> => {
+    if (!draftId) return [];
+    return getUnconfirmedOperations(draftId);
+  }, [draftId]);
+
   return {
     saveOperation,
     confirmSaved,
@@ -154,5 +159,6 @@ export function useAutosave({ draftId, onRecoveryAvailable }: UseAutosaveOptions
     hasRecovery,
     recoveryOps,
     dismissRecovery,
+    getUnconfirmedOps,
   };
 }

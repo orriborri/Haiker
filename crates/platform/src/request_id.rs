@@ -4,6 +4,7 @@
 //! - Generates a unique `request_id` (UUID v4) for each incoming request.
 //! - Reads the `X-Correlation-Id` header from the request, or generates one if absent.
 //! - Adds both IDs to the current tracing span as structured fields.
+//! - Stores the request_id in request extensions so handlers can access it.
 //! - Adds `X-Request-Id` and `X-Correlation-Id` headers to the response.
 
 use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
@@ -13,10 +14,15 @@ pub const X_REQUEST_ID: &str = "x-request-id";
 /// Header name for the correlation ID (may be set by the caller).
 pub const X_CORRELATION_ID: &str = "x-correlation-id";
 
+/// Extension type that carries the request ID through the request lifecycle.
+/// Handlers and error responses can extract this from request extensions.
+#[derive(Debug, Clone)]
+pub struct RequestId(pub String);
+
 /// Axum middleware function that injects request and correlation IDs.
 ///
 /// Use with `axum::middleware::from_fn(request_id_middleware)`.
-pub async fn request_id_middleware(request: Request, next: Next) -> Response {
+pub async fn request_id_middleware(mut request: Request, next: Next) -> Response {
     let request_id = uuid::Uuid::new_v4().to_string();
 
     let correlation_id = request
@@ -25,6 +31,11 @@ pub async fn request_id_middleware(request: Request, next: Next) -> Response {
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_owned())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // Store the request ID in extensions so handlers/error responses can access it.
+    request
+        .extensions_mut()
+        .insert(RequestId(request_id.clone()));
 
     // Record IDs in the current tracing span.
     let current_span = tracing::Span::current();

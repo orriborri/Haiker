@@ -1,10 +1,11 @@
 import { useReducer, useCallback } from "react";
-import type { RoutePointDto } from "@/api/client";
+import type { RoutePointDto, RouteDraftResponse } from "@/api/client";
 import type {
   EditorState,
   EditorAction,
   EditorTool,
   Selection,
+  PendingOperation,
 } from "./types";
 
 const initialState: EditorState = {
@@ -18,6 +19,8 @@ const initialState: EditorState = {
   canRedo: false,
   conflictError: null,
   isOperationPending: false,
+  conflictServerDraft: null,
+  conflictLocalOps: [],
 };
 
 function editorReducer(state: EditorState, action: EditorAction): EditorState {
@@ -66,6 +69,36 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         ...state,
         canUndo: action.canUndo,
         canRedo: action.canRedo,
+      };
+    case "SET_CONFLICT_STATE":
+      return {
+        ...state,
+        conflictServerDraft: action.serverDraft,
+        conflictLocalOps: action.localOps,
+        conflictError: `Revision conflict: server is at revision ${action.serverDraft.revision}. You have ${action.localOps.length} pending operation(s).`,
+        isOperationPending: false,
+      };
+    case "RESOLVE_CONFLICT_RELOAD":
+      return {
+        ...state,
+        revision: state.conflictServerDraft?.revision ?? state.revision,
+        optimisticGeometry: state.conflictServerDraft?.geometry ?? state.optimisticGeometry,
+        canUndo: state.conflictServerDraft?.canUndo ?? state.canUndo,
+        canRedo: state.conflictServerDraft?.canRedo ?? state.canRedo,
+        conflictServerDraft: null,
+        conflictLocalOps: [],
+        conflictError: null,
+      };
+    case "RESOLVE_CONFLICT_RETRY":
+      return {
+        ...state,
+        revision: state.conflictServerDraft?.revision ?? state.revision,
+        optimisticGeometry: state.conflictServerDraft?.geometry ?? state.optimisticGeometry,
+        canUndo: state.conflictServerDraft?.canUndo ?? state.canUndo,
+        canRedo: state.conflictServerDraft?.canRedo ?? state.canRedo,
+        conflictServerDraft: null,
+        conflictLocalOps: [],
+        conflictError: null,
       };
   }
 }
@@ -123,6 +156,21 @@ export function useEditorState() {
     dispatch({ type: "SET_CAN_UNDO_REDO", canUndo, canRedo });
   }, []);
 
+  const setConflictState = useCallback(
+    (serverDraft: RouteDraftResponse, localOps: PendingOperation[]) => {
+      dispatch({ type: "SET_CONFLICT_STATE", serverDraft, localOps });
+    },
+    [],
+  );
+
+  const resolveConflictReload = useCallback(() => {
+    dispatch({ type: "RESOLVE_CONFLICT_RELOAD" });
+  }, []);
+
+  const resolveConflictRetry = useCallback(() => {
+    dispatch({ type: "RESOLVE_CONFLICT_RETRY" });
+  }, []);
+
   return {
     state,
     dispatch,
@@ -137,5 +185,8 @@ export function useEditorState() {
     clearConflict,
     setOptimisticGeometry,
     setCanUndoRedo,
+    setConflictState,
+    resolveConflictReload,
+    resolveConflictRetry,
   };
 }
