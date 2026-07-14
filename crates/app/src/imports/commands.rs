@@ -71,7 +71,7 @@ pub struct UploadMetadata {
 pub trait UploadVerifier: Send + Sync {
     /// Verify that an uploaded object exists and return its metadata.
     ///
-    /// Returns `Err(ImportError::NotFound)` if the object does not exist.
+    /// Returns `Err(ImportError::ObjectNotFound)` if the object does not exist.
     async fn verify_upload(&self, key: &str) -> Result<UploadMetadata, ImportError>;
 }
 
@@ -193,8 +193,13 @@ pub async fn handle_complete_upload(
     let storage_key = format!("imports/{}/{}", cmd.owner_id, cmd.import_id);
     let metadata = match upload_verifier.verify_upload(&storage_key).await {
         Ok(meta) => meta,
-        Err(ImportError::StorageError { .. }) => {
+        Err(ImportError::StorageError { ref message }) => {
             // Transient error: leave import in Uploading state for retry
+            tracing::warn!(
+                error = %message,
+                storage_key = %storage_key,
+                "transient storage error during upload verification"
+            );
             return Err(ImportError::StorageError {
                 message: "storage temporarily unavailable".to_string(),
             });
@@ -222,6 +227,19 @@ pub async fn handle_complete_upload(
             .map_err(|_| ImportError::UploadTooLarge)?;
         repo.update(&import).await?;
         return Err(ImportError::UploadTooLarge);
+    }
+
+    // Reject zero-byte uploads
+    if metadata.content_length == 0 {
+        import
+            .fail("upload is empty".to_string())
+            .map_err(|_| ImportError::ValidationFailed {
+                message: "upload is empty".to_string(),
+            })?;
+        repo.update(&import).await?;
+        return Err(ImportError::ValidationFailed {
+            message: "upload is empty".to_string(),
+        });
     }
 
     // Verify content type is allowed (if present)
@@ -983,5 +1001,46 @@ mod tests {
             persisted.failure_reason.as_deref(),
             Some("invalid media type")
         );
+    }
+
+    #[tokio::test]
+    async fn complete_upload_rejects_zero_byte_upload() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let verifier = FakeUploadVerifier::success(0, Some("application/gpx+xml"));
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-zero".to_string(),
+            filename: "empty.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let start_result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+        let import_id = start_result.import.id;
+
+        let complete_cmd = CompleteUploadCommand {
+            import_id,
+            owner_id: owner,
+            checksum: "a".repeat(64),
+        };
+
+        let err = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::ValidationFailed { .. }));
+
+        // Import should have transitioned to Failed
+        let persisted = repo
+            .imports
+            .lock()
+            .unwrap()
+            .get(&import_id)
+            .unwrap()
+            .clone();
+        assert_eq!(persisted.status, ImportStatus::Failed);
+        assert_eq!(persisted.failure_reason.as_deref(), Some("upload is empty"));
     }
 }
