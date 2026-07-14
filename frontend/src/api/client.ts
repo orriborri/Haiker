@@ -217,8 +217,10 @@ export function createRouteDraft(
   });
 }
 
-export function getRouteDraft(draftId: string, options?: RequestInit): Promise<RouteDraftResponse> {
-  return apiFetch(`/route-drafts/${draftId}`, RouteDraftResponseSchema, options);
+export function getRouteDraft(draftId: string, options?: RequestInit & { bypassServiceWorker?: boolean }): Promise<RouteDraftResponse> {
+  const { bypassServiceWorker, ...fetchOptions } = options ?? {};
+  const query = bypassServiceWorker ? "?_sw-bypass=1" : "";
+  return apiFetch(`/route-drafts/${draftId}${query}`, RouteDraftResponseSchema, fetchOptions);
 }
 
 export function applyOperation(

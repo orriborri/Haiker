@@ -26,7 +26,7 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: /^.*\/v1\/.*$/i,
+            urlPattern: /^(?!.*[?&]_sw-bypass=).*\/v1\/.*$/i,
             method: "GET",
             handler: "NetworkFirst",
             options: {

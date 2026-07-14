@@ -148,7 +148,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         const maxRetries = 3;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
           try {
-            serverDraft = await getRouteDraft(draftId, { cache: "no-store" });
+            serverDraft = await getRouteDraft(draftId, { cache: "no-store", bypassServiceWorker: true });
             break;
           } catch {
             if (attempt < maxRetries - 1) {
@@ -547,7 +547,6 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     const opsToRetry: PendingOperation[] = [...state.conflictLocalOps];
     const serverRevision = state.conflictServerDraft?.revision ?? state.revision;
     resolveConflictRetry();
-    await clearRecovery();
 
     // Re-apply each pending operation sequentially against the new server state
     let currentRevision = serverRevision;
@@ -569,6 +568,11 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         );
         break;
       }
+    }
+
+    // Only clear recovery data if all operations were replayed successfully
+    if (successCount === opsToRetry.length) {
+      await clearRecovery();
     }
 
     // Refresh to get the latest server state after retries
@@ -607,7 +611,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     // Fetch fresh server draft bypassing service worker cache
     let serverDraft = null;
     try {
-      serverDraft = await getRouteDraft(state.draftId, { cache: "no-store" });
+      serverDraft = await getRouteDraft(state.draftId, { cache: "no-store", bypassServiceWorker: true });
     } catch {
       setConflict("Failed to fetch server state for recovery replay. Please try again.");
       return;
@@ -636,8 +640,10 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
       }
     }
 
-    // Clear recovery data after replay attempt
-    await clearRecovery();
+    // Only clear recovery data if all operations were replayed successfully
+    if (successCount === opsToReplay.length) {
+      await clearRecovery();
+    }
 
     // Refresh to get the latest server state
     const { data: updatedDraft } = await refetchDraft();
@@ -661,8 +667,8 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     setConflict,
   ]);
 
-  const handleDiscardRecovery = useCallback(() => {
-    void dismissRecovery();
+  const handleDiscardRecovery = useCallback(async () => {
+    await dismissRecovery();
   }, [dismissRecovery]);
 
   const handleBack = useCallback(() => {
