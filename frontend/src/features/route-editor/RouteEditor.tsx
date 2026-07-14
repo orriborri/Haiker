@@ -72,6 +72,10 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     setConflictState,
     resolveConflictReload,
     resolveConflictRetry,
+    dragStart,
+    dragPreview,
+    dragEnd,
+    dragCancel,
   } = useEditorState();
 
   // Track base geometry for reset operations
@@ -354,6 +358,28 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     },
     [dispatchOperation],
   );
+
+  const handleDragStart = useCallback(
+    (segmentIndex: number, pointIndex: number) => {
+      dragStart(segmentIndex, pointIndex);
+    },
+    [dragStart],
+  );
+
+  const handleDragPreview = useCallback(
+    (segmentIndex: number, pointIndex: number, lng: number, lat: number) => {
+      dragPreview(segmentIndex, pointIndex, lat, lng);
+    },
+    [dragPreview],
+  );
+
+  const handleDragEnd = useCallback(() => {
+    dragEnd();
+  }, [dragEnd]);
+
+  const handleDragCancel = useCallback(() => {
+    dragCancel();
+  }, [dragCancel]);
 
   const handleAddPoint = useCallback(
     (segmentIndex: number, afterPointIndex: number, lng: number, lat: number) => {
@@ -647,6 +673,10 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
           onSelectionChange={handleSelectionChange}
           onMovePoint={handleMovePoint}
           onAddPoint={handleAddPoint}
+          onDragStart={handleDragStart}
+          onDragPreview={handleDragPreview}
+          onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
         />
       </div>
     </div>

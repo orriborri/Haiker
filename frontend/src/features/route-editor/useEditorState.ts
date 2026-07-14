@@ -21,6 +21,9 @@ const initialState: EditorState = {
   isOperationPending: false,
   conflictServerDraft: null,
   conflictLocalOps: [],
+  isDragging: false,
+  preDragGeometry: null,
+  dragOrigin: null,
 };
 
 function editorReducer(state: EditorState, action: EditorAction): EditorState {
@@ -100,6 +103,45 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         conflictLocalOps: [],
         conflictError: null,
       };
+    case "DRAG_START": {
+      if (!state.optimisticGeometry) return state;
+      const segment = state.optimisticGeometry[action.segmentIndex];
+      const point = segment?.[action.pointIndex];
+      return {
+        ...state,
+        isDragging: true,
+        preDragGeometry: state.optimisticGeometry,
+        dragOrigin: point
+          ? { latitude: point.latitude, longitude: point.longitude }
+          : null,
+      };
+    }
+    case "DRAG_PREVIEW": {
+      if (!state.optimisticGeometry) return state;
+      const newGeometry = state.optimisticGeometry.map((seg, sIdx) => {
+        if (sIdx !== action.segmentIndex) return seg;
+        return seg.map((pt, pIdx) => {
+          if (pIdx !== action.pointIndex) return pt;
+          return { ...pt, latitude: action.latitude, longitude: action.longitude };
+        });
+      });
+      return { ...state, optimisticGeometry: newGeometry };
+    }
+    case "DRAG_END":
+      return {
+        ...state,
+        isDragging: false,
+        preDragGeometry: null,
+        dragOrigin: null,
+      };
+    case "DRAG_CANCEL":
+      return {
+        ...state,
+        isDragging: false,
+        optimisticGeometry: state.preDragGeometry ?? state.optimisticGeometry,
+        preDragGeometry: null,
+        dragOrigin: null,
+      };
   }
 }
 
@@ -171,6 +213,25 @@ export function useEditorState() {
     dispatch({ type: "RESOLVE_CONFLICT_RETRY" });
   }, []);
 
+  const dragStart = useCallback((segmentIndex: number, pointIndex: number) => {
+    dispatch({ type: "DRAG_START", segmentIndex, pointIndex });
+  }, []);
+
+  const dragPreview = useCallback(
+    (segmentIndex: number, pointIndex: number, latitude: number, longitude: number) => {
+      dispatch({ type: "DRAG_PREVIEW", segmentIndex, pointIndex, latitude, longitude });
+    },
+    [],
+  );
+
+  const dragEnd = useCallback(() => {
+    dispatch({ type: "DRAG_END" });
+  }, []);
+
+  const dragCancel = useCallback(() => {
+    dispatch({ type: "DRAG_CANCEL" });
+  }, []);
+
   return {
     state,
     dispatch,
@@ -188,5 +249,9 @@ export function useEditorState() {
     setConflictState,
     resolveConflictReload,
     resolveConflictRetry,
+    dragStart,
+    dragPreview,
+    dragEnd,
+    dragCancel,
   };
 }

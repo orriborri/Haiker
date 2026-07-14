@@ -1535,3 +1535,101 @@ async fn stale_revision_returns_409_with_problem_details() {
     assert_eq!(json["code"], "ROUTE_DRAFT_REVISION_CONFLICT");
     assert_eq!(json["status"], 409);
 }
+
+#[tokio::test]
+async fn apply_move_point_invalid_coordinates_returns_422() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Latitude 91.0 exceeds valid range [-90, 90]
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 91.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "INVALID_OPERATION");
+}
+
+#[tokio::test]
+async fn apply_move_point_another_owner_returns_403() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user1 = Uuid::new_v4();
+    let user2 = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    // Create draft as user1
+    let created = create_draft_for_user(&app, user1, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Attempt to apply movePoint as user2
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user2}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "FORBIDDEN");
+}

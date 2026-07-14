@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Selection, EditorTool } from "./types";
 import type { RoutePointDto } from "@/api/client";
 import { computeSelection } from "./SelectionModel";
+import { haversineDistance, formatDistance } from "./geo-utils";
 
 interface EditorMapProps {
   geometry: RoutePointDto[][] | null;
@@ -23,6 +24,15 @@ interface EditorMapProps {
     lng: number,
     lat: number,
   ) => void;
+  onDragStart?: (segmentIndex: number, pointIndex: number) => void;
+  onDragPreview?: (
+    segmentIndex: number,
+    pointIndex: number,
+    lng: number,
+    lat: number,
+  ) => void;
+  onDragEnd?: () => void;
+  onDragCancel?: () => void;
 }
 
 /** Convert domain geometry to GeoJSON coordinate arrays for MapLibre rendering */
@@ -40,6 +50,10 @@ export function EditorMap({
   onSelectionChange,
   onMovePoint,
   onAddPoint,
+  onDragStart,
+  onDragPreview,
+  onDragEnd,
+  onDragCancel,
 }: EditorMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -48,7 +62,10 @@ export function EditorMap({
     pointIndex: number;
   } | null>(null);
   const isDraggingRef = useRef(false);
+  const dragOriginRef = useRef<{ lat: number; lng: number } | null>(null);
   const [tileError, setTileError] = useState(false);
+  const [dragDistance, setDragDistance] = useState<string | null>(null);
+  const [dragTooltipPos, setDragTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
   // Store latest props in refs for event handlers
   const selectionRef = useRef(selection);
@@ -61,6 +78,14 @@ export function EditorMap({
   onMovePointRef.current = onMovePoint;
   const onAddPointRef = useRef(onAddPoint);
   onAddPointRef.current = onAddPoint;
+  const onDragStartRef = useRef(onDragStart);
+  onDragStartRef.current = onDragStart;
+  const onDragPreviewRef = useRef(onDragPreview);
+  onDragPreviewRef.current = onDragPreview;
+  const onDragEndRef = useRef(onDragEnd);
+  onDragEndRef.current = onDragEnd;
+  const onDragCancelRef = useRef(onDragCancel);
+  onDragCancelRef.current = onDragCancel;
 
   // Initialize map
   useEffect(() => {
@@ -258,24 +283,42 @@ export function EditorMap({
         if (!feature || !feature.properties) return;
 
         e.preventDefault();
-        dragPointRef.current = {
-          segmentIndex: feature.properties["segmentIndex"] as number,
-          pointIndex: feature.properties["pointIndex"] as number,
-        };
+        const segmentIndex = feature.properties["segmentIndex"] as number;
+        const pointIndex = feature.properties["pointIndex"] as number;
+        dragPointRef.current = { segmentIndex, pointIndex };
         isDraggingRef.current = true;
+        dragOriginRef.current = { lat: e.lngLat.lat, lng: e.lngLat.lng };
         map.getCanvas().style.cursor = "grabbing";
+        onDragStartRef.current?.(segmentIndex, pointIndex);
       });
 
       map.on("mousemove", (e) => {
         if (!isDraggingRef.current || !dragPointRef.current) return;
-        // Visual feedback during drag (cursor already set)
-        void e;
+        const { segmentIndex, pointIndex } = dragPointRef.current;
+        const lngLat = e.lngLat;
+
+        // Update optimistic geometry via callback
+        onDragPreviewRef.current?.(segmentIndex, pointIndex, lngLat.lng, lngLat.lat);
+
+        // Calculate and display distance from drag origin
+        if (dragOriginRef.current) {
+          const dist = haversineDistance(
+            dragOriginRef.current.lat,
+            dragOriginRef.current.lng,
+            lngLat.lat,
+            lngLat.lng,
+          );
+          setDragDistance(formatDistance(dist));
+          const point = map.project(lngLat);
+          setDragTooltipPos({ x: point.x, y: point.y });
+        }
       });
 
       map.on("mouseup", (e) => {
         if (!isDraggingRef.current || !dragPointRef.current) return;
         const { segmentIndex, pointIndex } = dragPointRef.current;
         const lngLat = e.lngLat;
+        onDragEndRef.current?.();
         onMovePointRef.current(
           segmentIndex,
           pointIndex,
@@ -284,6 +327,9 @@ export function EditorMap({
         );
         dragPointRef.current = null;
         isDraggingRef.current = false;
+        dragOriginRef.current = null;
+        setDragDistance(null);
+        setDragTooltipPos(null);
         map.getCanvas().style.cursor = "";
       });
 
@@ -309,6 +355,28 @@ export function EditorMap({
       map.remove();
       mapRef.current = null;
     };
+  }, []);
+
+  // Handle Escape to cancel drag
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && isDraggingRef.current) {
+        e.preventDefault();
+        isDraggingRef.current = false;
+        dragPointRef.current = null;
+        dragOriginRef.current = null;
+        setDragDistance(null);
+        setDragTooltipPos(null);
+        onDragCancelRef.current?.();
+        const map = mapRef.current;
+        if (map) {
+          map.getCanvas().style.cursor = "";
+        }
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   // Update geometry on map when it changes
@@ -376,6 +444,20 @@ export function EditorMap({
         aria-roledescription="Interactive map for editing route geometry"
         tabIndex={0}
       />
+      {dragDistance && dragTooltipPos && (
+        <div
+          className="pointer-events-none absolute z-10 rounded bg-gray-900/80 px-2 py-1 text-xs font-medium text-white shadow"
+          style={{
+            left: dragTooltipPos.x + 12,
+            top: dragTooltipPos.y - 28,
+          }}
+          role="status"
+          aria-live="polite"
+          aria-label={`Distance moved: ${dragDistance}`}
+        >
+          {dragDistance}
+        </div>
+      )}
       {tileError && (
         <div
           className="absolute inset-x-0 top-0 flex items-center justify-center gap-3 bg-black/60 px-4 py-3"

@@ -106,6 +106,9 @@ export interface EditorState {
   isOperationPending: boolean;
   conflictServerDraft: RouteDraftResponse | null;
   conflictLocalOps: PendingOperation[];
+  isDragging: boolean;
+  preDragGeometry: RoutePointDto[][] | null;
+  dragOrigin: { latitude: number; longitude: number } | null;
 }
 
 /** Actions dispatched to the editor state reducer */
@@ -123,7 +126,11 @@ export type EditorAction =
   | { type: "SET_CAN_UNDO_REDO"; canUndo: boolean; canRedo: boolean }
   | { type: "SET_CONFLICT_STATE"; serverDraft: RouteDraftResponse; localOps: PendingOperation[] }
   | { type: "RESOLVE_CONFLICT_RELOAD" }
-  | { type: "RESOLVE_CONFLICT_RETRY" };
+  | { type: "RESOLVE_CONFLICT_RETRY" }
+  | { type: "DRAG_START"; segmentIndex: number; pointIndex: number }
+  | { type: "DRAG_PREVIEW"; segmentIndex: number; pointIndex: number; latitude: number; longitude: number }
+  | { type: "DRAG_END" }
+  | { type: "DRAG_CANCEL" };
 
 /** Pending operation stored in IndexedDB for autosave/recovery */
 export interface PendingOperation {

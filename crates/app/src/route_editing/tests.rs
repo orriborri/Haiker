@@ -935,6 +935,28 @@ fn undo_replace_section() {
     assert_eq!(d.geometry, orig_geo);
 }
 
+// --- MovePoint with invalid coordinates ---
+
+#[test]
+fn move_point_rejects_invalid_coordinates_latitude_too_high() {
+    // Attempting to create a MovePoint with latitude > 90 should fail at Coordinate::new
+    let result = Coordinate::new(91.0, 10.0);
+    assert!(matches!(
+        result,
+        Err(RouteEditingError::InvalidCoordinate { .. })
+    ));
+}
+
+#[test]
+fn move_point_rejects_invalid_coordinates_longitude_too_high() {
+    // Attempting to create a MovePoint with longitude > 180 should fail at Coordinate::new
+    let result = Coordinate::new(45.0, 181.0);
+    assert!(matches!(
+        result,
+        Err(RouteEditingError::InvalidCoordinate { .. })
+    ));
+}
+
 // --- Undo delete section at start ---
 
 #[test]
