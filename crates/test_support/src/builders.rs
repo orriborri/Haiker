@@ -29,6 +29,7 @@ pub struct ImportBuilder {
     idempotency_key: String,
     target_status: ImportStatus,
     checksum: Option<String>,
+    payload_hash: Option<String>,
 }
 
 impl Default for ImportBuilder {
@@ -46,6 +47,7 @@ impl ImportBuilder {
             idempotency_key: Uuid::new_v4().to_string(),
             target_status: ImportStatus::Requested,
             checksum: None,
+            payload_hash: None,
         }
     }
 
@@ -79,11 +81,23 @@ impl ImportBuilder {
         self
     }
 
+    /// Set the payload hash for idempotency verification.
+    pub fn with_payload_hash(mut self, hash: impl Into<String>) -> Self {
+        self.payload_hash = Some(hash.into());
+        self
+    }
+
     /// Build the Import, advancing through state transitions as needed.
     ///
     /// Panics if any transition fails (this is a test helper).
     pub fn build(self) -> Import {
-        let mut import = Import::new(self.owner_id, self.format, self.idempotency_key).unwrap();
+        let mut import = Import::new(
+            self.owner_id,
+            self.format,
+            self.idempotency_key,
+            self.payload_hash,
+        )
+        .unwrap();
 
         let checksum_str = self.checksum.unwrap_or_else(|| "a".repeat(64));
 

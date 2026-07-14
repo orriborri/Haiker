@@ -39,86 +39,100 @@ fn route_editing_error_to_api_error(err: RouteEditingError) -> ApiError {
         RouteEditingError::DraftNotFound => ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            message: "route draft not found".to_string(),
-            details: None,
+            detail: "route draft not found".to_string(),
+            problem_type: "/problems/not-found".to_string(),
+            title: "Not Found".to_string(),
         },
         RouteEditingError::RevisionConflict { expected, actual } => ApiError {
             status: StatusCode::CONFLICT,
             code: "REVISION_CONFLICT".to_string(),
-            message: format!("revision conflict: expected {expected}, got {actual}"),
-            details: None,
+            detail: format!("revision conflict: expected {expected}, got {actual}"),
+            problem_type: "/problems/revision-conflict".to_string(),
+            title: "Revision Conflict".to_string(),
         },
         RouteEditingError::DraftNotActive => ApiError {
             status: StatusCode::CONFLICT,
             code: "DRAFT_NOT_ACTIVE".to_string(),
-            message: "draft is not in active state".to_string(),
-            details: None,
+            detail: "draft is not in active state".to_string(),
+            problem_type: "/problems/draft-not-active".to_string(),
+            title: "Draft Not Active".to_string(),
         },
         RouteEditingError::InvalidOperation { message } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_OPERATION".to_string(),
-            message,
-            details: None,
+            detail: message,
+            problem_type: "/problems/invalid-operation".to_string(),
+            title: "Invalid Operation".to_string(),
         },
         RouteEditingError::OperationFailed { message } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "OPERATION_FAILED".to_string(),
-            message,
-            details: None,
+            detail: message,
+            problem_type: "/problems/operation-failed".to_string(),
+            title: "Operation Failed".to_string(),
         },
         RouteEditingError::InsufficientPoints { minimum, actual } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INSUFFICIENT_POINTS".to_string(),
-            message: format!("insufficient points: minimum {minimum}, got {actual}"),
-            details: None,
+            detail: format!("insufficient points: minimum {minimum}, got {actual}"),
+            problem_type: "/problems/insufficient-points".to_string(),
+            title: "Insufficient Points".to_string(),
         },
         RouteEditingError::InvalidSegmentIndex { index, count } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_SEGMENT_INDEX".to_string(),
-            message: format!("invalid segment index: {index}, segment count: {count}"),
-            details: None,
+            detail: format!("invalid segment index: {index}, segment count: {count}"),
+            problem_type: "/problems/invalid-segment-index".to_string(),
+            title: "Invalid Segment Index".to_string(),
         },
         RouteEditingError::InvalidPointIndex { index, count } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_POINT_INDEX".to_string(),
-            message: format!("invalid point index: {index}, point count: {count}"),
-            details: None,
+            detail: format!("invalid point index: {index}, point count: {count}"),
+            problem_type: "/problems/invalid-point-index".to_string(),
+            title: "Invalid Point Index".to_string(),
         },
         RouteEditingError::NothingToUndo => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "NOTHING_TO_UNDO".to_string(),
-            message: "nothing to undo".to_string(),
-            details: None,
+            detail: "nothing to undo".to_string(),
+            problem_type: "/problems/nothing-to-undo".to_string(),
+            title: "Nothing To Undo".to_string(),
         },
         RouteEditingError::NothingToRedo => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "NOTHING_TO_REDO".to_string(),
-            message: "nothing to redo".to_string(),
-            details: None,
+            detail: "nothing to redo".to_string(),
+            problem_type: "/problems/nothing-to-redo".to_string(),
+            title: "Nothing To Redo".to_string(),
         },
         RouteEditingError::InvalidCoordinate { message } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_COORDINATE".to_string(),
-            message,
-            details: None,
+            detail: message,
+            problem_type: "/problems/invalid-coordinate".to_string(),
+            title: "Invalid Coordinate".to_string(),
         },
         RouteEditingError::ActivityNotFound => ApiError {
             status: StatusCode::NOT_FOUND,
             code: "NOT_FOUND".to_string(),
-            message: "activity not found".to_string(),
-            details: None,
+            detail: "activity not found".to_string(),
+            problem_type: "/problems/not-found".to_string(),
+            title: "Not Found".to_string(),
         },
         RouteEditingError::ActivityDeleted => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "ACTIVITY_DELETED".to_string(),
-            message: "activity is deleted".to_string(),
-            details: None,
+            detail: "activity is deleted".to_string(),
+            problem_type: "/problems/activity-deleted".to_string(),
+            title: "Activity Deleted".to_string(),
         },
         RouteEditingError::InvalidBaseRouteVersion => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "INVALID_BASE_ROUTE_VERSION".to_string(),
-            message: "invalid base route version".to_string(),
-            details: None,
+            detail: "invalid base route version".to_string(),
+            problem_type: "/problems/invalid-base-route-version".to_string(),
+            title: "Invalid Base Route Version".to_string(),
         },
     }
 }
@@ -131,16 +145,18 @@ fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
         .ok_or_else(|| ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "MISSING_IDEMPOTENCY_KEY".to_string(),
-            message: "Idempotency-Key header is required".to_string(),
-            details: None,
+            detail: "Idempotency-Key header is required".to_string(),
+            problem_type: "/problems/missing-idempotency-key".to_string(),
+            title: "Missing Idempotency Key".to_string(),
         })?;
 
     if key.trim().is_empty() {
         return Err(ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "MISSING_IDEMPOTENCY_KEY".to_string(),
-            message: "Idempotency-Key header must not be empty".to_string(),
-            details: None,
+            detail: "Idempotency-Key header must not be empty".to_string(),
+            problem_type: "/problems/missing-idempotency-key".to_string(),
+            title: "Missing Idempotency Key".to_string(),
         });
     }
 
@@ -162,8 +178,9 @@ pub async fn post_create_draft(
     let geometry = geometry_to_domain(&body.geometry).map_err(|msg| ApiError {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         code: "VALIDATION_FAILED".to_string(),
-        message: msg,
-        details: None,
+        detail: msg,
+        problem_type: "/problems/validation-failed".to_string(),
+        title: "Validation Failed".to_string(),
     })?;
 
     // Check if there is already an active draft for this activity (idempotency).
@@ -182,8 +199,9 @@ pub async fn post_create_draft(
                 return Err(ApiError {
                     status: StatusCode::CONFLICT,
                     code: "IDEMPOTENCY_CONFLICT".to_string(),
-                    message: "existing draft has a different baseRouteVersionId".to_string(),
-                    details: None,
+                    detail: "existing draft has a different baseRouteVersionId".to_string(),
+                    problem_type: "/problems/idempotency-conflict".to_string(),
+                    title: "Idempotency Conflict".to_string(),
                 });
             }
         }
@@ -247,8 +265,9 @@ pub async fn get_draft(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            details: None,
+            detail: "not authorized to access this draft".to_string(),
+            problem_type: "/problems/forbidden".to_string(),
+            title: "Forbidden".to_string(),
         });
     }
 
@@ -270,8 +289,9 @@ pub async fn post_apply_operation(
     let operation_id = parse_idempotency_key(&idempotency_key).map_err(|msg| ApiError {
         status: StatusCode::BAD_REQUEST,
         code: "INVALID_IDEMPOTENCY_KEY".to_string(),
-        message: msg,
-        details: None,
+        detail: msg,
+        problem_type: "/problems/invalid-idempotency-key".to_string(),
+        title: "Invalid Idempotency Key".to_string(),
     })?;
 
     // Check if this operation was already applied (idempotency)
@@ -312,16 +332,18 @@ pub async fn post_apply_operation(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            details: None,
+            detail: "not authorized to access this draft".to_string(),
+            problem_type: "/problems/forbidden".to_string(),
+            title: "Forbidden".to_string(),
         });
     }
 
     let operation = body.operation.to_domain().map_err(|msg| ApiError {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         code: "INVALID_OPERATION".to_string(),
-        message: msg,
-        details: None,
+        detail: msg,
+        problem_type: "/problems/invalid-operation".to_string(),
+        title: "Invalid Operation".to_string(),
     })?;
 
     draft
@@ -373,8 +395,9 @@ pub async fn post_undo(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            details: None,
+            detail: "not authorized to access this draft".to_string(),
+            problem_type: "/problems/forbidden".to_string(),
+            title: "Forbidden".to_string(),
         });
     }
 
@@ -424,8 +447,9 @@ pub async fn post_redo(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            details: None,
+            detail: "not authorized to access this draft".to_string(),
+            problem_type: "/problems/forbidden".to_string(),
+            title: "Forbidden".to_string(),
         });
     }
 
@@ -466,8 +490,9 @@ pub async fn post_reset(
     let geometry = geometry_to_domain(&body.geometry).map_err(|msg| ApiError {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         code: "VALIDATION_FAILED".to_string(),
-        message: msg,
-        details: None,
+        detail: msg,
+        problem_type: "/problems/validation-failed".to_string(),
+        title: "Validation Failed".to_string(),
     })?;
 
     let mut draft = state
@@ -482,8 +507,9 @@ pub async fn post_reset(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            details: None,
+            detail: "not authorized to access this draft".to_string(),
+            problem_type: "/problems/forbidden".to_string(),
+            title: "Forbidden".to_string(),
         });
     }
 
@@ -528,8 +554,9 @@ pub async fn delete_draft(
         return Err(ApiError {
             status: StatusCode::FORBIDDEN,
             code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            details: None,
+            detail: "not authorized to access this draft".to_string(),
+            problem_type: "/problems/forbidden".to_string(),
+            title: "Forbidden".to_string(),
         });
     }
 

@@ -901,7 +901,7 @@ async fn create_draft_activity_not_found_returns_404() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
-    assert_eq!(json["error"]["code"], "NOT_FOUND");
+    assert_eq!(json["code"], "NOT_FOUND");
 }
 
 #[tokio::test]
@@ -943,7 +943,7 @@ async fn create_draft_deleted_activity_returns_422() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
-    assert_eq!(json["error"]["code"], "ACTIVITY_DELETED");
+    assert_eq!(json["code"], "ACTIVITY_DELETED");
 }
 
 #[tokio::test]
@@ -988,7 +988,7 @@ async fn create_draft_cross_owner_activity_returns_404() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
-    assert_eq!(json["error"]["code"], "NOT_FOUND");
+    assert_eq!(json["code"], "NOT_FOUND");
 }
 
 // --- Base route version validation tests ---
@@ -1034,7 +1034,7 @@ async fn create_draft_invalid_base_route_version_returns_422() {
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
-    assert_eq!(json["error"]["code"], "INVALID_BASE_ROUTE_VERSION");
+    assert_eq!(json["code"], "INVALID_BASE_ROUTE_VERSION");
 }
 
 #[tokio::test]
@@ -1155,7 +1155,7 @@ async fn create_draft_idempotent_return_with_different_base_version_returns_409(
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
-    assert_eq!(json["error"]["code"], "IDEMPOTENCY_CONFLICT");
+    assert_eq!(json["code"], "IDEMPOTENCY_CONFLICT");
 }
 
 #[tokio::test]

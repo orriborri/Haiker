@@ -38,6 +38,7 @@ type ImportRow = (
     Option<String>,
     Option<String>,
     String,
+    Option<String>,
     DateTime<Utc>,
     DateTime<Utc>,
 );
@@ -70,6 +71,7 @@ fn row_to_import(row: ImportRow) -> Import {
         checksum,
         failure_reason,
         idempotency_key,
+        payload_hash,
         created_at,
         updated_at,
     ) = row;
@@ -86,6 +88,7 @@ fn row_to_import(row: ImportRow) -> Import {
         checksum: checksum.and_then(|c| Checksum::new(c).ok()),
         failure_reason,
         idempotency_key,
+        payload_hash,
         created_at,
         updated_at,
     }
@@ -98,9 +101,9 @@ impl ImportRepository for PgImportRepository {
             r#"
             INSERT INTO imports.imports (
                 id, owner_id, source_artifact_id, format, status,
-                checksum, failure_reason, idempotency_key, created_at, updated_at
+                checksum, failure_reason, idempotency_key, payload_hash, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(import.id.0)
@@ -111,6 +114,7 @@ impl ImportRepository for PgImportRepository {
         .bind(import.checksum.as_ref().map(|c| c.as_str().to_string()))
         .bind(&import.failure_reason)
         .bind(&import.idempotency_key)
+        .bind(&import.payload_hash)
         .bind(import.created_at)
         .bind(import.updated_at)
         .execute(&self.pool)
@@ -126,7 +130,7 @@ impl ImportRepository for PgImportRepository {
         let row = sqlx::query_as::<_, ImportRow>(
             r#"
             SELECT id, owner_id, source_artifact_id, format, status,
-                   checksum, failure_reason, idempotency_key, created_at, updated_at
+                   checksum, failure_reason, idempotency_key, payload_hash, created_at, updated_at
             FROM imports.imports
             WHERE id = $1
             "#,
@@ -149,7 +153,7 @@ impl ImportRepository for PgImportRepository {
         let row = sqlx::query_as::<_, ImportRow>(
             r#"
             SELECT id, owner_id, source_artifact_id, format, status,
-                   checksum, failure_reason, idempotency_key, created_at, updated_at
+                   checksum, failure_reason, idempotency_key, payload_hash, created_at, updated_at
             FROM imports.imports
             WHERE owner_id = $1 AND idempotency_key = $2
             "#,
@@ -173,7 +177,7 @@ impl ImportRepository for PgImportRepository {
         let row = sqlx::query_as::<_, ImportRow>(
             r#"
             SELECT id, owner_id, source_artifact_id, format, status,
-                   checksum, failure_reason, idempotency_key, created_at, updated_at
+                   checksum, failure_reason, idempotency_key, payload_hash, created_at, updated_at
             FROM imports.imports
             WHERE owner_id = $1 AND checksum = $2 AND status = 'completed'
             "#,

@@ -83,6 +83,9 @@ pub struct Import {
     pub checksum: Option<Checksum>,
     pub failure_reason: Option<String>,
     pub idempotency_key: String,
+    /// SHA-256 hash of the canonical request payload (filename, content_type, file_size_bytes)
+    /// used for idempotency payload mismatch detection.
+    pub payload_hash: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -93,6 +96,7 @@ impl Import {
         owner_id: UserId,
         format: ImportFormat,
         idempotency_key: String,
+        payload_hash: Option<String>,
     ) -> Result<Self, ImportError> {
         if idempotency_key.trim().is_empty() {
             return Err(ImportError::ValidationFailed {
@@ -110,6 +114,7 @@ impl Import {
             checksum: None,
             failure_reason: None,
             idempotency_key,
+            payload_hash,
             created_at: now,
             updated_at: now,
         })
@@ -236,6 +241,10 @@ pub enum ImportError {
     /// A validation error occurred.
     #[error("validation failed: {message}")]
     ValidationFailed { message: String },
+
+    /// An idempotency key was reused with a different payload.
+    #[error("idempotency key reused with different payload")]
+    IdempotencyPayloadMismatch,
 }
 
 #[cfg(test)]
@@ -245,7 +254,7 @@ mod tests {
     #[test]
     fn import_creation_succeeds_with_valid_inputs() {
         let owner_id = UserId::new(Uuid::new_v4());
-        let import = Import::new(owner_id, ImportFormat::Gpx, "key-123".to_string()).unwrap();
+        let import = Import::new(owner_id, ImportFormat::Gpx, "key-123".to_string(), None).unwrap();
 
         assert_eq!(import.owner_id, owner_id);
         assert_eq!(import.format, ImportFormat::Gpx);
@@ -254,12 +263,13 @@ mod tests {
         assert!(import.source_artifact_id.is_none());
         assert!(import.checksum.is_none());
         assert!(import.failure_reason.is_none());
+        assert!(import.payload_hash.is_none());
     }
 
     #[test]
     fn import_creation_fails_with_empty_idempotency_key() {
         let owner_id = UserId::new(Uuid::new_v4());
-        let result = Import::new(owner_id, ImportFormat::Gpx, "".to_string());
+        let result = Import::new(owner_id, ImportFormat::Gpx, "".to_string(), None);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -270,7 +280,7 @@ mod tests {
     #[test]
     fn import_creation_fails_with_whitespace_idempotency_key() {
         let owner_id = UserId::new(Uuid::new_v4());
-        let result = Import::new(owner_id, ImportFormat::Gpx, "   ".to_string());
+        let result = Import::new(owner_id, ImportFormat::Gpx, "   ".to_string(), None);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -281,7 +291,8 @@ mod tests {
     #[test]
     fn import_happy_path_lifecycle() {
         let owner_id = UserId::new(Uuid::new_v4());
-        let mut import = Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string()).unwrap();
+        let mut import =
+            Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string(), None).unwrap();
 
         assert_eq!(import.status, ImportStatus::Requested);
 
@@ -324,7 +335,8 @@ mod tests {
 
         for status in non_terminal_states {
             let owner_id = UserId::new(Uuid::new_v4());
-            let mut import = Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string()).unwrap();
+            let mut import =
+                Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string(), None).unwrap();
             import.status = status;
 
             let result = import.fail("something went wrong".to_string());
@@ -351,7 +363,8 @@ mod tests {
 
         for status in non_terminal_states {
             let owner_id = UserId::new(Uuid::new_v4());
-            let mut import = Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string()).unwrap();
+            let mut import =
+                Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string(), None).unwrap();
             import.status = status;
 
             let result = import.cancel();
@@ -370,7 +383,8 @@ mod tests {
 
         for status in terminal_states {
             let owner_id = UserId::new(Uuid::new_v4());
-            let mut import = Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string()).unwrap();
+            let mut import =
+                Import::new(owner_id, ImportFormat::Gpx, "key-1".to_string(), None).unwrap();
             import.status = status;
 
             assert!(import.start_upload().is_err());

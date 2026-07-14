@@ -172,7 +172,13 @@ fn compute_checksum(bytes: &[u8]) -> String {
 }
 
 fn create_queued_import(owner_id: UserId, checksum: &str) -> Import {
-    let mut import = Import::new(owner_id, ImportFormat::Gpx, Uuid::new_v4().to_string()).unwrap();
+    let mut import = Import::new(
+        owner_id,
+        ImportFormat::Gpx,
+        Uuid::new_v4().to_string(),
+        None,
+    )
+    .unwrap();
     import.start_upload().unwrap();
     let artifact_id = SourceArtifactId::generate();
     let cs = Checksum::new(checksum).unwrap();
