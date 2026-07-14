@@ -14,6 +14,7 @@ interface EditorToolbarProps {
   onJoin: () => void;
   hasSelection: boolean;
   isOperationPending: boolean;
+  isOffline?: boolean;
   selectionDescription: string | null;
 }
 
@@ -46,10 +47,12 @@ export function EditorToolbar({
   onJoin,
   hasSelection,
   isOperationPending,
+  isOffline = false,
   selectionDescription,
 }: EditorToolbarProps) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const toolbarRef = useRef<HTMLElement>(null);
+  const isDisabled = isOperationPending || isOffline;
 
   const handleReset = useCallback(() => {
     setShowResetConfirm(true);
@@ -81,7 +84,7 @@ export function EditorToolbar({
       const keyNum = parseInt(e.key, 10);
       if (keyNum >= 1 && keyNum <= 7 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const tool = TOOLS[keyNum - 1];
-        if (tool && !isOperationPending) {
+        if (tool && !isDisabled) {
           e.preventDefault();
           onToolChange(tool.id);
         }
@@ -90,7 +93,7 @@ export function EditorToolbar({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onToolChange, isOperationPending]);
+  }, [onToolChange, isDisabled]);
 
   // Build the status announcement text
   const currentToolDef = TOOLS.find((t) => t.id === currentTool);
@@ -128,7 +131,7 @@ export function EditorToolbar({
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200"
             }`}
             onClick={() => onToolChange(tool.id)}
-            disabled={isOperationPending}
+            disabled={isDisabled}
           >
             {/* Mobile: abbreviation, Desktop: short label */}
             <span className="sm:hidden">{tool.abbreviation}</span>
@@ -147,7 +150,7 @@ export function EditorToolbar({
           aria-label="Delete selected element"
           className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1"
           onClick={onDelete}
-          disabled={!hasSelection || isOperationPending}
+          disabled={!hasSelection || isDisabled}
         >
           <span className="sm:hidden">Del</span>
           <span className="hidden sm:inline">Delete</span>
@@ -157,7 +160,7 @@ export function EditorToolbar({
           aria-label="Split segment at selected point"
           className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
           onClick={onSplit}
-          disabled={!hasSelection || isOperationPending}
+          disabled={!hasSelection || isDisabled}
         >
           Split
         </button>
@@ -166,7 +169,7 @@ export function EditorToolbar({
           aria-label="Join adjacent segments"
           className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
           onClick={onJoin}
-          disabled={isOperationPending}
+          disabled={isDisabled}
         >
           Join
         </button>
@@ -182,7 +185,7 @@ export function EditorToolbar({
           aria-label="Undo last operation (Ctrl+Z)"
           className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
           onClick={onUndo}
-          disabled={!canUndo || isOperationPending}
+          disabled={!canUndo || isDisabled}
         >
           Undo
         </button>
@@ -191,7 +194,7 @@ export function EditorToolbar({
           aria-label="Redo last undone operation (Ctrl+Shift+Z)"
           className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
           onClick={onRedo}
-          disabled={!canRedo || isOperationPending}
+          disabled={!canRedo || isDisabled}
         >
           Redo
         </button>
@@ -207,7 +210,7 @@ export function EditorToolbar({
           aria-label="Reset route to original"
           className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-1"
           onClick={handleReset}
-          disabled={isOperationPending}
+          disabled={isDisabled}
         >
           Reset
         </button>
@@ -240,6 +243,32 @@ export function EditorToolbar({
           </div>
         )}
       </div>
+
+      {/* Offline indicator */}
+      {isOffline && (
+        <div className="ml-auto flex items-center gap-1 text-sm text-gray-500" aria-hidden="true">
+          <svg
+            className="h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M18.364 5.636a9 9 0 010 12.728M5.636 5.636a9 9 0 000 12.728M12 12h.01"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M3 3l18 18"
+            />
+          </svg>
+          <span>Offline</span>
+        </div>
+      )}
     </nav>
   );
 }

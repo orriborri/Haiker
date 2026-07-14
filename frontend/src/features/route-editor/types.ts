@@ -104,6 +104,7 @@ export interface EditorState {
   canRedo: boolean;
   conflictError: string | null;
   isOperationPending: boolean;
+  isOffline: boolean;
   conflictServerDraft: RouteDraftResponse | null;
   conflictLocalOps: PendingOperation[];
 }
@@ -123,7 +124,8 @@ export type EditorAction =
   | { type: "SET_CAN_UNDO_REDO"; canUndo: boolean; canRedo: boolean }
   | { type: "SET_CONFLICT_STATE"; serverDraft: RouteDraftResponse; localOps: PendingOperation[] }
   | { type: "RESOLVE_CONFLICT_RELOAD" }
-  | { type: "RESOLVE_CONFLICT_RETRY" };
+  | { type: "RESOLVE_CONFLICT_RETRY" }
+  | { type: "SET_ONLINE_STATUS"; isOnline: boolean };
 
 /** Pending operation stored in IndexedDB for autosave/recovery */
 export interface PendingOperation {

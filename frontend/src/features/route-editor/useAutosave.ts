@@ -2,17 +2,24 @@ import { useEffect, useCallback, useRef, useState } from "react";
 import type { PendingOperation, RouteOperation } from "./types";
 
 const DB_NAME = "haiker-route-editor";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "pending-operations";
+const REVISION_STORE_NAME = "base-revisions";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
+      const oldVersion = event.oldVersion;
+      if (oldVersion < 1) {
         const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
         store.createIndex("draftId", "draftId", { unique: false });
+      }
+      if (oldVersion < 2) {
+        if (!db.objectStoreNames.contains(REVISION_STORE_NAME)) {
+          db.createObjectStore(REVISION_STORE_NAME, { keyPath: "draftId" });
+        }
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -82,6 +89,44 @@ async function clearOperationsForDraft(draftId: string): Promise<void> {
   });
 }
 
+async function saveBaseRevisionToDB(
+  draftId: string,
+  revision: number,
+): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(REVISION_STORE_NAME, "readwrite");
+    tx.objectStore(REVISION_STORE_NAME).put({ draftId, revision });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function getBaseRevisionFromDB(
+  draftId: string,
+): Promise<number | null> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(REVISION_STORE_NAME, "readonly");
+    const request = tx.objectStore(REVISION_STORE_NAME).get(draftId);
+    request.onsuccess = () => {
+      const result = request.result as { draftId: string; revision: number } | undefined;
+      resolve(result?.revision ?? null);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function clearBaseRevisionForDraft(draftId: string): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(REVISION_STORE_NAME, "readwrite");
+    tx.objectStore(REVISION_STORE_NAME).delete(draftId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 interface UseAutosaveOptions {
   draftId: string | null;
   onRecoveryAvailable?: (operations: PendingOperation[]) => void;
@@ -135,6 +180,7 @@ export function useAutosave({ draftId, onRecoveryAvailable }: UseAutosaveOptions
   const clearRecovery = useCallback(async () => {
     if (!draftId) return;
     await clearOperationsForDraft(draftId);
+    await clearBaseRevisionForDraft(draftId);
     setHasRecovery(false);
     setRecoveryOps([]);
   }, [draftId]);
@@ -144,12 +190,26 @@ export function useAutosave({ draftId, onRecoveryAvailable }: UseAutosaveOptions
     setRecoveryOps([]);
     if (draftId) {
       void clearOperationsForDraft(draftId);
+      void clearBaseRevisionForDraft(draftId);
     }
   }, [draftId]);
 
   const getUnconfirmedOps = useCallback(async (): Promise<PendingOperation[]> => {
     if (!draftId) return [];
     return getUnconfirmedOperations(draftId);
+  }, [draftId]);
+
+  const saveBaseRevision = useCallback(
+    async (revision: number) => {
+      if (!draftId) return;
+      await saveBaseRevisionToDB(draftId, revision);
+    },
+    [draftId],
+  );
+
+  const getBaseRevision = useCallback(async (): Promise<number | null> => {
+    if (!draftId) return null;
+    return getBaseRevisionFromDB(draftId);
   }, [draftId]);
 
   return {
@@ -160,5 +220,7 @@ export function useAutosave({ draftId, onRecoveryAvailable }: UseAutosaveOptions
     recoveryOps,
     dismissRecovery,
     getUnconfirmedOps,
+    saveBaseRevision,
+    getBaseRevision,
   };
 }
