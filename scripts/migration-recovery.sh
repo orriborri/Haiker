@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# --- Bash version check (declare -A requires bash 4.0+) ---
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    echo "ERROR: This script requires bash 4.0+ (for associative arrays). Current: ${BASH_VERSION}" >&2
+    echo "On macOS, install a newer bash via Homebrew: brew install bash" >&2
+    exit 1
+fi
+
 # =============================================================================
 # Migration Recovery Script
 # Provides subcommands for diagnosing, verifying, rolling back, and forward-fixing
@@ -477,40 +484,49 @@ generate_rollback_guidance() {
 
     local guidance=""
 
-    # Detect ALTER TABLE ADD COLUMN
-    if echo "${content}" | grep -qi "ALTER TABLE.*ADD COLUMN"; then
-        local table col
-        table=$(echo "${content}" | grep -i "ALTER TABLE.*ADD COLUMN" | head -1 | sed -E 's/.*ALTER TABLE[[:space:]]+([^[:space:]]+).*/\1/i')
-        col=$(echo "${content}" | grep -i "ALTER TABLE.*ADD COLUMN" | head -1 | sed -E 's/.*ADD COLUMN[[:space:]]+([^[:space:]]+).*/\1/i')
-        guidance="ALTER TABLE ${table} DROP COLUMN IF EXISTS ${col};"
-    # Detect CREATE TABLE
-    elif echo "${content}" | grep -qi "CREATE TABLE"; then
+    # Detect CREATE TABLE statements (process all occurrences)
+    if echo "${content}" | grep -qi "CREATE TABLE"; then
         local tables
         tables=$(echo "${content}" | grep -i "CREATE TABLE" | sed -E 's/.*CREATE TABLE[[:space:]]+(IF NOT EXISTS[[:space:]]+)?([^[:space:](]+).*/\2/i')
-        guidance=""
         while IFS= read -r tbl; do
             [[ -z "${tbl}" ]] && continue
             guidance="${guidance}DROP TABLE IF EXISTS ${tbl} CASCADE; "
         done <<< "${tables}"
-    # Detect CREATE INDEX
-    elif echo "${content}" | grep -qi "CREATE INDEX"; then
+    fi
+
+    # Detect ALTER TABLE ADD COLUMN statements (process all occurrences)
+    if echo "${content}" | grep -qi "ALTER TABLE.*ADD COLUMN"; then
+        while IFS= read -r line; do
+            [[ -z "${line}" ]] && continue
+            local table col
+            table=$(echo "${line}" | sed -E 's/.*ALTER TABLE[[:space:]]+([^[:space:]]+).*/\1/i')
+            col=$(echo "${line}" | sed -E 's/.*ADD COLUMN[[:space:]]+([^[:space:]]+).*/\1/i')
+            guidance="${guidance}ALTER TABLE ${table} DROP COLUMN IF EXISTS ${col}; "
+        done <<< "$(echo "${content}" | grep -i "ALTER TABLE.*ADD COLUMN")"
+    fi
+
+    # Detect CREATE INDEX statements (process all occurrences)
+    if echo "${content}" | grep -qi "CREATE INDEX"; then
         local indexes
         indexes=$(echo "${content}" | grep -i "CREATE INDEX" | sed -E 's/.*CREATE INDEX[[:space:]]+(IF NOT EXISTS[[:space:]]+)?([^[:space:]]+).*/\2/i')
-        guidance=""
         while IFS= read -r idx; do
             [[ -z "${idx}" ]] && continue
             guidance="${guidance}DROP INDEX IF EXISTS ${idx}; "
         done <<< "${indexes}"
-    # Detect CREATE SCHEMA
-    elif echo "${content}" | grep -qi "CREATE SCHEMA"; then
+    fi
+
+    # Detect CREATE SCHEMA statements (process all occurrences)
+    if echo "${content}" | grep -qi "CREATE SCHEMA"; then
         local schemas
         schemas=$(echo "${content}" | grep -i "CREATE SCHEMA" | sed -E 's/.*CREATE SCHEMA[[:space:]]+(IF NOT EXISTS[[:space:]]+)?([^[:space:];]+).*/\2/i')
-        guidance=""
         while IFS= read -r schema; do
             [[ -z "${schema}" ]] && continue
             guidance="${guidance}DROP SCHEMA IF EXISTS ${schema} CASCADE; "
         done <<< "${schemas}"
-    else
+    fi
+
+    # Fallback if no patterns matched
+    if [[ -z "${guidance}" ]]; then
         guidance="-- Review migration file manually: ${file}"
     fi
 

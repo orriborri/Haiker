@@ -39,6 +39,9 @@ KEEP_ENVIRONMENT=false
 SKIP_CONFIRM=false
 TARGET_TIME=""
 
+# Save original arguments for potential re-exec under timeout
+ORIGINAL_ARGS=("$@")
+
 # --- Helpers ---
 log_info() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] INFO: $1" >&2; }
 log_error() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] ERROR: $1" >&2; }
@@ -340,24 +343,25 @@ phase_integrity_check() {
         return 2
     fi
 
+    local exit_code=0
     PGHOST="localhost" \
     PGPORT="${drill_pg_host}" \
     PGUSER="${PGUSER:-haiker}" \
     PGPASSWORD="${PGPASSWORD:-haiker}" \
     PGDATABASE="${PGDATABASE:-haiker}" \
     DATABASE_URL="postgresql://${PGUSER:-haiker}:${PGPASSWORD:-haiker}@localhost:${drill_pg_host}/${PGDATABASE:-haiker}" \
-        "${INTEGRITY_CHECK_SCRIPT}" 2>/dev/null || {
-            local exit_code=$?
-            if [[ ${exit_code} -eq 1 ]]; then
-                echo "Integrity check completed with warnings"
-                return 1
-            fi
-            echo "Integrity check failed"
-            return 2
-        }
+        "${INTEGRITY_CHECK_SCRIPT}" 2>/dev/null || exit_code=$?
 
-    echo "Integrity checks passed"
-    return 0
+    if [[ ${exit_code} -eq 0 ]]; then
+        echo "Integrity checks passed"
+        return 0
+    elif [[ ${exit_code} -eq 1 ]]; then
+        echo "Integrity check completed with warnings"
+        return 1
+    else
+        echo "Integrity check failed"
+        return 2
+    fi
 }
 
 phase_smoke_test() {
@@ -368,25 +372,30 @@ phase_smoke_test() {
     api_port=$(drill_compose port api 3000 2>/dev/null | sed 's/.*://' || echo "")
 
     if [[ -n "${api_port}" ]]; then
-        API_URL="http://localhost:${api_port}" "${SMOKE_TEST_SCRIPT}" 2>&1 || {
-            local exit_code=$?
-            if [[ ${exit_code} -eq 1 ]]; then
-                echo "Smoke tests completed with warnings"
-                return 1
-            fi
+        local exit_code=0
+        API_URL="http://localhost:${api_port}" "${SMOKE_TEST_SCRIPT}" 2>&1 || exit_code=$?
+
+        if [[ ${exit_code} -eq 0 ]]; then
+            echo "Smoke tests passed"
+        elif [[ ${exit_code} -eq 1 ]]; then
+            echo "Smoke tests completed with warnings"
+            return 1
+        else
             echo "Smoke tests failed"
             return 2
-        }
-        echo "Smoke tests passed"
+        fi
     else
         # If no API service is running, do basic connectivity checks
         log_warn "No API service available in drill environment, running basic database connectivity check"
 
+        local exit_code=0
         drill_compose exec -T postgres \
-            psql -U "${PGUSER:-haiker}" -d "${PGDATABASE:-haiker}" -c "SELECT 1;" >/dev/null 2>&1 || {
-                echo "Basic database connectivity check failed"
-                return 2
-            }
+            psql -U "${PGUSER:-haiker}" -d "${PGDATABASE:-haiker}" -c "SELECT 1;" >/dev/null 2>&1 || exit_code=$?
+
+        if [[ ${exit_code} -ne 0 ]]; then
+            echo "Basic database connectivity check failed"
+            return 2
+        fi
 
         echo "Basic connectivity check passed (API service not available for full smoke test)"
         return 0
@@ -507,5 +516,15 @@ main() {
         *)       exit 2 ;;
     esac
 }
+
+# Enforce overall drill timeout.
+# On the first invocation (without the sentinel), re-exec under 'timeout' so
+# the entire drill is bounded by DRILL_TIMEOUT_SECONDS.
+if [[ "${__DRILL_TIMEOUT_ACTIVE:-}" != "1" ]] && command -v timeout &>/dev/null; then
+    export __DRILL_TIMEOUT_ACTIVE=1
+    # Re-exec this script under timeout with the original arguments.
+    # The sentinel variable prevents infinite recursion on re-entry.
+    exec timeout "${DRILL_TIMEOUT_SECONDS}" "$0" "${ORIGINAL_ARGS[@]}"
+fi
 
 main "$@"

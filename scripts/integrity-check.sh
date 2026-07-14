@@ -271,14 +271,28 @@ check_artifact_storage_keys() {
         return
     fi
 
-    # Get a sample of object_storage_key values
+    # Get a stratified sample of object_storage_key values:
+    # Mix of newest, oldest, and random entries for better coverage.
     local keys
-    keys=$(run_sql "
-        SELECT object_storage_key
-        FROM recorded_activity.source_artifacts
-        ORDER BY created_at DESC
-        LIMIT ${MINIO_SAMPLE_SIZE};
-    ")
+    if [[ "${MINIO_SAMPLE_SIZE}" -le 3 ]]; then
+        # For small sample sizes, just use random selection
+        keys=$(run_sql "
+            SELECT object_storage_key FROM recorded_activity.source_artifacts
+            ORDER BY random() LIMIT ${MINIO_SAMPLE_SIZE};
+        ")
+    else
+        local random_count=$((MINIO_SAMPLE_SIZE - 3))
+        keys=$(run_sql "
+            (SELECT object_storage_key FROM recorded_activity.source_artifacts
+             ORDER BY created_at DESC LIMIT 2)
+            UNION ALL
+            (SELECT object_storage_key FROM recorded_activity.source_artifacts
+             ORDER BY created_at ASC LIMIT 1)
+            UNION ALL
+            (SELECT object_storage_key FROM recorded_activity.source_artifacts
+             ORDER BY random() LIMIT ${random_count});
+        ")
+    fi
 
     if [[ -z "${keys}" ]]; then
         add_check "artifact_storage_keys" "healthy" "No source artifacts to verify"
