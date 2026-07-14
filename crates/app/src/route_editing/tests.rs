@@ -967,3 +967,250 @@ fn undo_delete_section_at_start() {
     d.undo(1).unwrap();
     assert_eq!(d.geometry, geo);
 }
+
+// --- DeleteSection comprehensive validation ---
+
+#[test]
+fn delete_section_rejects_reversed_range() {
+    let mut d = draft();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(2),
+            end_index: PointIndex::new(1),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::InvalidOperation { .. })));
+    if let Err(RouteEditingError::InvalidOperation { message }) = r {
+        assert_eq!(message, "start_index must be <= end_index");
+    }
+}
+
+#[test]
+fn delete_section_rejects_out_of_bounds_end() {
+    let mut d = draft();
+    // sample_geo() has 4 points (indices 0..3), so end_index=4 is out of bounds
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(4),
+        },
+        0,
+    );
+    assert!(matches!(
+        r,
+        Err(RouteEditingError::InvalidPointIndex { index: 4, count: 4 })
+    ));
+}
+
+#[test]
+fn delete_section_rejects_out_of_bounds_segment() {
+    let mut d = draft();
+    // draft() has 1 segment (index 0), so segment_index=1 is invalid
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(1),
+            start_index: PointIndex::new(0),
+            end_index: PointIndex::new(1),
+        },
+        0,
+    );
+    assert!(matches!(
+        r,
+        Err(RouteEditingError::InvalidSegmentIndex { index: 1, count: 1 })
+    ));
+}
+
+#[test]
+fn delete_section_with_stale_revision_returns_conflict() {
+    let mut d = draft();
+    // First operation to advance revision to 1
+    d.apply_operation(
+        op_id(),
+        RouteOperation::MovePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+            new_position: coord(50.0, 15.0),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(d.revision, 1);
+    // Attempt DeleteSection with stale expected_revision = 0
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+        },
+        0,
+    );
+    assert!(matches!(
+        r,
+        Err(RouteEditingError::RevisionConflict {
+            expected: 0,
+            actual: 1
+        })
+    ));
+}
+
+#[test]
+fn delete_section_topology_breaking_leaves_one_point() {
+    // sample_geo() has 4 points. Deleting 3 leaves 1 point, which is < 2 minimum.
+    let mut d = draft();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(0),
+            end_index: PointIndex::new(2),
+        },
+        0,
+    );
+    assert!(matches!(
+        r,
+        Err(RouteEditingError::InsufficientPoints {
+            minimum: 2,
+            actual: 1
+        })
+    ));
+}
+
+#[test]
+fn delete_section_idempotent_with_same_operation_id() {
+    let mut d = draft();
+    let id = op_id();
+    // First application succeeds
+    d.apply_operation(
+        id,
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(1),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(d.revision, 1);
+    assert_eq!(d.geometry[0].len(), 3);
+    // Retry with the same operation_id - should be a no-op
+    d.apply_operation(
+        id,
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(1),
+        },
+        1,
+    )
+    .unwrap();
+    // Revision must not change
+    assert_eq!(d.revision, 1);
+    assert_eq!(d.geometry[0].len(), 3);
+}
+
+#[test]
+fn delete_section_increments_revision_exactly_once() {
+    let mut d = draft();
+    let prev_revision = d.revision;
+    d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(d.revision, prev_revision + 1);
+}
+
+#[test]
+fn delete_section_geometry_stable_after_undo_redo() {
+    let mut d = draft();
+    // Apply delete
+    d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+        },
+        0,
+    )
+    .unwrap();
+    let geometry_after_delete = d.geometry.clone();
+    // Undo
+    d.undo(1).unwrap();
+    // Redo
+    d.redo(2).unwrap();
+    // Geometry after redo must equal geometry after initial apply
+    assert_eq!(d.geometry, geometry_after_delete);
+}
+
+#[test]
+fn delete_section_single_point_range() {
+    // start_index == end_index deletes exactly one point
+    let mut d = draft(); // 4 points
+    d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(2),
+            end_index: PointIndex::new(2),
+        },
+        0,
+    )
+    .unwrap();
+    // Should have 3 points remaining (4 - 1 = 3)
+    assert_eq!(d.geometry[0].len(), 3);
+    // Point at index 2 should now be the old point at index 3
+    assert_eq!(d.geometry[0][2], pt(45.3, 10.3));
+}
+
+#[test]
+fn delete_section_at_segment_start_valid() {
+    // Deleting from index 0 works if enough points remain
+    let mut d = draft(); // 4 points
+    d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(0),
+            end_index: PointIndex::new(1),
+        },
+        0,
+    )
+    .unwrap();
+    // 4 - 2 = 2 points remain (valid, minimum is 2)
+    assert_eq!(d.geometry[0].len(), 2);
+    assert_eq!(d.geometry[0][0], pt(45.2, 10.2));
+    assert_eq!(d.geometry[0][1], pt(45.3, 10.3));
+}
+
+#[test]
+fn delete_section_at_segment_end_valid() {
+    // Deleting the last N points works if enough remain
+    let mut d = draft(); // 4 points: indices 0,1,2,3
+    d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(2),
+            end_index: PointIndex::new(3),
+        },
+        0,
+    )
+    .unwrap();
+    // 4 - 2 = 2 points remain (valid, minimum is 2)
+    assert_eq!(d.geometry[0].len(), 2);
+    assert_eq!(d.geometry[0][0], pt(45.0, 10.0));
+    assert_eq!(d.geometry[0][1], pt(45.1, 10.1));
+}
