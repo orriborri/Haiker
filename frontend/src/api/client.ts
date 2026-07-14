@@ -103,14 +103,14 @@ const GeoJsonGeometrySchema = z.object({
 const GeoJsonFeatureSchema = z.object({
   type: z.literal("Feature"),
   geometry: GeoJsonGeometrySchema,
-  properties: z.record(z.unknown()).nullable(),
+  properties: z.record(z.string(), z.unknown()).nullable(),
 });
 
 const RecordedRouteSchema = z.object({
   type: z.literal("FeatureCollection"),
   bbox: z.array(z.number()),
   features: z.array(GeoJsonFeatureSchema),
-  properties: z.record(z.unknown()).nullable(),
+  properties: z.record(z.string(), z.unknown()).nullable(),
 });
 
 const VoidSchema = z.undefined();
