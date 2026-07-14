@@ -1,0 +1,201 @@
+version: "3.8"
+
+# =============================================================================
+# Backup Infrastructure Docker Compose Overlay
+#
+# SECURITY NOTES:
+# - BACKUP_ENCRYPTION_KEY is passed as an environment variable for simplicity.
+#   In production, consider using Docker secrets (secrets: directive) or mounting
+#   the passphrase from a file with restricted permissions (0400). Environment
+#   variables are visible in `docker inspect` and /proc/<pid>/cmdline.
+# - The backup MinIO scheduler uses root credentials for write access. For
+#   tighter blast-radius control, create a write-only service account on the
+#   backup MinIO instance (without s3:DeleteObject or admin:* permissions).
+#   See deploy/backup/minio/bucket-policy.json for a policy template.
+#
+# NETWORK ISOLATION:
+# - Currently all services share the default compose network. For production
+#   hardening, add a dedicated backup network and restrict which services can
+#   communicate with the backup MinIO instance. Example:
+#     networks:
+#       backup_net:
+#         internal: true
+#   Then attach only backup-scheduler, minio-backup, and minio-backup-scheduler
+#   to backup_net, keeping production services isolated.
+#
+# RESTORE OPERATIONS:
+# - No dedicated restore service is defined. To run a PITR restore, exec into
+#   the postgres container:
+#     docker compose -f docker-compose.backup.yml exec postgres bash
+#     /scripts/restore-postgres.sh --target-time "2024-01-15T10:30:00Z" --yes
+#   Or run the restore script from the host with access to the backup volume.
+#   See docs/runbooks/backup-operations.md for the full restore procedure.
+# =============================================================================
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-haiker}
+      POSTGRES_USER: ${POSTGRES_USER:-haiker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-haiker_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_wal_archive:/var/lib/postgresql/wal_archive
+      - postgres_backups:/backups:ro
+      - ./postgresql/postgresql-backup.conf:/etc/postgresql/conf.d/backup.conf:ro
+      - ./postgresql/pg_hba_backup.conf:/etc/postgresql/pg_hba_backup.conf:ro
+      - ../../scripts/restore-postgres.sh:/scripts/restore-postgres.sh:ro
+    command: >
+      postgres
+        -c config_file=/etc/postgresql/conf.d/backup.conf
+        -c hba_file=/etc/postgresql/pg_hba_backup.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-haiker} -d ${POSTGRES_DB:-haiker}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backup-scheduler:
+    image: postgis/postgis:16-3.4
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        echo "Installing cron schedule: $${BACKUP_SCHEDULE}"
+        apt-get update -qq && apt-get install -y -qq cron gnupg > /dev/null 2>&1
+        echo "$${BACKUP_SCHEDULE} /scripts/backup-postgres.sh >> /var/log/backup.log 2>&1" | crontab -
+        cron -f
+    environment:
+      BACKUP_POSTGRES_HOST: postgres
+      BACKUP_POSTGRES_PORT: "5432"
+      BACKUP_POSTGRES_USER: ${BACKUP_POSTGRES_USER:-backup_user}
+      BACKUP_POSTGRES_PASSWORD: ${BACKUP_POSTGRES_PASSWORD:-backup_secure_password}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:?BACKUP_ENCRYPTION_KEY must be set}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_STORAGE_PATH: /backups
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-0 2 * * *}
+    volumes:
+      - postgres_backups:/backups
+      - postgres_wal_archive:/var/lib/postgresql/wal_archive:ro
+      - ../../scripts/backup-postgres.sh:/scripts/backup-postgres.sh:ro
+      - ../../scripts/verify-backup.sh:/scripts/verify-backup.sh:ro
+      - ./monitoring/healthcheck.sh:/scripts/healthcheck.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/scripts/healthcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backup-verify:
+    image: postgis/postgis:16-3.4
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        apt-get update -qq && apt-get install -y -qq gnupg > /dev/null 2>&1
+        while true; do
+          /scripts/verify-backup.sh || true
+          sleep 3600
+        done
+    environment:
+      BACKUP_STORAGE_PATH: /backups
+      WAL_ARCHIVE_PATH: /var/lib/postgresql/wal_archive
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      BACKUP_RPO_BASE_HOURS: ${BACKUP_RPO_BASE_HOURS:-24}
+      BACKUP_RPO_WAL_MINUTES: ${BACKUP_RPO_WAL_MINUTES:-15}
+      BACKUP_STORAGE_WARN_PERCENT: ${BACKUP_STORAGE_WARN_PERCENT:-80}
+    volumes:
+      - postgres_backups:/backups:ro
+      - postgres_wal_archive:/var/lib/postgresql/wal_archive:ro
+      - ../../scripts/verify-backup.sh:/scripts/verify-backup.sh:ro
+      - ./monitoring/healthcheck.sh:/scripts/healthcheck.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/scripts/healthcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  minio-backup:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${BACKUP_MINIO_ROOT_USER:?BACKUP_MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${BACKUP_MINIO_ROOT_PASSWORD:?BACKUP_MINIO_ROOT_PASSWORD must be set}
+      MINIO_KMS_SECRET_KEY: "backup-key:${MINIO_BACKUP_ENCRYPTION_KEY:-must-be-at-least-32-characters-long}"
+    volumes:
+      - minio_backups:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  minio-backup-scheduler:
+    image: minio/mc:latest
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "MinIO backup scheduler starting..."
+        mkdir -p /var/log
+        touch /var/log/minio-backup.log
+        # Run initial backup on startup
+        /scripts/backup-minio.sh || true
+        # Schedule backups using a sleep loop.
+        # NOTE: The minio/mc Alpine image does not include crond, so we use a
+        # simple interval-based loop. Adjust MINIO_BACKUP_INTERVAL_SECONDS to
+        # control backup frequency (default: 6 hours / 21600 seconds).
+        while true; do
+          sleep $${MINIO_BACKUP_INTERVAL_SECONDS:-21600}
+          /scripts/backup-minio.sh || true
+        done
+    environment:
+      MINIO_SOURCE_ALIAS: ${MINIO_SOURCE_ALIAS:-source}
+      MINIO_BACKUP_ALIAS: ${MINIO_BACKUP_ALIAS:-backup}
+      MINIO_SOURCE_ENDPOINT: ${MINIO_SOURCE_ENDPOINT:-http://minio:9000}
+      BACKUP_MINIO_ENDPOINT: ${BACKUP_MINIO_ENDPOINT:-http://minio-backup:9000}
+      MINIO_SOURCE_ACCESS_KEY: ${MINIO_SOURCE_ACCESS_KEY:-}
+      MINIO_SOURCE_SECRET_KEY: ${MINIO_SOURCE_SECRET_KEY:-}
+      # NOTE: The scheduler currently uses root credentials to write to the backup
+      # MinIO instance. For improved security, create a write-only service account
+      # on the backup MinIO (without s3:DeleteObject or admin permissions) and use
+      # those credentials here instead. See deploy/backup/minio/bucket-policy.json
+      # for an example policy template.
+      BACKUP_MINIO_ROOT_USER: ${BACKUP_MINIO_ROOT_USER:-}
+      BACKUP_MINIO_ROOT_PASSWORD: ${BACKUP_MINIO_ROOT_PASSWORD:-}
+      MINIO_BACKUP_BUCKETS: ${MINIO_BACKUP_BUCKETS:-haiker-artifacts,haiker-uploads}
+      MINIO_BACKUP_ENCRYPTION_KEY: ${MINIO_BACKUP_ENCRYPTION_KEY:-}
+      MINIO_BACKUP_RETENTION_DAYS: ${MINIO_BACKUP_RETENTION_DAYS:-30}
+      MINIO_BACKUP_INTERVAL_SECONDS: ${MINIO_BACKUP_INTERVAL_SECONDS:-21600}
+      MINIO_BACKUP_LOG: /var/log/minio-backup.log
+    volumes:
+      - ../../scripts/backup-minio.sh:/scripts/backup-minio.sh:ro
+      - ../../scripts/verify-minio-backup.sh:/scripts/verify-minio-backup.sh:ro
+      - ./monitoring/healthcheck.sh:/scripts/healthcheck.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      minio-backup:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  postgres_wal_archive:
+  postgres_backups:
+  minio_backups:
