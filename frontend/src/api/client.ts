@@ -299,4 +299,78 @@ export function discardDraft(draftId: string): Promise<undefined> {
   });
 }
 
+// Import Schemas
+
+const StartImportResponseSchema = z.object({
+  importId: z.string(),
+  uploadUrl: z.string(),
+  status: z.literal("uploading"),
+});
+
+const ImportStatusResponseSchema = z.object({
+  id: z.string(),
+  status: z.enum([
+    "requested",
+    "uploading",
+    "uploaded",
+    "validating",
+    "queued",
+    "parsing",
+    "committing",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
+  failureReason: z.string().nullable(),
+  activityId: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+// Import Types
+
+export type StartImportRequest = {
+  filename: string;
+  contentType: "application/gpx+xml" | "application/xml";
+  fileSizeBytes: number;
+};
+
+export type StartImportResponse = z.infer<typeof StartImportResponseSchema>;
+export type ImportStatusResponse = z.infer<typeof ImportStatusResponseSchema>;
+
+// Import API Functions
+
+export function startImport(
+  request: StartImportRequest,
+  idempotencyKey: string,
+): Promise<StartImportResponse> {
+  return apiFetch("/imports", StartImportResponseSchema, {
+    method: "POST",
+    headers: {
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(request),
+  });
+}
+
+export function completeUpload(
+  importId: string,
+  checksum: string,
+): Promise<ImportStatusResponse> {
+  return apiFetch(
+    `/imports/${importId}/completion`,
+    ImportStatusResponseSchema,
+    {
+      method: "POST",
+      body: JSON.stringify({ checksum }),
+    },
+  );
+}
+
+export function getImportStatus(
+  importId: string,
+): Promise<ImportStatusResponse> {
+  return apiFetch(`/imports/${importId}`, ImportStatusResponseSchema);
+}
+
 export { ApiError };
