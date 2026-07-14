@@ -25,7 +25,8 @@ async function computeSha256Hex(buffer: ArrayBuffer): Promise<string> {
 
 function uploadFileWithProgress(
   url: string,
-  file: File,
+  data: ArrayBuffer,
+  contentType: string,
   onProgress: (percent: number) => void,
   signal: AbortSignal,
 ): Promise<void> {
@@ -34,7 +35,7 @@ function uploadFileWithProgress(
 
     signal.addEventListener("abort", () => {
       xhr.abort();
-    });
+    }, { once: true });
 
     xhr.upload.addEventListener("progress", (event) => {
       if (event.lengthComputable) {
@@ -60,8 +61,8 @@ function uploadFileWithProgress(
     });
 
     xhr.open("PUT", url);
-    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-    xhr.send(file);
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.send(data);
   });
 }
 
@@ -113,7 +114,7 @@ export function useImportActivity(
   const importStatusQuery = useQuery<ImportStatusResponse>({
     queryKey: ["importStatus", importId],
     queryFn: () => getImportStatus(importId!),
-    enabled: !!importId && (phase === "processing" || phase === "completing"),
+    enabled: !!importId && phase === "processing",
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       if (status && isTerminalStatus(status)) return false;
@@ -135,6 +136,11 @@ export function useImportActivity(
     } else if (status === "cancelled") {
       setPhase("failed");
       setError("Import was cancelled");
+    } else if (status === "requested" || status === "uploading") {
+      // The upload was never completed (e.g., page was refreshed mid-upload).
+      // The server is still waiting for the file - show failure so user can retry.
+      setPhase("failed");
+      setError("Upload was interrupted. Please start a new import.");
     } else if (phase !== "uploading" && phase !== "starting" && phase !== "completing") {
       setPhase("processing");
     }
@@ -144,12 +150,9 @@ export function useImportActivity(
   const startImportMutation = useMutation<
     StartImportResponse,
     Error,
-    { file: File }
+    { file: File; contentType: "application/gpx+xml" | "application/xml" }
   >({
-    mutationFn: async ({ file }) => {
-      const contentType = file.name.toLowerCase().endsWith(".gpx")
-        ? ("application/gpx+xml" as const)
-        : ("application/xml" as const);
+    mutationFn: async ({ file, contentType }) => {
       return startImport(
         {
           filename: file.name,
@@ -159,7 +162,7 @@ export function useImportActivity(
         crypto.randomUUID(),
       );
     },
-    onSuccess: async (data, { file }) => {
+    onSuccess: async (data, { file, contentType }) => {
       updateImportId(data.importId);
       setPhase("uploading");
       setUploadProgress(0);
@@ -169,17 +172,19 @@ export function useImportActivity(
       abortControllerRef.current = controller;
 
       try {
+        // Read file once, compute checksum, then upload the same buffer
+        const buffer = await file.arrayBuffer();
+        const checksum = await computeSha256Hex(buffer);
+
         await uploadFileWithProgress(
           data.uploadUrl,
-          file,
+          buffer,
+          contentType,
           setUploadProgress,
           controller.signal,
         );
 
         setPhase("completing");
-        // Compute checksum and complete
-        const buffer = await file.arrayBuffer();
-        const checksum = await computeSha256Hex(buffer);
         await completeUpload(data.importId, checksum);
         setPhase("processing");
       } catch (err) {
@@ -208,7 +213,10 @@ export function useImportActivity(
       setError(null);
       setDuplicateActivityId(null);
       setPhase("starting");
-      startImportMutation.mutate({ file });
+      const contentType = file.name.toLowerCase().endsWith(".gpx")
+        ? ("application/gpx+xml" as const)
+        : ("application/xml" as const);
+      startImportMutation.mutate({ file, contentType });
     },
     [startImportMutation],
   );

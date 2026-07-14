@@ -7,8 +7,8 @@ import { ImportResult } from "./ImportResult";
 
 export function ImportActivity() {
   const navigate = useNavigate();
-  const searchParams = useSearch({ strict: false }) as Record<string, string | undefined>;
-  const initialImportId = searchParams.importId ?? null;
+  const { importId: importIdParam } = useSearch({ from: "/import" });
+  const initialImportId = importIdParam ?? null;
 
   const handleImportIdChange = useCallback(
     (id: string | null) => {
