@@ -107,7 +107,9 @@ impl IntoResponse for ApiError {
             .problem_type
             .unwrap_or_else(|| default_problem_type(&self.code));
         let title = self.title.unwrap_or_else(|| default_title(self.status));
-        let request_id = self.request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let request_id = self
+            .request_id
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
 
         let body = ProblemDetailBody {
             problem_type,
