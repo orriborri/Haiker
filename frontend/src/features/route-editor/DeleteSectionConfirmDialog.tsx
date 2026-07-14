@@ -23,8 +23,12 @@ export function DeleteSectionConfirmDialog({
       aria-modal="true"
       aria-labelledby="delete-section-dialog-title"
       aria-describedby="delete-section-dialog-description"
+      onClick={onCancel}
     >
-      <div className="mx-4 w-full max-w-sm rounded-md border border-gray-200 bg-white p-3 shadow-lg">
+      <div
+        className="mx-4 w-full max-w-sm rounded-md border border-gray-200 bg-white p-3 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h2
           id="delete-section-dialog-title"
           className="text-base font-semibold text-gray-900"

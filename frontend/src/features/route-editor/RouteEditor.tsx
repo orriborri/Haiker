@@ -500,10 +500,14 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         return;
       }
 
-      // Escape clears selection
+      // Escape dismisses delete confirmation dialog if open, otherwise clears selection
       if (e.key === "Escape") {
         e.preventDefault();
-        clearSelection();
+        if (pendingDeleteSection) {
+          setPendingDeleteSection(null);
+        } else {
+          clearSelection();
+        }
         return;
       }
 
@@ -518,7 +522,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [state.canUndo, state.canRedo, state.isOperationPending, state.selection, handleUndo, handleRedo, handleDelete, clearSelection]);
+  }, [state.canUndo, state.canRedo, state.isOperationPending, state.selection, pendingDeleteSection, handleUndo, handleRedo, handleDelete, clearSelection]);
 
   const handleSplit = useCallback(() => {
     if (!state.selection || state.selection.type !== "point") return;
