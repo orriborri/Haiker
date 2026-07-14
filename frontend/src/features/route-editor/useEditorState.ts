@@ -117,7 +117,7 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
       };
     }
     case "DRAG_PREVIEW": {
-      if (!state.optimisticGeometry) return state;
+      if (!state.isDragging || !state.optimisticGeometry) return state;
       const newGeometry = state.optimisticGeometry.map((seg, sIdx) => {
         if (sIdx !== action.segmentIndex) return seg;
         return seg.map((pt, pIdx) => {

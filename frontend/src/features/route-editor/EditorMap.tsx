@@ -63,6 +63,7 @@ export function EditorMap({
   } | null>(null);
   const isDraggingRef = useRef(false);
   const dragOriginRef = useRef<{ lat: number; lng: number } | null>(null);
+  const dragRafRef = useRef<number | null>(null);
   const [tileError, setTileError] = useState(false);
   const [dragDistance, setDragDistance] = useState<string | null>(null);
   const [dragTooltipPos, setDragTooltipPos] = useState<{ x: number; y: number } | null>(null);
@@ -297,10 +298,17 @@ export function EditorMap({
         const { segmentIndex, pointIndex } = dragPointRef.current;
         const lngLat = e.lngLat;
 
-        // Update optimistic geometry via callback
-        onDragPreviewRef.current?.(segmentIndex, pointIndex, lngLat.lng, lngLat.lat);
+        // Throttle dispatch to requestAnimationFrame cadence
+        if (dragRafRef.current !== null) {
+          cancelAnimationFrame(dragRafRef.current);
+        }
+        dragRafRef.current = requestAnimationFrame(() => {
+          dragRafRef.current = null;
+          // Update optimistic geometry via callback
+          onDragPreviewRef.current?.(segmentIndex, pointIndex, lngLat.lng, lngLat.lat);
+        });
 
-        // Calculate and display distance from drag origin
+        // Calculate and display distance from drag origin (lightweight, no throttle needed)
         if (dragOriginRef.current) {
           const dist = haversineDistance(
             dragOriginRef.current.lat,
@@ -318,6 +326,10 @@ export function EditorMap({
         if (!isDraggingRef.current || !dragPointRef.current) return;
         const { segmentIndex, pointIndex } = dragPointRef.current;
         const lngLat = e.lngLat;
+        if (dragRafRef.current !== null) {
+          cancelAnimationFrame(dragRafRef.current);
+          dragRafRef.current = null;
+        }
         onDragEndRef.current?.();
         onMovePointRef.current(
           segmentIndex,
@@ -362,6 +374,10 @@ export function EditorMap({
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape" && isDraggingRef.current) {
         e.preventDefault();
+        if (dragRafRef.current !== null) {
+          cancelAnimationFrame(dragRafRef.current);
+          dragRafRef.current = null;
+        }
         isDraggingRef.current = false;
         dragPointRef.current = null;
         dragOriginRef.current = null;
