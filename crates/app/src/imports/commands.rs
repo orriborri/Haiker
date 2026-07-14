@@ -191,16 +191,46 @@ pub async fn handle_complete_upload(
 
     // Verify the uploaded object exists and check its metadata
     let storage_key = format!("imports/{}/{}", cmd.owner_id, cmd.import_id);
-    let metadata = upload_verifier.verify_upload(&storage_key).await?;
+    let metadata = match upload_verifier.verify_upload(&storage_key).await {
+        Ok(meta) => meta,
+        Err(ImportError::StorageError { .. }) => {
+            // Transient error: leave import in Uploading state for retry
+            return Err(ImportError::StorageError {
+                message: "storage temporarily unavailable".to_string(),
+            });
+        }
+        Err(ImportError::ObjectNotFound) => {
+            // Definitive: object missing, transition to Failed
+            import
+                .fail("upload not found in storage".to_string())
+                .map_err(|_| ImportError::ObjectNotFound)?;
+            repo.update(&import).await?;
+            return Err(ImportError::ObjectNotFound);
+        }
+        Err(other) => {
+            // Any other error from verifier is treated as definitive
+            import.fail(other.to_string()).map_err(|_| other.clone())?;
+            repo.update(&import).await?;
+            return Err(other);
+        }
+    };
 
     // Verify file size is within the limit
     if metadata.content_length > MAX_FILE_SIZE_BYTES {
+        import
+            .fail("upload too large".to_string())
+            .map_err(|_| ImportError::UploadTooLarge)?;
+        repo.update(&import).await?;
         return Err(ImportError::UploadTooLarge);
     }
 
     // Verify content type is allowed (if present)
     if let Some(ref content_type) = metadata.content_type {
         if !ALLOWED_CONTENT_TYPES.contains(&content_type.as_str()) {
+            import
+                .fail("invalid media type".to_string())
+                .map_err(|_| ImportError::InvalidMediaType)?;
+            repo.update(&import).await?;
             return Err(ImportError::InvalidMediaType);
         }
     }
@@ -609,7 +639,7 @@ mod tests {
     async fn complete_upload_fails_when_object_missing() {
         let repo = InMemoryRepo::new();
         let url_gen = FakeUrlGenerator;
-        let verifier = FakeUploadVerifier::failure(ImportError::NotFound);
+        let verifier = FakeUploadVerifier::failure(ImportError::ObjectNotFound);
         let owner = UserId::new(Uuid::new_v4());
 
         let cmd = StartImportCommand {
@@ -631,7 +661,7 @@ mod tests {
         let err = handle_complete_upload(complete_cmd, &repo, &verifier)
             .await
             .unwrap_err();
-        assert!(matches!(err, ImportError::NotFound));
+        assert!(matches!(err, ImportError::ObjectNotFound));
     }
 
     #[tokio::test]
@@ -777,5 +807,181 @@ mod tests {
 
         let result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
         assert_eq!(result.import.status, ImportStatus::Uploading);
+    }
+
+    #[tokio::test]
+    async fn complete_upload_storage_error_leaves_import_in_uploading() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let verifier = FakeUploadVerifier::failure(ImportError::StorageError {
+            message: "connection timeout".to_string(),
+        });
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-transient".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let start_result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+        let import_id = start_result.import.id;
+
+        let complete_cmd = CompleteUploadCommand {
+            import_id,
+            owner_id: owner,
+            checksum: "a".repeat(64),
+        };
+
+        let err = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::StorageError { .. }));
+
+        // Import should still be in Uploading state (not transitioned)
+        let persisted = repo
+            .imports
+            .lock()
+            .unwrap()
+            .get(&import_id)
+            .unwrap()
+            .clone();
+        assert_eq!(persisted.status, ImportStatus::Uploading);
+        assert!(persisted.failure_reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_upload_object_not_found_transitions_to_failed() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let verifier = FakeUploadVerifier::failure(ImportError::ObjectNotFound);
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-obj-missing".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let start_result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+        let import_id = start_result.import.id;
+
+        let complete_cmd = CompleteUploadCommand {
+            import_id,
+            owner_id: owner,
+            checksum: "a".repeat(64),
+        };
+
+        let err = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::ObjectNotFound));
+
+        // Import should have transitioned to Failed with descriptive reason
+        let persisted = repo
+            .imports
+            .lock()
+            .unwrap()
+            .get(&import_id)
+            .unwrap()
+            .clone();
+        assert_eq!(persisted.status, ImportStatus::Failed);
+        assert_eq!(
+            persisted.failure_reason.as_deref(),
+            Some("upload not found in storage")
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_upload_oversized_object_transitions_to_failed() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let verifier =
+            FakeUploadVerifier::success(MAX_FILE_SIZE_BYTES + 1, Some("application/gpx+xml"));
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-oversized".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let start_result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+        let import_id = start_result.import.id;
+
+        let complete_cmd = CompleteUploadCommand {
+            import_id,
+            owner_id: owner,
+            checksum: "a".repeat(64),
+        };
+
+        let err = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::UploadTooLarge));
+
+        // Import should have transitioned to Failed
+        let persisted = repo
+            .imports
+            .lock()
+            .unwrap()
+            .get(&import_id)
+            .unwrap()
+            .clone();
+        assert_eq!(persisted.status, ImportStatus::Failed);
+        assert_eq!(
+            persisted.failure_reason.as_deref(),
+            Some("upload too large")
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_upload_invalid_content_type_transitions_to_failed() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let verifier = FakeUploadVerifier::success(1024, Some("text/plain"));
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-bad-ct".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let start_result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+        let import_id = start_result.import.id;
+
+        let complete_cmd = CompleteUploadCommand {
+            import_id,
+            owner_id: owner,
+            checksum: "a".repeat(64),
+        };
+
+        let err = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::InvalidMediaType));
+
+        // Import should have transitioned to Failed
+        let persisted = repo
+            .imports
+            .lock()
+            .unwrap()
+            .get(&import_id)
+            .unwrap()
+            .clone();
+        assert_eq!(persisted.status, ImportStatus::Failed);
+        assert_eq!(
+            persisted.failure_reason.as_deref(),
+            Some("invalid media type")
+        );
     }
 }

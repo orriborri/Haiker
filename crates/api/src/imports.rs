@@ -73,6 +73,7 @@ const SAFE_FAILURE_REASONS: &[&str] = &[
     "checksum mismatch",
     "duplicate checksum",
     "upload too large",
+    "upload not found in storage",
     "validation failed",
 ];
 
@@ -128,6 +129,15 @@ fn import_error_to_api_error(err: ImportError) -> ApiError {
             message: "content type must be application/gpx+xml or application/xml".to_string(),
             problem_type: Some("/problems/invalid-media-type".to_string()),
             title: Some("Invalid Media Type".to_string()),
+            request_id: None,
+            details: None,
+        },
+        ImportError::ObjectNotFound => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "OBJECT_NOT_FOUND".to_string(),
+            message: "uploaded object not found in storage".to_string(),
+            problem_type: Some("/problems/object-not-found".to_string()),
+            title: Some("Object Not Found".to_string()),
             request_id: None,
             details: None,
         },

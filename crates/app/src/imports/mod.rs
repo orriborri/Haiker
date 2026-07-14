@@ -234,6 +234,10 @@ pub enum ImportError {
     #[error("parsing failed: {reason}")]
     ParsingFailed { reason: String },
 
+    /// The uploaded object was not found in storage during verification.
+    #[error("upload not found in storage")]
+    ObjectNotFound,
+
     /// An error occurred during object storage operations.
     #[error("storage error: {message}")]
     StorageError { message: String },

@@ -198,7 +198,7 @@ impl haiker_app::imports::commands::UploadVerifier for ObjectStorageClient {
     ) -> Result<haiker_app::imports::commands::UploadMetadata, haiker_app::imports::ImportError>
     {
         let (content_length, content_type) = self.head_object(key).await.map_err(|e| match e {
-            ObjectStorageError::NotFound { .. } => haiker_app::imports::ImportError::NotFound,
+            ObjectStorageError::NotFound { .. } => haiker_app::imports::ImportError::ObjectNotFound,
             ObjectStorageError::Storage(msg) => {
                 haiker_app::imports::ImportError::StorageError { message: msg }
             }
