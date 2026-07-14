@@ -95,6 +95,7 @@ export function ActivityLibrary() {
     refetch,
   } = useActivities();
 
+  const navigate = useNavigate();
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -156,10 +157,21 @@ export function ActivityLibrary() {
 
   const allActivities = data?.pages.flatMap((page) => page.items) ?? [];
 
+  const handleNavigateToImport = useCallback(() => {
+    void navigate({ to: "/import" });
+  }, [navigate]);
+
   return (
     <div className="mx-auto max-w-2xl">
-      <header className="border-b border-gray-200 px-4 py-4">
+      <header className="flex items-center justify-between border-b border-gray-200 px-4 py-4">
         <h1 className="text-xl font-semibold text-gray-900">Activities</h1>
+        <button
+          type="button"
+          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          onClick={handleNavigateToImport}
+        >
+          Import GPX
+        </button>
       </header>
 
       {allActivities.length === 0 ? (
