@@ -217,8 +217,8 @@ export function createRouteDraft(
   });
 }
 
-export function getRouteDraft(draftId: string): Promise<RouteDraftResponse> {
-  return apiFetch(`/route-drafts/${draftId}`, RouteDraftResponseSchema);
+export function getRouteDraft(draftId: string, options?: RequestInit): Promise<RouteDraftResponse> {
+  return apiFetch(`/route-drafts/${draftId}`, RouteDraftResponseSchema, options);
 }
 
 export function applyOperation(

@@ -6,7 +6,12 @@ const DB_VERSION = 2;
 const STORE_NAME = "pending-operations";
 const REVISION_STORE_NAME = "base-revisions";
 
+let cachedDb: IDBDatabase | null = null;
+
 function openDatabase(): Promise<IDBDatabase> {
+  if (cachedDb) {
+    return Promise.resolve(cachedDb);
+  }
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = (event) => {
@@ -22,7 +27,13 @@ function openDatabase(): Promise<IDBDatabase> {
         }
       }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      cachedDb = request.result;
+      cachedDb.onclose = () => {
+        cachedDb = null;
+      };
+      resolve(cachedDb);
+    };
     request.onerror = () => reject(request.error);
   });
 }
@@ -185,12 +196,12 @@ export function useAutosave({ draftId, onRecoveryAvailable }: UseAutosaveOptions
     setRecoveryOps([]);
   }, [draftId]);
 
-  const dismissRecovery = useCallback(() => {
+  const dismissRecovery = useCallback(async () => {
     setHasRecovery(false);
     setRecoveryOps([]);
     if (draftId) {
-      void clearOperationsForDraft(draftId);
-      void clearBaseRevisionForDraft(draftId);
+      await clearOperationsForDraft(draftId);
+      await clearBaseRevisionForDraft(draftId);
     }
   }, [draftId]);
 

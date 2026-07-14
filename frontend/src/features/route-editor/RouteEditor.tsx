@@ -15,6 +15,7 @@ import {
   useRedoOperation,
   useResetDraft,
 } from "./useRouteDraft";
+import { getRouteDraft } from "@/api/client";
 import { useRecordedRoute } from "@/features/activity-detail/useRecordedRoute";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { ApiError } from "@/api/client";
@@ -139,10 +140,27 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     prevOnlineRef.current = isOnline;
 
     if (isOnline && wasOffline && state.draftId) {
-      // Refetch draft to compare revisions
+      // Refetch draft bypassing service worker cache, with retry
+      const draftId = state.draftId;
       void (async () => {
         const savedRevision = await getBaseRevision();
-        const { data: serverDraft } = await refetchDraft();
+        let serverDraft = null;
+        const maxRetries = 3;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            serverDraft = await getRouteDraft(draftId, { cache: "no-store" });
+            break;
+          } catch {
+            if (attempt < maxRetries - 1) {
+              await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+            } else {
+              console.warn(
+                "[RouteEditor] Reconnection refetch failed after retries. Reconciliation skipped.",
+              );
+              return;
+            }
+          }
+        }
         if (serverDraft) {
           // If server revision differs from what we last saved, trigger conflict flow
           const localRevision = savedRevision ?? state.revision;
@@ -163,7 +181,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         }
       })();
     }
-  }, [isOnline, state.draftId, state.revision, refetchDraft, getBaseRevision, setConflictState, operationSuccess]);
+  }, [isOnline, state.draftId, state.revision, getBaseRevision, setConflictState, operationSuccess]);
 
   // Create draft from recorded route when we have the route data
   useEffect(() => {
@@ -586,54 +604,35 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   const handleReplayRecovery = useCallback(async () => {
     if (!state.draftId) return;
 
-    // Fetch fresh server draft to revalidate revision
-    const { data: serverDraft } = await refetchDraft();
+    // Fetch fresh server draft bypassing service worker cache
+    let serverDraft = null;
+    try {
+      serverDraft = await getRouteDraft(state.draftId, { cache: "no-store" });
+    } catch {
+      setConflict("Failed to fetch server state for recovery replay. Please try again.");
+      return;
+    }
     if (!serverDraft) return;
 
-    const savedRevision = await getBaseRevision();
-    const localRevision = savedRevision ?? state.revision;
-
-    // If revision differs, replay against server revision
+    // Replay all pending operations against the current server revision
     const opsToReplay = [...recoveryOps];
     let currentRevision = serverDraft.revision;
+    let successCount = 0;
 
-    if (serverDraft.revision !== localRevision && opsToReplay.length > 0) {
-      // Revision mismatch: sequentially re-apply against new server state
-      let successCount = 0;
-      for (const pendingOp of opsToReplay) {
-        try {
-          const result = await applyOp.mutateAsync({
-            draftId: state.draftId,
-            operation: pendingOp.operation as unknown as Record<string, unknown>,
-            expectedRevision: currentRevision,
-          });
-          currentRevision = result.revision;
-          successCount++;
-        } catch {
-          setConflict(
-            `Recovery replay failed: ${successCount} of ${opsToReplay.length} operations were re-applied. The remaining ${opsToReplay.length - successCount} could not be applied due to a conflict.`,
-          );
-          break;
-        }
-      }
-    } else {
-      // Same revision: replay all ops
-      let successCount = 0;
-      for (const pendingOp of opsToReplay) {
-        try {
-          const result = await applyOp.mutateAsync({
-            draftId: state.draftId,
-            operation: pendingOp.operation as unknown as Record<string, unknown>,
-            expectedRevision: currentRevision,
-          });
-          currentRevision = result.revision;
-          successCount++;
-        } catch {
-          setConflict(
-            `Recovery replay failed: ${successCount} of ${opsToReplay.length} operations were re-applied. The remaining ${opsToReplay.length - successCount} could not be applied.`,
-          );
-          break;
-        }
+    for (const pendingOp of opsToReplay) {
+      try {
+        const result = await applyOp.mutateAsync({
+          draftId: state.draftId,
+          operation: pendingOp.operation as unknown as Record<string, unknown>,
+          expectedRevision: currentRevision,
+        });
+        currentRevision = result.revision;
+        successCount++;
+      } catch {
+        setConflict(
+          `Recovery replay failed: ${successCount} of ${opsToReplay.length} operations were re-applied. The remaining ${opsToReplay.length - successCount} could not be applied due to a conflict.`,
+        );
+        break;
       }
     }
 
@@ -653,10 +652,8 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     }
   }, [
     state.draftId,
-    state.revision,
     recoveryOps,
     refetchDraft,
-    getBaseRevision,
     applyOp,
     clearRecovery,
     operationSuccess,
@@ -665,7 +662,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   ]);
 
   const handleDiscardRecovery = useCallback(() => {
-    dismissRecovery();
+    void dismissRecovery();
   }, [dismissRecovery]);
 
   const handleBack = useCallback(() => {
@@ -743,6 +740,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
       {hasRecovery && (
         <RecoveryDialog
           pendingOperations={recoveryOps}
+          isOffline={state.isOffline}
           onReplay={() => void handleReplayRecovery()}
           onDiscard={handleDiscardRecovery}
         />
