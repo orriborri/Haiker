@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { EditorMap } from "./EditorMap";
 import { EditorToolbar } from "./EditorToolbar";
@@ -137,30 +137,6 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
       setCanUndoRedo(draft.canUndo, draft.canRedo);
     }
   }, [draft, state.draftId, setCanUndoRedo]);
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      // Ctrl+Z or Cmd+Z for undo
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        if (state.canUndo && !state.isOperationPending) {
-          handleUndo();
-        }
-      }
-      // Ctrl+Shift+Z or Cmd+Shift+Z for redo
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) {
-        e.preventDefault();
-        if (state.canRedo && !state.isOperationPending) {
-          handleRedo();
-        }
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.canUndo, state.canRedo, state.isOperationPending, state.draftId, state.revision]);
 
   // Operation handlers
   const dispatchOperation = useCallback(
@@ -329,6 +305,19 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     clearSelection,
   ]);
 
+  // Compute a human-readable description of the current selection for accessibility
+  const selectionDescription = useMemo((): string | null => {
+    const selection = state.selection;
+    if (!selection) return null;
+    if (selection.type === "point") {
+      return `Point ${selection.pointIndex + 1} on segment ${selection.segmentIndex + 1} selected`;
+    }
+    if (selection.type === "section") {
+      return `Section from point ${selection.startIndex + 1} to point ${selection.endIndex + 1} on segment ${selection.segmentIndex + 1} selected`;
+    }
+    return null;
+  }, [state.selection]);
+
   const handleSelectionChange = useCallback(
     (selection: Selection) => {
       setSelection(selection);
@@ -378,6 +367,55 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     }
     clearSelection();
   }, [state.selection, dispatchOperation, clearSelection]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // Ignore if focus is inside an input, textarea, contenteditable, or textbox role
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable ||
+        target.getAttribute("role") === "textbox"
+      ) return;
+
+      // Ctrl+Z or Cmd+Z for undo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        if (state.canUndo && !state.isOperationPending) {
+          handleUndo();
+        }
+        return;
+      }
+      // Ctrl+Shift+Z or Cmd+Shift+Z for redo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        if (state.canRedo && !state.isOperationPending) {
+          handleRedo();
+        }
+        return;
+      }
+
+      // Escape clears selection
+      if (e.key === "Escape") {
+        e.preventDefault();
+        clearSelection();
+        return;
+      }
+
+      // Delete/Backspace triggers delete on selection
+      if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey) {
+        if (state.selection && !state.isOperationPending) {
+          e.preventDefault();
+          handleDelete();
+        }
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [state.canUndo, state.canRedo, state.isOperationPending, state.selection, handleUndo, handleRedo, handleDelete, clearSelection]);
 
   const handleSplit = useCallback(() => {
     if (!state.selection || state.selection.type !== "point") return;
@@ -506,12 +544,14 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         onJoin={handleJoin}
         hasSelection={state.selection !== null}
         isOperationPending={state.isOperationPending}
+        selectionDescription={selectionDescription}
       />
 
       {/* Map area */}
       <div className="flex-1 relative" aria-label="Map editing area">
         <EditorMap
           geometry={state.optimisticGeometry}
+          baseGeometry={state.baseGeometry}
           selection={state.selection}
           currentTool={state.currentTool}
           onSelectionChange={handleSelectionChange}
