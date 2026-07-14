@@ -13,7 +13,7 @@ use uuid::Uuid;
 use haiker_app::identity::UserId;
 use haiker_app::imports::commands::{
     handle_complete_upload, handle_get_import, handle_start_import, CompleteUploadCommand,
-    StartImportCommand, UploadUrlGenerator,
+    StartImportCommand, UploadUrlGenerator, UploadVerifier,
 };
 use haiker_app::imports::job_types::ParseGpxJob;
 use haiker_app::imports::repository::ImportRepository;
@@ -45,6 +45,7 @@ pub trait JobEnqueuer: Send + Sync {
 pub struct ImportAppState {
     pub repo: Arc<dyn ImportRepository>,
     pub url_generator: Arc<dyn UploadUrlGenerator>,
+    pub upload_verifier: Arc<dyn UploadVerifier>,
     pub job_queue: Option<Arc<dyn JobEnqueuer>>,
 }
 
@@ -274,7 +275,7 @@ pub async fn post_complete_upload(
         checksum: body.checksum,
     };
 
-    let import = handle_complete_upload(cmd, state.repo.as_ref())
+    let import = handle_complete_upload(cmd, state.repo.as_ref(), state.upload_verifier.as_ref())
         .await
         .map_err(import_error_to_api_error)?;
 
@@ -426,6 +427,24 @@ impl UploadUrlGenerator for StubUrlGenerator {
     }
 }
 
+/// Stub upload verifier for testing that returns valid metadata by default.
+#[cfg(test)]
+pub struct StubUploadVerifier;
+
+#[cfg(test)]
+#[async_trait]
+impl UploadVerifier for StubUploadVerifier {
+    async fn verify_upload(
+        &self,
+        _key: &str,
+    ) -> Result<haiker_app::imports::commands::UploadMetadata, ImportError> {
+        Ok(haiker_app::imports::commands::UploadMetadata {
+            content_length: 1024,
+            content_type: Some("application/gpx+xml".to_string()),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,6 +458,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -722,6 +742,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -790,6 +811,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -887,6 +909,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1055,6 +1078,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1294,6 +1318,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1360,6 +1385,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1484,6 +1510,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1579,6 +1606,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1666,6 +1694,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1801,6 +1830,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1883,6 +1913,7 @@ mod tests {
         let state = ImportAppState {
             repo,
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 

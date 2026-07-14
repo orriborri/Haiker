@@ -54,6 +54,27 @@ pub trait UploadUrlGenerator: Send + Sync {
     async fn generate_upload_url(&self, key: &str) -> Result<String, ImportError>;
 }
 
+/// Metadata about an uploaded object retrieved from storage.
+#[derive(Debug, Clone)]
+pub struct UploadMetadata {
+    /// Size of the uploaded object in bytes.
+    pub content_length: u64,
+    /// Content-Type of the uploaded object, if available.
+    pub content_type: Option<String>,
+}
+
+/// Trait for verifying uploaded object metadata in storage.
+///
+/// This abstracts the storage verification concern so domain code
+/// does not depend on infrastructure.
+#[async_trait]
+pub trait UploadVerifier: Send + Sync {
+    /// Verify that an uploaded object exists and return its metadata.
+    ///
+    /// Returns `Err(ImportError::NotFound)` if the object does not exist.
+    async fn verify_upload(&self, key: &str) -> Result<UploadMetadata, ImportError>;
+}
+
 /// Compute a deterministic SHA-256 hash of the import payload fields.
 ///
 /// Hashes the canonical representation of (filename, content_type, file_size_bytes)
@@ -139,10 +160,12 @@ pub async fn handle_start_import(
 
 /// Handle the complete upload command.
 ///
-/// Validates ownership, transitions the import to Uploaded status.
+/// Validates ownership, verifies the uploaded object in storage,
+/// and transitions the import to Uploaded status.
 pub async fn handle_complete_upload(
     cmd: CompleteUploadCommand,
     repo: &dyn ImportRepository,
+    upload_verifier: &dyn UploadVerifier,
 ) -> Result<Import, ImportError> {
     // Validate checksum format
     let checksum = Checksum::new(&cmd.checksum)?;
@@ -164,6 +187,22 @@ pub async fn handle_complete_upload(
             from: import.status.to_string(),
             to: "uploaded".to_string(),
         });
+    }
+
+    // Verify the uploaded object exists and check its metadata
+    let storage_key = format!("imports/{}/{}", cmd.owner_id, cmd.import_id);
+    let metadata = upload_verifier.verify_upload(&storage_key).await?;
+
+    // Verify file size is within the limit
+    if metadata.content_length > MAX_FILE_SIZE_BYTES {
+        return Err(ImportError::UploadTooLarge);
+    }
+
+    // Verify content type is allowed (if present)
+    if let Some(ref content_type) = metadata.content_type {
+        if !ALLOWED_CONTENT_TYPES.contains(&content_type.as_str()) {
+            return Err(ImportError::InvalidMediaType);
+        }
     }
 
     // Transition to uploaded
@@ -275,6 +314,35 @@ mod tests {
     impl UploadUrlGenerator for FakeUrlGenerator {
         async fn generate_upload_url(&self, key: &str) -> Result<String, ImportError> {
             Ok(format!("https://storage.example.com/{key}?signed=true"))
+        }
+    }
+
+    /// Configurable fake upload verifier for testing.
+    struct FakeUploadVerifier {
+        result: Mutex<Result<UploadMetadata, ImportError>>,
+    }
+
+    impl FakeUploadVerifier {
+        fn success(content_length: u64, content_type: Option<&str>) -> Self {
+            Self {
+                result: Mutex::new(Ok(UploadMetadata {
+                    content_length,
+                    content_type: content_type.map(|s| s.to_string()),
+                })),
+            }
+        }
+
+        fn failure(err: ImportError) -> Self {
+            Self {
+                result: Mutex::new(Err(err)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl UploadVerifier for FakeUploadVerifier {
+        async fn verify_upload(&self, _key: &str) -> Result<UploadMetadata, ImportError> {
+            self.result.lock().unwrap().clone()
         }
     }
 
@@ -482,6 +550,7 @@ mod tests {
     async fn complete_upload_succeeds() {
         let repo = InMemoryRepo::new();
         let url_gen = FakeUrlGenerator;
+        let verifier = FakeUploadVerifier::success(1024, Some("application/gpx+xml"));
         let owner = UserId::new(Uuid::new_v4());
 
         let cmd = StartImportCommand {
@@ -500,7 +569,9 @@ mod tests {
             checksum: "a".repeat(64),
         };
 
-        let import = handle_complete_upload(complete_cmd, &repo).await.unwrap();
+        let import = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap();
         assert_eq!(import.status, ImportStatus::Uploaded);
     }
 
@@ -508,6 +579,7 @@ mod tests {
     async fn complete_upload_rejects_wrong_owner() {
         let repo = InMemoryRepo::new();
         let url_gen = FakeUrlGenerator;
+        let verifier = FakeUploadVerifier::success(1024, Some("application/gpx+xml"));
         let owner = UserId::new(Uuid::new_v4());
         let other = UserId::new(Uuid::new_v4());
 
@@ -527,10 +599,127 @@ mod tests {
             checksum: "a".repeat(64),
         };
 
-        let err = handle_complete_upload(complete_cmd, &repo)
+        let err = handle_complete_upload(complete_cmd, &repo, &verifier)
             .await
             .unwrap_err();
         assert!(matches!(err, ImportError::Unauthorized));
+    }
+
+    #[tokio::test]
+    async fn complete_upload_fails_when_object_missing() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let verifier = FakeUploadVerifier::failure(ImportError::NotFound);
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-missing".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let start_result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+
+        let complete_cmd = CompleteUploadCommand {
+            import_id: start_result.import.id,
+            owner_id: owner,
+            checksum: "a".repeat(64),
+        };
+
+        let err = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn complete_upload_fails_when_object_too_large() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let verifier =
+            FakeUploadVerifier::success(MAX_FILE_SIZE_BYTES + 1, Some("application/gpx+xml"));
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-large".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let start_result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+
+        let complete_cmd = CompleteUploadCommand {
+            import_id: start_result.import.id,
+            owner_id: owner,
+            checksum: "a".repeat(64),
+        };
+
+        let err = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::UploadTooLarge));
+    }
+
+    #[tokio::test]
+    async fn complete_upload_fails_when_content_type_invalid() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let verifier = FakeUploadVerifier::success(1024, Some("text/plain"));
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-ct".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let start_result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+
+        let complete_cmd = CompleteUploadCommand {
+            import_id: start_result.import.id,
+            owner_id: owner,
+            checksum: "a".repeat(64),
+        };
+
+        let err = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ImportError::InvalidMediaType));
+    }
+
+    #[tokio::test]
+    async fn complete_upload_succeeds_when_content_type_absent() {
+        let repo = InMemoryRepo::new();
+        let url_gen = FakeUrlGenerator;
+        let verifier = FakeUploadVerifier::success(1024, None);
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = StartImportCommand {
+            owner_id: owner,
+            idempotency_key: "idem-no-ct".to_string(),
+            filename: "hike.gpx".to_string(),
+            content_type: "application/gpx+xml".to_string(),
+            file_size_bytes: 1024,
+        };
+
+        let start_result = handle_start_import(cmd, &repo, &url_gen).await.unwrap();
+
+        let complete_cmd = CompleteUploadCommand {
+            import_id: start_result.import.id,
+            owner_id: owner,
+            checksum: "a".repeat(64),
+        };
+
+        let import = handle_complete_upload(complete_cmd, &repo, &verifier)
+            .await
+            .unwrap();
+        assert_eq!(import.status, ImportStatus::Uploaded);
     }
 
     #[tokio::test]

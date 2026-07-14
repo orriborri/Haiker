@@ -192,7 +192,7 @@ impl Import {
 }
 
 /// Errors that can occur in the imports context.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum ImportError {
     /// The file format is not supported for import.
     #[error("unsupported file format")]

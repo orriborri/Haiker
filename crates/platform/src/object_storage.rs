@@ -163,4 +163,50 @@ impl ObjectStorageClient {
             }
         }
     }
+
+    /// Retrieve object metadata (content_length, content_type) without downloading the body.
+    pub async fn head_object(
+        &self,
+        key: &str,
+    ) -> Result<(u64, Option<String>), ObjectStorageError> {
+        match self.bucket.head_object(key).await {
+            Ok((result, _status)) => {
+                let content_length = result.content_length.unwrap_or(0) as u64;
+                let content_type = result.content_type;
+                Ok((content_length, content_type))
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if is_not_found_error(&msg) {
+                    Err(ObjectStorageError::NotFound {
+                        key: key.to_string(),
+                    })
+                } else {
+                    Err(ObjectStorageError::Storage(msg))
+                }
+            }
+        }
+    }
+}
+
+/// Implementation of the domain UploadVerifier trait for ObjectStorageClient.
+#[async_trait::async_trait]
+impl haiker_app::imports::commands::UploadVerifier for ObjectStorageClient {
+    async fn verify_upload(
+        &self,
+        key: &str,
+    ) -> Result<haiker_app::imports::commands::UploadMetadata, haiker_app::imports::ImportError>
+    {
+        let (content_length, content_type) = self.head_object(key).await.map_err(|e| match e {
+            ObjectStorageError::NotFound { .. } => haiker_app::imports::ImportError::NotFound,
+            ObjectStorageError::Storage(msg) => {
+                haiker_app::imports::ImportError::StorageError { message: msg }
+            }
+        })?;
+
+        Ok(haiker_app::imports::commands::UploadMetadata {
+            content_length,
+            content_type,
+        })
+    }
 }
