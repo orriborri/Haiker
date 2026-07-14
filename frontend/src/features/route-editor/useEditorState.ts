@@ -19,6 +19,7 @@ const initialState: EditorState = {
   canRedo: false,
   conflictError: null,
   isOperationPending: false,
+  isOffline: false,
   conflictServerDraft: null,
   conflictLocalOps: [],
 };
@@ -100,6 +101,8 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         conflictLocalOps: [],
         conflictError: null,
       };
+    case "SET_ONLINE_STATUS":
+      return { ...state, isOffline: !action.isOnline };
   }
 }
 
@@ -171,6 +174,10 @@ export function useEditorState() {
     dispatch({ type: "RESOLVE_CONFLICT_RETRY" });
   }, []);
 
+  const setOnlineStatus = useCallback((isOnline: boolean) => {
+    dispatch({ type: "SET_ONLINE_STATUS", isOnline });
+  }, []);
+
   return {
     state,
     dispatch,
@@ -188,5 +195,6 @@ export function useEditorState() {
     setConflictState,
     resolveConflictReload,
     resolveConflictRetry,
+    setOnlineStatus,
   };
 }

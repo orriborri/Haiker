@@ -103,14 +103,14 @@ const GeoJsonGeometrySchema = z.object({
 const GeoJsonFeatureSchema = z.object({
   type: z.literal("Feature"),
   geometry: GeoJsonGeometrySchema,
-  properties: z.record(z.unknown()).nullable(),
+  properties: z.record(z.string(), z.unknown()).nullable(),
 });
 
 const RecordedRouteSchema = z.object({
   type: z.literal("FeatureCollection"),
   bbox: z.array(z.number()),
   features: z.array(GeoJsonFeatureSchema),
-  properties: z.record(z.unknown()).nullable(),
+  properties: z.record(z.string(), z.unknown()).nullable(),
 });
 
 const VoidSchema = z.undefined();
@@ -217,8 +217,10 @@ export function createRouteDraft(
   });
 }
 
-export function getRouteDraft(draftId: string): Promise<RouteDraftResponse> {
-  return apiFetch(`/route-drafts/${draftId}`, RouteDraftResponseSchema);
+export function getRouteDraft(draftId: string, options?: RequestInit & { bypassServiceWorker?: boolean }): Promise<RouteDraftResponse> {
+  const { bypassServiceWorker, ...fetchOptions } = options ?? {};
+  const query = bypassServiceWorker ? "?_sw-bypass=1" : "";
+  return apiFetch(`/route-drafts/${draftId}${query}`, RouteDraftResponseSchema, fetchOptions);
 }
 
 export function applyOperation(

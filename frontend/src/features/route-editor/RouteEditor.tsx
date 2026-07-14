@@ -3,8 +3,10 @@ import { useNavigate } from "@tanstack/react-router";
 import { EditorMap } from "./EditorMap";
 import { EditorToolbar } from "./EditorToolbar";
 import { ConflictDialog } from "./ConflictDialog";
+import { RecoveryDialog } from "./RecoveryDialog";
 import { useEditorState } from "./useEditorState";
 import { useAutosave } from "./useAutosave";
+import { useOnlineStatus } from "./useOnlineStatus";
 import {
   useGetRouteDraft,
   useCreateRouteDraft,
@@ -13,6 +15,7 @@ import {
   useRedoOperation,
   useResetDraft,
 } from "./useRouteDraft";
+import { getRouteDraft } from "@/api/client";
 import { useRecordedRoute } from "@/features/activity-detail/useRecordedRoute";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { ApiError } from "@/api/client";
@@ -57,6 +60,7 @@ function recordedRouteToGeometry(
 
 export function RouteEditor({ activityId }: RouteEditorProps) {
   const navigate = useNavigate();
+  const { isOnline } = useOnlineStatus();
   const {
     state,
     setTool,
@@ -72,10 +76,17 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     setConflictState,
     resolveConflictReload,
     resolveConflictRetry,
+    setOnlineStatus,
   } = useEditorState();
 
   // Track base geometry for reset operations
   const baseGeometryRef = useRef<RoutePointDto[][] | null>(null);
+
+  // Sync online status to reducer state
+  const prevOnlineRef = useRef(isOnline);
+  useEffect(() => {
+    setOnlineStatus(isOnline);
+  }, [isOnline, setOnlineStatus]);
 
   // Fetch recorded route as base geometry for creating draft
   const { data: recordedRoute, isLoading: routeLoading } =
@@ -115,13 +126,62 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   const resetOp = useResetDraft(handleConflict);
 
   // Autosave
-  const { saveOperation, confirmSaved, hasRecovery, dismissRecovery, getUnconfirmedOps, clearRecovery } =
+  const { saveOperation, confirmSaved, hasRecovery, recoveryOps, dismissRecovery, getUnconfirmedOps, clearRecovery, saveBaseRevision, getBaseRevision } =
     useAutosave({
       draftId: state.draftId,
     });
 
   // Keep the ref in sync
   getUnconfirmedOpsRef.current = getUnconfirmedOps;
+
+  // On reconnection (offline -> online): revalidate server revision
+  useEffect(() => {
+    const wasOffline = !prevOnlineRef.current;
+    prevOnlineRef.current = isOnline;
+
+    if (isOnline && wasOffline && state.draftId) {
+      // Refetch draft bypassing service worker cache, with retry
+      const draftId = state.draftId;
+      void (async () => {
+        const savedRevision = await getBaseRevision();
+        let serverDraft = null;
+        const maxRetries = 3;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            serverDraft = await getRouteDraft(draftId, { cache: "no-store", bypassServiceWorker: true });
+            break;
+          } catch {
+            if (attempt < maxRetries - 1) {
+              await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+            } else {
+              console.warn(
+                "[RouteEditor] Reconnection refetch failed after retries. Reconciliation skipped.",
+              );
+              return;
+            }
+          }
+        }
+        if (serverDraft) {
+          // If server revision differs from what we last saved, trigger conflict flow
+          const localRevision = savedRevision ?? state.revision;
+          if (serverDraft.revision !== localRevision) {
+            const localOps = await getUnconfirmedOpsRef.current();
+            if (localOps.length > 0) {
+              setConflictState(serverDraft, localOps);
+            } else {
+              // No pending ops - just accept server state
+              operationSuccess(
+                serverDraft.revision,
+                serverDraft.geometry,
+                serverDraft.canUndo,
+                serverDraft.canRedo,
+              );
+            }
+          }
+        }
+      })();
+    }
+  }, [isOnline, state.draftId, state.revision, getBaseRevision, setConflictState, operationSuccess]);
 
   // Create draft from recorded route when we have the route data
   useEffect(() => {
@@ -137,6 +197,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         onSuccess: (data) => {
           setDraft(data.id, data.revision, data.geometry, geometry);
           setCanUndoRedo(data.canUndo, data.canRedo);
+          void saveBaseRevision(data.revision);
         },
       },
     );
@@ -147,6 +208,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     createDraft,
     setDraft,
     setCanUndoRedo,
+    saveBaseRevision,
   ]);
 
   // Sync draft data to state when it changes
@@ -159,7 +221,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   // Operation handlers
   const dispatchOperation = useCallback(
     async (operation: RouteOperation) => {
-      if (!state.draftId) return;
+      if (!state.draftId || state.isOffline) return;
 
       operationStart();
       const opId = await saveOperation(operation, state.revision);
@@ -173,6 +235,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         {
           onSuccess: async (result) => {
             await confirmSaved(opId);
+            await saveBaseRevision(result.revision);
             // Refetch draft to get updated geometry
             const { data: updatedDraft } = await refetchDraft();
             if (updatedDraft) {
@@ -202,9 +265,11 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
       state.draftId,
       state.revision,
       state.optimisticGeometry,
+      state.isOffline,
       operationStart,
       saveOperation,
       confirmSaved,
+      saveBaseRevision,
       applyOp,
       refetchDraft,
       operationSuccess,
@@ -213,7 +278,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   );
 
   const handleUndo = useCallback(() => {
-    if (!state.draftId) return;
+    if (!state.draftId || state.isOffline) return;
     operationStart();
     undoOp.mutate(
       { draftId: state.draftId, expectedRevision: state.revision },
@@ -240,6 +305,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     state.draftId,
     state.revision,
     state.optimisticGeometry,
+    state.isOffline,
     operationStart,
     undoOp,
     refetchDraft,
@@ -248,7 +314,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   ]);
 
   const handleRedo = useCallback(() => {
-    if (!state.draftId) return;
+    if (!state.draftId || state.isOffline) return;
     operationStart();
     redoOp.mutate(
       { draftId: state.draftId, expectedRevision: state.revision },
@@ -275,6 +341,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     state.draftId,
     state.revision,
     state.optimisticGeometry,
+    state.isOffline,
     operationStart,
     redoOp,
     refetchDraft,
@@ -283,7 +350,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   ]);
 
   const handleReset = useCallback(() => {
-    if (!state.draftId) return;
+    if (!state.draftId || state.isOffline) return;
     const geometry = state.baseGeometry ?? baseGeometryRef.current;
     if (!geometry) return;
 
@@ -304,6 +371,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
             operationSuccess(result.revision, state.optimisticGeometry ?? [], result.canUndo, result.canRedo);
           }
           clearSelection();
+          await clearRecovery();
         },
         onError: (error) => {
           operationFailure(error.message);
@@ -315,12 +383,14 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     state.revision,
     state.optimisticGeometry,
     state.baseGeometry,
+    state.isOffline,
     operationStart,
     resetOp,
     refetchDraft,
     operationSuccess,
     operationFailure,
     clearSelection,
+    clearRecovery,
   ]);
 
   // Compute a human-readable description of the current selection for accessibility
@@ -477,7 +547,6 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     const opsToRetry: PendingOperation[] = [...state.conflictLocalOps];
     const serverRevision = state.conflictServerDraft?.revision ?? state.revision;
     resolveConflictRetry();
-    await clearRecovery();
 
     // Re-apply each pending operation sequentially against the new server state
     let currentRevision = serverRevision;
@@ -501,6 +570,11 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
       }
     }
 
+    // Only clear recovery data if all operations were replayed successfully
+    if (successCount === opsToRetry.length) {
+      await clearRecovery();
+    }
+
     // Refresh to get the latest server state after retries
     const { data: updatedDraft } = await refetchDraft();
     if (updatedDraft) {
@@ -510,6 +584,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         updatedDraft.canUndo,
         updatedDraft.canRedo,
       );
+      await saveBaseRevision(updatedDraft.revision);
     }
   }, [
     state.conflictLocalOps,
@@ -522,12 +597,79 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     refetchDraft,
     operationSuccess,
     setConflict,
+    saveBaseRevision,
   ]);
 
   const handleDismissConflict = useCallback(() => {
     clearConflict();
     resolveConflictReload();
   }, [clearConflict, resolveConflictReload]);
+
+  const handleReplayRecovery = useCallback(async () => {
+    if (!state.draftId) return;
+
+    // Fetch fresh server draft bypassing service worker cache
+    let serverDraft = null;
+    try {
+      serverDraft = await getRouteDraft(state.draftId, { cache: "no-store", bypassServiceWorker: true });
+    } catch {
+      setConflict("Failed to fetch server state for recovery replay. Please try again.");
+      return;
+    }
+    if (!serverDraft) return;
+
+    // Replay all pending operations against the current server revision
+    const opsToReplay = [...recoveryOps];
+    let currentRevision = serverDraft.revision;
+    let successCount = 0;
+
+    for (const pendingOp of opsToReplay) {
+      try {
+        const result = await applyOp.mutateAsync({
+          draftId: state.draftId,
+          operation: pendingOp.operation as unknown as Record<string, unknown>,
+          expectedRevision: currentRevision,
+        });
+        currentRevision = result.revision;
+        successCount++;
+      } catch {
+        setConflict(
+          `Recovery replay failed: ${successCount} of ${opsToReplay.length} operations were re-applied. The remaining ${opsToReplay.length - successCount} could not be applied due to a conflict.`,
+        );
+        break;
+      }
+    }
+
+    // Only clear recovery data if all operations were replayed successfully
+    if (successCount === opsToReplay.length) {
+      await clearRecovery();
+    }
+
+    // Refresh to get the latest server state
+    const { data: updatedDraft } = await refetchDraft();
+    if (updatedDraft) {
+      operationSuccess(
+        updatedDraft.revision,
+        updatedDraft.geometry,
+        updatedDraft.canUndo,
+        updatedDraft.canRedo,
+      );
+      await saveBaseRevision(updatedDraft.revision);
+    }
+  }, [
+    state.draftId,
+    recoveryOps,
+    refetchDraft,
+    applyOp,
+    clearRecovery,
+    operationSuccess,
+    saveBaseRevision,
+    setConflict,
+  ]);
+
+  const handleDiscardRecovery = useCallback(async () => {
+    await dismissRecovery();
+  }, [dismissRecovery]);
 
   const handleBack = useCallback(() => {
     void navigate({ to: "/activities/$activityId", params: { activityId } });
@@ -600,23 +742,46 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         </div>
       )}
 
-      {/* Recovery banner */}
+      {/* Recovery dialog */}
       {hasRecovery && (
+        <RecoveryDialog
+          pendingOperations={recoveryOps}
+          isOffline={state.isOffline}
+          onReplay={() => void handleReplayRecovery()}
+          onDiscard={handleDiscardRecovery}
+        />
+      )}
+
+      {/* Offline banner */}
+      {state.isOffline && (
         <div
-          className="flex items-center gap-3 bg-blue-50 border-b border-blue-200 px-4 py-2"
+          className="flex items-center gap-3 bg-gray-100 border-b border-gray-300 px-4 py-2"
           role="alert"
-          aria-live="polite"
+          aria-live="assertive"
         >
-          <p className="text-sm text-blue-800">
-            Unsaved operations were found from a previous session.
-          </p>
-          <button
-            type="button"
-            className="ml-auto rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            onClick={dismissRecovery}
+          <svg
+            className="h-5 w-5 text-gray-600 flex-shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            aria-hidden="true"
           >
-            Dismiss
-          </button>
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M18.364 5.636a9 9 0 010 12.728M5.636 5.636a9 9 0 000 12.728M12 12h.01"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M3 3l18 18"
+            />
+          </svg>
+          <p className="text-sm text-gray-700">
+            You are offline. Edits are paused until connectivity is restored.
+          </p>
         </div>
       )}
 
@@ -634,6 +799,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         onJoin={handleJoin}
         hasSelection={state.selection !== null}
         isOperationPending={state.isOperationPending}
+        isOffline={state.isOffline}
         selectionDescription={selectionDescription}
       />
 
