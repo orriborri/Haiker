@@ -18,6 +18,7 @@ use crate::recorded_activity::{RecordedTrackId, SourceArtifactId, SourceRevision
 use super::checksum::Checksum;
 use super::commit::{CommitImport, ImportCommitData};
 use super::duplicate_detection::{CheckDuplicate, DuplicateCheckResult};
+use super::failure_code::FailureCode;
 use super::gpx_parser::parse_gpx;
 use super::repository::ImportRepository;
 use super::state_machine::ImportStatus;
@@ -100,7 +101,10 @@ impl<'a> ImportOrchestrator<'a> {
         let file_bytes = match self.object_store.download(object_storage_key).await {
             Ok(bytes) => bytes,
             Err(e) => {
-                import.fail(format!("failed to download file: {e}"))?;
+                import.fail_with_code(
+                    format!("failed to download file: {e}"),
+                    FailureCode::StorageUnavailable,
+                )?;
                 self.repo.update(&import).await?;
                 return Err(e);
             }
@@ -126,11 +130,14 @@ impl<'a> ImportOrchestrator<'a> {
                 expected: stored_checksum.as_str().to_string(),
                 actual: computed_hash.clone(),
             };
-            import.fail(format!(
-                "checksum mismatch: expected {}, got {}",
-                stored_checksum.as_str(),
-                computed_hash
-            ))?;
+            import.fail_with_code(
+                format!(
+                    "checksum mismatch: expected {}, got {}",
+                    stored_checksum.as_str(),
+                    computed_hash
+                ),
+                FailureCode::ChecksumMismatch,
+            )?;
             self.repo.update(&import).await?;
             return Err(err);
         }
@@ -140,7 +147,7 @@ impl<'a> ImportOrchestrator<'a> {
             Ok(result) => result,
             Err(parse_err) => {
                 let reason = format!("parsing failed: {} ({})", parse_err.message, parse_err.code);
-                import.fail(reason.clone())?;
+                import.fail_with_code(reason.clone(), FailureCode::ParseError)?;
                 self.repo.update(&import).await?;
                 return Err(ImportError::ParsingFailed { reason });
             }
@@ -179,7 +186,7 @@ impl<'a> ImportOrchestrator<'a> {
             Ok(n) => n,
             Err(e) => {
                 let reason = format!("normalization failed: {e}");
-                import.fail(reason.clone())?;
+                import.fail_with_code(reason.clone(), FailureCode::ParseError)?;
                 self.repo.update(&import).await?;
                 return Err(ImportError::ParsingFailed { reason });
             }
@@ -229,7 +236,8 @@ impl<'a> ImportOrchestrator<'a> {
             Ok(_) => Ok(ImportProcessingResult::Completed { activity_id }),
             Err(e) => {
                 // Try to transition import to failed
-                let _ = import.fail(format!("commit failed: {e}"));
+                let _ = import
+                    .fail_with_code(format!("commit failed: {e}"), FailureCode::InternalError);
                 let _ = self.repo.update(&import).await;
                 Err(e)
             }
@@ -499,6 +507,10 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("checksum mismatch"));
+        assert_eq!(
+            final_import.failure_code,
+            Some(super::super::failure_code::FailureCode::ChecksumMismatch)
+        );
     }
 
     #[tokio::test]
@@ -623,6 +635,10 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("parsing failed"));
+        assert_eq!(
+            final_import.failure_code,
+            Some(super::super::failure_code::FailureCode::ParseError)
+        );
     }
 
     #[tokio::test]
@@ -672,6 +688,10 @@ mod tests {
             .unwrap()
             .clone();
         assert_eq!(final_import.status, ImportStatus::Failed);
+        assert_eq!(
+            final_import.failure_code,
+            Some(super::super::failure_code::FailureCode::StorageUnavailable)
+        );
     }
 
     #[tokio::test]

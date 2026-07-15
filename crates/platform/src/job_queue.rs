@@ -100,6 +100,60 @@ impl JobQueue {
         Ok(id)
     }
 
+    /// Enqueue a job idempotently using a correlation_id as the deduplication key.
+    ///
+    /// Uses `ON CONFLICT DO NOTHING` against the partial unique index on
+    /// (job_type, correlation_id) for active jobs. If a job with the same
+    /// job_type and correlation_id already exists in a non-terminal state,
+    /// the existing job's ID is returned instead of creating a duplicate.
+    pub async fn enqueue_idempotent(
+        &self,
+        job_type: &str,
+        payload: Value,
+        correlation_id: Uuid,
+    ) -> Result<Uuid, sqlx::Error> {
+        let id = Uuid::new_v4();
+
+        // Attempt to insert; ON CONFLICT DO NOTHING if an active job already exists
+        let result = sqlx::query(
+            r#"
+            INSERT INTO platform.jobs (id, job_type, payload, status, scheduled_at, correlation_id)
+            VALUES ($1, $2, $3, 'pending', now(), $4)
+            ON CONFLICT (job_type, correlation_id)
+                WHERE correlation_id IS NOT NULL
+                  AND status NOT IN ('completed', 'cancelled', 'failed')
+            DO NOTHING
+            "#,
+        )
+        .bind(id)
+        .bind(job_type)
+        .bind(&payload)
+        .bind(correlation_id)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            // A job already exists - look up its ID
+            let existing_id = sqlx::query_as::<_, (Uuid,)>(
+                r#"
+                SELECT id FROM platform.jobs
+                WHERE job_type = $1
+                  AND correlation_id = $2
+                  AND status NOT IN ('completed', 'cancelled', 'failed')
+                LIMIT 1
+                "#,
+            )
+            .bind(job_type)
+            .bind(correlation_id)
+            .fetch_one(&self.pool)
+            .await?;
+
+            Ok(existing_id.0)
+        } else {
+            Ok(id)
+        }
+    }
+
     /// Enqueue a job with a specific scheduled time.
     pub async fn enqueue_scheduled(
         &self,

@@ -130,6 +130,9 @@ impl JobHandler for ParseGpxJobHandler {
 
         // Transition from Uploaded -> Validating -> Queued before the orchestrator
         // picks up the import. The orchestrator expects the import to be in Queued state.
+        // Handle re-delivery gracefully: if the import is already in Validating, Queued,
+        // or Parsing state from a previous partial run, skip the transitions that are
+        // already completed rather than erroring.
         {
             let mut import = repo
                 .find_by_id(import_id)
@@ -137,16 +140,38 @@ impl JobHandler for ParseGpxJobHandler {
                 .map_err(|e| format!("failed to load import: {e}"))?
                 .ok_or_else(|| format!("import {} not found", import_id))?;
 
-            if import.status == haiker_app::imports::state_machine::ImportStatus::Uploaded {
-                import
-                    .start_validation()
-                    .map_err(|e| format!("failed to transition to validating: {e}"))?;
-                import
-                    .queue_for_parsing()
-                    .map_err(|e| format!("failed to transition to queued: {e}"))?;
-                repo.update(&import)
-                    .await
-                    .map_err(|e| format!("failed to persist queued status: {e}"))?;
+            match import.status {
+                haiker_app::imports::state_machine::ImportStatus::Uploaded => {
+                    import
+                        .start_validation()
+                        .map_err(|e| format!("failed to transition to validating: {e}"))?;
+                    import
+                        .queue_for_parsing()
+                        .map_err(|e| format!("failed to transition to queued: {e}"))?;
+                    repo.update(&import)
+                        .await
+                        .map_err(|e| format!("failed to persist queued status: {e}"))?;
+                }
+                haiker_app::imports::state_machine::ImportStatus::Validating => {
+                    import
+                        .queue_for_parsing()
+                        .map_err(|e| format!("failed to transition to queued: {e}"))?;
+                    repo.update(&import)
+                        .await
+                        .map_err(|e| format!("failed to persist queued status: {e}"))?;
+                }
+                haiker_app::imports::state_machine::ImportStatus::Queued
+                | haiker_app::imports::state_machine::ImportStatus::Parsing => {
+                    // Already past the pre-orchestrator transitions; nothing to do.
+                    // The orchestrator will handle these states appropriately.
+                }
+                other => {
+                    return Err(format!(
+                        "import {} is in unexpected state '{}' for processing",
+                        import_id, other
+                    )
+                    .into());
+                }
             }
         }
 
