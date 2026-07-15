@@ -1621,3 +1621,101 @@ fn replace_section_rejects_single_point_replacement() {
     assert_eq!(d.revision, 0);
     assert_eq!(d.geometry, sample_geo());
 }
+
+// --- Reset reproduces base version byte-for-byte ---
+
+#[test]
+fn reset_restores_exact_base_geometry_byte_for_byte() {
+    let base_geo = vec![vec![
+        pt(45.0, 10.0),
+        pt(45.1, 10.1),
+        pt(45.2, 10.2),
+        pt(45.3, 10.3),
+    ]];
+    let mut d = RouteDraft::create_from_geometry(
+        UserId::new(Uuid::new_v4()),
+        ActivityId::generate(),
+        Some(Uuid::new_v4()),
+        base_geo.clone(),
+    )
+    .unwrap();
+
+    // Apply several operations to mutate geometry
+    d.apply_operation(
+        op_id(),
+        RouteOperation::MovePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+            new_position: coord(50.0, 15.0),
+        },
+        0,
+    )
+    .unwrap();
+    d.apply_operation(
+        op_id(),
+        RouteOperation::AddPoint {
+            segment_index: SegmentIndex::new(0),
+            after_point_index: PointIndex::new(1),
+            point: pt(47.0, 12.0),
+        },
+        1,
+    )
+    .unwrap();
+
+    // Geometry is now different
+    assert_ne!(d.geometry, base_geo);
+    assert!(!d.applied_operations.is_empty());
+
+    // Reset with the original base geometry
+    d.reset(2, base_geo.clone()).unwrap();
+
+    // Must match byte-for-byte
+    assert_eq!(d.geometry, base_geo);
+    assert!(d.applied_operations.is_empty());
+    assert!(d.undone_operations.is_empty());
+    assert_eq!(d.revision, 3);
+}
+
+#[test]
+fn reset_with_stale_revision_returns_revision_conflict() {
+    let mut d = draft();
+    d.apply_operation(
+        op_id(),
+        RouteOperation::MovePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+            new_position: coord(50.0, 15.0),
+        },
+        0,
+    )
+    .unwrap();
+
+    // Try to reset with stale revision 0 (actual is 1)
+    let new_geo = vec![vec![pt(1.0, 1.0), pt(2.0, 2.0), pt(3.0, 3.0)]];
+    let r = d.reset(0, new_geo);
+    assert!(matches!(
+        r,
+        Err(RouteEditingError::RevisionConflict {
+            expected: 0,
+            actual: 1
+        })
+    ));
+}
+
+#[test]
+fn reset_on_published_draft_returns_draft_not_active() {
+    let mut d = draft();
+    d.publish().unwrap();
+    let new_geo = vec![vec![pt(1.0, 1.0), pt(2.0, 2.0), pt(3.0, 3.0)]];
+    let r = d.reset(0, new_geo);
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn reset_on_discarded_draft_returns_draft_not_active() {
+    let mut d = draft();
+    d.discard().unwrap();
+    let new_geo = vec![vec![pt(1.0, 1.0), pt(2.0, 2.0), pt(3.0, 3.0)]];
+    let r = d.reset(0, new_geo);
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}

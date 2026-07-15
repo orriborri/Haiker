@@ -249,25 +249,6 @@ UndoRedoRequest:
       format: int64
       minimum: 0
 
-ResetRequest:
-  type: object
-  required:
-    - expectedRevision
-    - geometry
-  properties:
-    expectedRevision:
-      type: integer
-      format: int64
-      minimum: 0
-    geometry:
-      type: array
-      description: New base geometry (array of segments)
-      items:
-        type: array
-        items:
-          $ref: "#/RoutePoint"
-      minItems: 1
-
 OperationResultResponse:
   type: object
   required:

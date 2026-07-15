@@ -8,7 +8,7 @@ use haiker_app::activity_catalog::{ActivityId, LifecycleState};
 use haiker_app::identity::UserId;
 use haiker_app::route_editing::{
     ActivityGateway, DraftState, OperationId, RouteDraft, RouteDraftId, RouteDraftRepository,
-    RouteEditingError, RouteVersionGateway,
+    RouteEditingError, RoutePoint, RouteVersionGateway,
 };
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -155,8 +155,8 @@ impl ActivityGateway for InMemoryActivityGateway {
 /// By default (empty set), it permits all validations (always succeeds).
 /// When versions are explicitly registered, it validates against them.
 pub struct InMemoryRouteVersionGateway {
-    /// Set of valid (route_version_id, activity_id) pairs.
-    valid_versions: Mutex<Vec<(Uuid, ActivityId)>>,
+    /// Set of valid (route_version_id, activity_id) pairs with optional geometry.
+    valid_versions: Mutex<Vec<(Uuid, ActivityId, Option<Vec<Vec<RoutePoint>>>)>>,
     /// When true, an empty set means "permit all". When false, empty set means "deny all".
     permit_when_empty: bool,
 }
@@ -170,10 +170,30 @@ impl InMemoryRouteVersionGateway {
         }
     }
 
-    /// Create a gateway with explicit valid version entries.
+    /// Create a gateway with explicit valid version entries (no geometry stored).
     pub fn with_versions(versions: Vec<(Uuid, ActivityId)>) -> Self {
         Self {
-            valid_versions: Mutex::new(versions),
+            valid_versions: Mutex::new(
+                versions
+                    .into_iter()
+                    .map(|(vid, aid)| (vid, aid, None))
+                    .collect(),
+            ),
+            permit_when_empty: false,
+        }
+    }
+
+    /// Create a gateway with explicit valid version entries including geometry.
+    pub fn with_versions_and_geometry(
+        versions: Vec<(Uuid, ActivityId, Vec<Vec<RoutePoint>>)>,
+    ) -> Self {
+        Self {
+            valid_versions: Mutex::new(
+                versions
+                    .into_iter()
+                    .map(|(vid, aid, geo)| (vid, aid, Some(geo)))
+                    .collect(),
+            ),
             permit_when_empty: false,
         }
     }
@@ -192,12 +212,46 @@ impl RouteVersionGateway for InMemoryRouteVersionGateway {
         }
         if versions
             .iter()
-            .any(|(vid, aid)| *vid == route_version_id && *aid == activity_id)
+            .any(|(vid, aid, _)| *vid == route_version_id && *aid == activity_id)
         {
             Ok(())
         } else {
             Err(RouteEditingError::InvalidBaseRouteVersion)
         }
+    }
+
+    async fn get_route_version_geometry(
+        &self,
+        route_version_id: Uuid,
+        activity_id: ActivityId,
+    ) -> Result<Vec<Vec<RoutePoint>>, RouteEditingError> {
+        let versions = self.valid_versions.lock().unwrap();
+        if versions.is_empty() && self.permit_when_empty {
+            // In permissive mode without stored geometry, return a default geometry
+            return Ok(vec![vec![
+                RoutePoint::new(
+                    haiker_app::route_editing::Coordinate::new(47.0, 11.0).unwrap(),
+                    None,
+                ),
+                RoutePoint::new(
+                    haiker_app::route_editing::Coordinate::new(47.1, 11.1).unwrap(),
+                    None,
+                ),
+                RoutePoint::new(
+                    haiker_app::route_editing::Coordinate::new(47.2, 11.2).unwrap(),
+                    None,
+                ),
+            ]]);
+        }
+        for (vid, aid, geo) in versions.iter() {
+            if *vid == route_version_id && *aid == activity_id {
+                if let Some(geometry) = geo {
+                    return Ok(geometry.clone());
+                }
+                return Err(RouteEditingError::InvalidBaseRouteVersion);
+            }
+        }
+        Err(RouteEditingError::InvalidBaseRouteVersion)
     }
 }
 
@@ -541,16 +595,65 @@ async fn apply_with_duplicate_idempotency_key_replays_response() {
 
 #[tokio::test]
 async fn undo_redo_reset_work() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    // Base geometry that the reset will restore from the gateway
+    let base_geometry = vec![vec![
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.0, 11.0).unwrap(),
+            Some(haiker_app::route_editing::Elevation::new(500.0)),
+        ),
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.1, 11.1).unwrap(),
+            Some(haiker_app::route_editing::Elevation::new(600.0)),
+        ),
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.2, 11.2).unwrap(),
+            Some(haiker_app::route_editing::Elevation::new(700.0)),
+        ),
+    ]];
+
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
-        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
-        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions_and_geometry(
+            vec![(version_id, activity_id, base_geometry)],
+        )),
     };
     let app = test_app_with_state(state);
-    let user_id = Uuid::new_v4();
-    let activity_id = Uuid::new_v4();
 
-    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    // Create draft with baseRouteVersionId
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
     let draft_id = created["id"].as_str().unwrap();
 
     // Apply an operation (revision 0 -> 1)
@@ -625,10 +728,9 @@ async fn undo_redo_reset_work() {
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
     assert_eq!(json["revision"], 3);
 
-    // Reset (revision 3 -> 4)
+    // Reset (revision 3 -> 4) - now only needs expectedRevision
     let reset_body = serde_json::json!({
-        "expectedRevision": 3,
-        "geometry": sample_geometry()
+        "expectedRevision": 3
     });
     let resp = app
         .clone()
@@ -650,6 +752,8 @@ async fn undo_redo_reset_work() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
     assert_eq!(json["revision"], 4);
+    assert_eq!(json["canUndo"], false);
+    assert_eq!(json["canRedo"], false);
 }
 
 #[tokio::test]
@@ -2131,4 +2235,451 @@ async fn apply_move_point_another_owner_returns_403() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+// --- Reset endpoint tests (server-side base geometry fetch) ---
+
+#[tokio::test]
+async fn reset_fetches_base_geometry_from_gateway() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    // The exact base geometry the gateway will return
+    let base_geometry = vec![vec![
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.0, 11.0).unwrap(),
+            Some(haiker_app::route_editing::Elevation::new(500.0)),
+        ),
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.1, 11.1).unwrap(),
+            Some(haiker_app::route_editing::Elevation::new(600.0)),
+        ),
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.2, 11.2).unwrap(),
+            Some(haiker_app::route_editing::Elevation::new(700.0)),
+        ),
+    ]];
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions_and_geometry(
+            vec![(version_id, activity_id, base_geometry.clone())],
+        )),
+    };
+    let app = test_app_with_state(state);
+
+    // Create draft with baseRouteVersionId and some different initial geometry
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Apply an operation to modify geometry (revision 0 -> 1)
+    let apply_body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&apply_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Reset (revision 1 -> 2) - only expectedRevision in body
+    let reset_body = serde_json::json!({
+        "expectedRevision": 1
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/reset"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&reset_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["revision"], 2);
+    assert_eq!(json["canUndo"], false);
+    assert_eq!(json["canRedo"], false);
+
+    // Verify the draft geometry matches the base version byte-for-byte
+    let get_resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/route-drafts/{draft_id}"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(get_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let draft_json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+
+    // Verify geometry matches base exactly
+    let expected_geometry = serde_json::json!([[
+        {"latitude": 47.0, "longitude": 11.0, "elevation": 500.0},
+        {"latitude": 47.1, "longitude": 11.1, "elevation": 600.0},
+        {"latitude": 47.2, "longitude": 11.2, "elevation": 700.0}
+    ]]);
+    assert_eq!(draft_json["geometry"], expected_geometry);
+}
+
+#[tokio::test]
+async fn reset_without_base_version_returns_422() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    // Create draft WITHOUT baseRouteVersionId
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Try to reset - should fail because there is no base version
+    let reset_body = serde_json::json!({
+        "expectedRevision": 0
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/reset"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&reset_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "NO_BASE_ROUTE_VERSION");
+}
+
+#[tokio::test]
+async fn reset_with_stale_revision_returns_409() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    let base_geometry = vec![vec![
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.0, 11.0).unwrap(),
+            None,
+        ),
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.1, 11.1).unwrap(),
+            None,
+        ),
+    ]];
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions_and_geometry(
+            vec![(version_id, activity_id, base_geometry)],
+        )),
+    };
+    let app = test_app_with_state(state);
+
+    // Create draft with baseRouteVersionId
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Apply an operation (revision 0 -> 1)
+    let apply_body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&apply_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Reset with stale revision 0 (actual is 1)
+    let reset_body = serde_json::json!({
+        "expectedRevision": 0
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/reset"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&reset_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn reset_cross_owner_returns_403() {
+    let user1 = Uuid::new_v4();
+    let user2 = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    let base_geometry = vec![vec![
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.0, 11.0).unwrap(),
+            None,
+        ),
+        RoutePoint::new(
+            haiker_app::route_editing::Coordinate::new(47.1, 11.1).unwrap(),
+            None,
+        ),
+    ]];
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user1),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions_and_geometry(
+            vec![(version_id, activity_id, base_geometry)],
+        )),
+    };
+    let app = test_app_with_state(state);
+
+    // Create draft as user1 with baseRouteVersionId
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user1}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let draft_id = created["id"].as_str().unwrap();
+
+    // user2 tries to reset user1's draft
+    let reset_body = serde_json::json!({
+        "expectedRevision": 0
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/reset"))
+                .header("Authorization", format!("Bearer {user2}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&reset_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn reset_gateway_rejects_geometry_returns_422() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    // Register the version for validation (so draft creation succeeds)
+    // but WITHOUT geometry, so get_route_version_geometry returns Err.
+    // This simulates a deleted base version or storage failure.
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![(
+            version_id,
+            activity_id,
+        )])),
+    };
+    let app = test_app_with_state(state);
+
+    // Create draft with baseRouteVersionId (validation passes)
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Reset should fail because the gateway cannot produce geometry
+    let reset_body = serde_json::json!({
+        "expectedRevision": 0
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/reset"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&reset_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "INVALID_BASE_ROUTE_VERSION");
+    assert_eq!(json["type"], "/problems/invalid-base-route-version");
+    assert_eq!(json["status"], 422);
 }

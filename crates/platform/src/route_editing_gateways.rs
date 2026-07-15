@@ -13,7 +13,9 @@ use uuid::Uuid;
 
 use haiker_app::activity_catalog::ActivityId;
 use haiker_app::identity::UserId;
-use haiker_app::route_editing::{ActivityGateway, RouteEditingError, RouteVersionGateway};
+use haiker_app::route_editing::{
+    ActivityGateway, RouteEditingError, RoutePoint, RouteVersionGateway,
+};
 
 /// Placeholder activity gateway that delegates to the activity repository.
 ///
@@ -62,5 +64,17 @@ impl RouteVersionGateway for PgRouteVersionGateway {
     ) -> Result<(), RouteEditingError> {
         // Placeholder: always succeeds until integrated with actual persistence
         Ok(())
+    }
+
+    async fn get_route_version_geometry(
+        &self,
+        _route_version_id: Uuid,
+        _activity_id: ActivityId,
+    ) -> Result<Vec<Vec<RoutePoint>>, RouteEditingError> {
+        // Placeholder: always succeeds until integrated with actual persistence.
+        // Returns an empty geometry (single empty segment) as a stand-in.
+        // This keeps the placeholder consistent with validate_route_version_exists
+        // which also returns Ok(()) unconditionally.
+        Ok(vec![vec![]])
     }
 }

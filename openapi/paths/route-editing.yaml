@@ -358,10 +358,13 @@
 /v1/route-drafts/{draftId}/reset:
   post:
     operationId: resetDraft
-    summary: Reset draft to new base geometry
+    summary: Reset draft to its immutable base version geometry
     description: |
-      Resets the draft geometry to the provided base geometry, clearing all
-      operation history (undo/redo stacks). Requires Idempotency-Key header.
+      Resets the draft geometry to the immutable base version geometry (fetched
+      server-side), clearing all operation history (undo/redo stacks). The draft
+      must have a baseRouteVersionId set at creation time.
+
+      Requires Idempotency-Key header.
     tags:
       - Route Editing
     security:
@@ -385,7 +388,7 @@
       content:
         application/json:
           schema:
-            $ref: "../components/route-editing.yaml#/ResetRequest"
+            $ref: "../components/route-editing.yaml#/UndoRedoRequest"
     responses:
       "200":
         description: Draft reset successfully
@@ -418,7 +421,10 @@
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
       "422":
-        description: Invalid geometry
+        description: |
+          Reset not possible. Possible error codes:
+          - NO_BASE_ROUTE_VERSION: the draft has no base route version to reset to
+          - INVALID_BASE_ROUTE_VERSION: the base route version could not be fetched
         content:
           application/json:
             schema:
