@@ -89,6 +89,14 @@ impl ImportRepository for InMemoryRepo {
         Ok(None)
     }
 
+    async fn find_completed_by_checksum(
+        &self,
+        _owner_id: UserId,
+        _checksum: &Checksum,
+    ) -> Result<Option<(ImportId, Option<ActivityId>)>, ImportError> {
+        Ok(None)
+    }
+
     async fn update(&self, import: &Import) -> Result<(), ImportError> {
         self.imports
             .lock()
