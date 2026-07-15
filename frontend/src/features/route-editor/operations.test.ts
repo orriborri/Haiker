@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { AddPointOperation, DeletePointOperation } from "./types";
+import type { AddPointOperation, DeletePointOperation, SplitSegmentOperation, JoinSegmentsOperation } from "./types";
 import { ApiError, applyOperation } from "@/api/client";
 
 describe("AddPointOperation", () => {
@@ -241,5 +241,84 @@ describe("applyOperation integration", () => {
         "https://haiker.app/problems/insufficient-points",
       );
     }
+  });
+});
+
+describe("SplitSegmentOperation", () => {
+  it("constructs payload with correct fields", () => {
+    const operation: SplitSegmentOperation = {
+      type: "splitSegment",
+      segmentIndex: 1,
+      atPointIndex: 5,
+    };
+
+    expect(operation.type).toBe("splitSegment");
+    expect(operation.segmentIndex).toBe(1);
+    expect(operation.atPointIndex).toBe(5);
+  });
+
+  it("requires only type, segmentIndex, and atPointIndex fields", () => {
+    const operation: SplitSegmentOperation = {
+      type: "splitSegment",
+      segmentIndex: 0,
+      atPointIndex: 3,
+    };
+
+    const keys = Object.keys(operation).sort();
+    expect(keys).toEqual(["atPointIndex", "segmentIndex", "type"]);
+  });
+
+  it("supports splitting at different point indices", () => {
+    const op1: SplitSegmentOperation = {
+      type: "splitSegment",
+      segmentIndex: 0,
+      atPointIndex: 0,
+    };
+    const op2: SplitSegmentOperation = {
+      type: "splitSegment",
+      segmentIndex: 2,
+      atPointIndex: 10,
+    };
+
+    expect(op1.segmentIndex).toBe(0);
+    expect(op1.atPointIndex).toBe(0);
+    expect(op2.segmentIndex).toBe(2);
+    expect(op2.atPointIndex).toBe(10);
+  });
+});
+
+describe("JoinSegmentsOperation", () => {
+  it("constructs payload with correct fields", () => {
+    const operation: JoinSegmentsOperation = {
+      type: "joinSegments",
+      firstSegmentIndex: 0,
+      secondSegmentIndex: 1,
+    };
+
+    expect(operation.type).toBe("joinSegments");
+    expect(operation.firstSegmentIndex).toBe(0);
+    expect(operation.secondSegmentIndex).toBe(1);
+  });
+
+  it("requires only type, firstSegmentIndex, and secondSegmentIndex fields", () => {
+    const operation: JoinSegmentsOperation = {
+      type: "joinSegments",
+      firstSegmentIndex: 2,
+      secondSegmentIndex: 3,
+    };
+
+    const keys = Object.keys(operation).sort();
+    expect(keys).toEqual(["firstSegmentIndex", "secondSegmentIndex", "type"]);
+  });
+
+  it("supports joining non-adjacent segment indices", () => {
+    const operation: JoinSegmentsOperation = {
+      type: "joinSegments",
+      firstSegmentIndex: 1,
+      secondSegmentIndex: 2,
+    };
+
+    expect(operation.firstSegmentIndex).toBe(1);
+    expect(operation.secondSegmentIndex).toBe(2);
   });
 });
