@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 
+use crate::activity_catalog::ActivityId;
 use crate::identity::UserId;
 
 use super::checksum::Checksum;
@@ -29,12 +30,16 @@ pub trait ImportRepository: Send + Sync {
         key: &str,
     ) -> Result<Option<Import>, ImportError>;
 
-    /// Find an import by checksum for a given owner (for duplicate detection).
-    async fn find_by_checksum(
+    /// Find a completed import by checksum for a given owner, returning the
+    /// import ID and its associated activity ID (if any).
+    ///
+    /// This is used by the duplicate detection subsystem to provide a reference
+    /// to the existing activity without loading the full Import aggregate.
+    async fn find_completed_by_checksum(
         &self,
         owner_id: UserId,
         checksum: &Checksum,
-    ) -> Result<Option<Import>, ImportError>;
+    ) -> Result<Option<(ImportId, Option<ActivityId>)>, ImportError>;
 
     /// Update an existing import (persists all fields).
     async fn update(&self, import: &Import) -> Result<(), ImportError>;

@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::activity_catalog::ActivityId;
 use crate::identity::UserId;
 use crate::recorded_activity::SourceArtifactId;
 
@@ -86,6 +87,8 @@ pub struct Import {
     /// SHA-256 hash of the canonical request payload (filename, content_type, file_size_bytes)
     /// used for idempotency payload mismatch detection.
     pub payload_hash: Option<String>,
+    /// The activity ID assigned after successful parsing and commit.
+    pub activity_id: Option<ActivityId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -115,6 +118,7 @@ impl Import {
             failure_reason: None,
             idempotency_key,
             payload_hash,
+            activity_id: None,
             created_at: now,
             updated_at: now,
         })
@@ -268,6 +272,7 @@ mod tests {
         assert!(import.checksum.is_none());
         assert!(import.failure_reason.is_none());
         assert!(import.payload_hash.is_none());
+        assert!(import.activity_id.is_none());
     }
 
     #[test]

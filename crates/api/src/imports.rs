@@ -58,7 +58,7 @@ fn import_to_status_response(import: &Import) -> ImportStatusResponse {
             .failure_reason
             .as_deref()
             .map(sanitize_failure_reason),
-        activity_id: None, // Activity ID populated after parsing completes
+        activity_id: import.activity_id.map(|a| a.0),
         created_at: import.created_at,
         updated_at: import.updated_at,
     }
@@ -407,11 +407,12 @@ impl ImportRepository for InMemoryImportRepository {
             .cloned())
     }
 
-    async fn find_by_checksum(
+    async fn find_completed_by_checksum(
         &self,
         _owner_id: UserId,
         _checksum: &haiker_app::imports::checksum::Checksum,
-    ) -> Result<Option<Import>, ImportError> {
+    ) -> Result<Option<(ImportId, Option<haiker_app::activity_catalog::ActivityId>)>, ImportError>
+    {
         Ok(None)
     }
 
@@ -2147,6 +2148,74 @@ mod tests {
         assert!(
             !failure_reason.contains("postgresql"),
             "Must not contain infrastructure details"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_completed_import_with_activity_id_returns_it_in_response() {
+        let repo = Arc::new(InMemoryImportRepository::new());
+
+        // Create a completed import with an activity_id set
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import = Import::new(
+            owner_id,
+            haiker_app::imports::ImportFormat::Gpx,
+            "key-activity-id".to_string(),
+            None,
+        )
+        .unwrap();
+        import.start_upload().unwrap();
+        let artifact_id = haiker_app::recorded_activity::SourceArtifactId::new(Uuid::new_v4());
+        let checksum = haiker_app::imports::checksum::Checksum::new("b".repeat(64)).unwrap();
+        import.complete_upload(artifact_id, checksum).unwrap();
+        import.start_validation().unwrap();
+        import.queue_for_parsing().unwrap();
+        import.start_parsing().unwrap();
+        import.start_committing().unwrap();
+        import.complete().unwrap();
+
+        let activity_uuid = Uuid::new_v4();
+        import.activity_id = Some(haiker_app::activity_catalog::ActivityId::new(activity_uuid));
+
+        repo.imports
+            .lock()
+            .unwrap()
+            .insert(import.id, import.clone());
+
+        let state = ImportAppState {
+            repo,
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports/{import_id}", get(get_import_status))
+            .with_state(state);
+
+        let auth_val = format!("Bearer {}", owner_id.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{}", import.id.0))
+                    .header("Authorization", &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+
+        assert_eq!(json["id"], import.id.0.to_string());
+        assert_eq!(json["status"], "completed");
+        assert_eq!(
+            json["activityId"],
+            activity_uuid.to_string(),
+            "GET response must include the activity_id when set"
         );
     }
 }

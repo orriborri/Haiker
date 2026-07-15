@@ -8,10 +8,11 @@ use sqlx::PgPool;
 
 use haiker_app::identity::UserId;
 use haiker_app::imports::job_types::{ParseGpxJob, PARSE_GPX_JOB_TYPE};
-use haiker_app::imports::orchestrator::ImportOrchestrator;
+use haiker_app::imports::orchestrator::{ImportOrchestrator, ImportProcessingResult};
 use haiker_app::imports::repository::ImportRepository;
 use haiker_app::imports::ImportId;
 
+use crate::audit::AuditLog;
 use crate::import_commit::PgImportCommitter;
 use crate::import_persistence::PgImportRepository;
 use crate::job_queue::{Job, JobHandler};
@@ -51,11 +52,17 @@ impl haiker_app::imports::duplicate_detection::CheckDuplicate for DuplicateCheck
         use haiker_app::imports::duplicate_detection::DuplicateCheckResult;
         use haiker_app::imports::repository::ImportRepository;
 
-        match self.repo.find_by_checksum(owner_id, checksum).await? {
-            Some(existing) => Ok(DuplicateCheckResult::ExactDuplicate {
-                existing_import_id: existing.id,
-                existing_activity_id: None, // Activity ID lookup would require additional query
-            }),
+        match self
+            .repo
+            .find_completed_by_checksum(owner_id, checksum)
+            .await?
+        {
+            Some((existing_import_id, existing_activity_id)) => {
+                Ok(DuplicateCheckResult::ExactDuplicate {
+                    existing_import_id,
+                    existing_activity_id,
+                })
+            }
             None => Ok(DuplicateCheckResult::NotDuplicate),
         }
     }
@@ -68,14 +75,16 @@ impl haiker_app::imports::duplicate_detection::CheckDuplicate for DuplicateCheck
 pub struct ParseGpxJobHandler {
     pool: PgPool,
     object_storage: ObjectStorageClient,
+    audit_log: AuditLog,
 }
 
 impl ParseGpxJobHandler {
     /// Create a new ParseGpxJobHandler.
-    pub fn new(pool: PgPool, object_storage: ObjectStorageClient) -> Self {
+    pub fn new(pool: PgPool, object_storage: ObjectStorageClient, audit_log: AuditLog) -> Self {
         Self {
             pool,
             object_storage,
+            audit_log,
         }
     }
 }
@@ -151,6 +160,39 @@ impl JobHandler for ParseGpxJobHandler {
             .await
         {
             Ok(result) => {
+                // Write audit event for duplicate detections.
+                // This is an infrastructure concern handled here in the worker
+                // because the domain orchestrator must remain free of infra deps.
+                if let ImportProcessingResult::Duplicate {
+                    existing_import_id,
+                    existing_activity_id,
+                } = &result
+                {
+                    let metadata = serde_json::json!({
+                        "existing_import_id": existing_import_id.0.to_string(),
+                        "existing_activity_id": existing_activity_id.map(|a| a.0.to_string()),
+                        "owner_id": owner_id.0.to_string(),
+                    });
+
+                    if let Err(e) = self
+                        .audit_log
+                        .append(
+                            owner_id.0,
+                            "import.duplicate_detected",
+                            "import",
+                            &import_id.0.to_string(),
+                            Some(metadata),
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            import_id = %payload.import_id,
+                            error = %e,
+                            "Failed to write audit event for duplicate detection"
+                        );
+                    }
+                }
+
                 tracing::info!(
                     import_id = %payload.import_id,
                     ?result,
