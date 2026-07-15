@@ -172,14 +172,10 @@ impl CommitImport for PgImportCommitter {
                 message: format!("failed to serialize route version bounding_box: {e}"),
             })?;
 
-        let corrected_statistics_json = json!({
-            "distance_meters": data.statistics.distance_meters,
-            "duration_seconds": data.statistics.duration_seconds,
-            "elevation_gain_meters": data.statistics.elevation_gain_meters,
-            "elevation_loss_meters": data.statistics.elevation_loss_meters,
-            "point_count": data.statistics.point_count,
-            "segment_count": data.statistics.segment_count,
-        });
+        let statistics_json =
+            serde_json::to_value(data.statistics).map_err(|e| ImportError::StorageError {
+                message: format!("failed to serialize statistics: {e}"),
+            })?;
 
         sqlx::query(
             r#"
@@ -195,7 +191,7 @@ impl CommitImport for PgImportCommitter {
         .bind(data.activity_id.0)
         .bind(&route_geometry_json)
         .bind(&route_bbox_json)
-        .bind(&corrected_statistics_json)
+        .bind(&statistics_json)
         .bind(&data.parser_version)
         .bind(data.owner_id.0)
         .execute(&mut *tx)
@@ -205,15 +201,6 @@ impl CommitImport for PgImportCommitter {
         })?;
 
         // 6. Update activity with current_route_version_id and recorded_summary_json
-        let recorded_summary_json = json!({
-            "distance_meters": data.statistics.distance_meters,
-            "duration_seconds": data.statistics.duration_seconds,
-            "elevation_gain_meters": data.statistics.elevation_gain_meters,
-            "elevation_loss_meters": data.statistics.elevation_loss_meters,
-            "point_count": data.statistics.point_count,
-            "segment_count": data.statistics.segment_count,
-        });
-
         sqlx::query(
             r#"
             UPDATE activity_catalog.activities
@@ -223,7 +210,7 @@ impl CommitImport for PgImportCommitter {
         )
         .bind(data.activity_id.0)
         .bind(data.route_version_id.0)
-        .bind(&recorded_summary_json)
+        .bind(&statistics_json)
         .execute(&mut *tx)
         .await
         .map_err(|e| ImportError::StorageError {
