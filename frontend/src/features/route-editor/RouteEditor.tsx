@@ -539,14 +539,36 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   }, [state.selection, dispatchOperation, clearSelection]);
 
   const handleJoin = useCallback(() => {
-    // Join the first two segments (simplified - in a full implementation
-    // the user would select which segments to join)
+    const segments = state.optimisticGeometry;
+    // Guard: do nothing if geometry has fewer than 2 segments
+    if (!segments || segments.length < 2) return;
+
+    let firstSegmentIndex: number;
+    let secondSegmentIndex: number;
+
+    if (state.selection && state.selection.type === "point") {
+      // Use the selected point's segment and join with the next segment
+      firstSegmentIndex = state.selection.segmentIndex;
+      secondSegmentIndex = firstSegmentIndex + 1;
+    } else {
+      // Fallback: if no selection but exactly 2 segments exist, join them
+      if (segments.length === 2) {
+        firstSegmentIndex = 0;
+        secondSegmentIndex = 1;
+      } else {
+        return;
+      }
+    }
+
+    // Validate secondSegmentIndex is within bounds
+    if (secondSegmentIndex >= segments.length) return;
+
     void dispatchOperation({
       type: "joinSegments",
-      firstSegmentIndex: 0,
-      secondSegmentIndex: 1,
+      firstSegmentIndex,
+      secondSegmentIndex,
     });
-  }, [dispatchOperation]);
+  }, [state.optimisticGeometry, state.selection, dispatchOperation]);
 
   const handleReloadDraft = useCallback(async () => {
     clearConflict();
