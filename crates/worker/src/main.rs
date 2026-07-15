@@ -1,6 +1,8 @@
 use haiker_platform::audit::AuditLog;
 use haiker_platform::config::AppConfig;
 use haiker_platform::database;
+use haiker_platform::import_cleanup::cleanup_abandoned_imports;
+use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::import_worker::ParseGpxJobHandler;
 use haiker_platform::job_queue::JobQueue;
 use haiker_platform::object_storage::ObjectStorageClient;
@@ -76,9 +78,10 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Spawn periodic maintenance: stale job timeout and session cleanup
+    // Spawn periodic maintenance: stale job timeout, session cleanup, abandoned imports
     let maintenance_token = cancellation_token.clone();
     let maintenance_queue = job_queue.clone();
+    let import_repository = PgImportRepository::new(pool.clone());
     let maintenance_handle = tokio::spawn(async move {
         let mut interval =
             tokio::time::interval(tokio::time::Duration::from_secs(MAINTENANCE_INTERVAL_SECS));
@@ -110,6 +113,18 @@ async fn main() -> anyhow::Result<()> {
                         }
                         Err(e) => {
                             tracing::warn!(error = %e, "Failed to cleanup expired sessions");
+                        }
+                    }
+
+                    // Cleanup abandoned imports stuck in processing states
+                    match cleanup_abandoned_imports(&import_repository).await {
+                        Ok(count) => {
+                            if count > 0 {
+                                tracing::info!(count, "Cleaned up abandoned imports");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Failed to cleanup abandoned imports");
                         }
                     }
                 }

@@ -11,6 +11,7 @@ use uuid::Uuid;
 use haiker_app::activity_catalog::ActivityId;
 use haiker_app::identity::UserId;
 use haiker_app::imports::checksum::Checksum;
+use haiker_app::imports::failure_code::FailureCode;
 use haiker_app::imports::repository::ImportRepository;
 use haiker_app::imports::state_machine::ImportStatus;
 use haiker_app::imports::{Import, ImportError, ImportFormat, ImportId};
@@ -36,6 +37,7 @@ type ImportRow = (
     Option<Uuid>,
     String,
     String,
+    Option<String>,
     Option<String>,
     Option<String>,
     String,
@@ -72,6 +74,7 @@ fn row_to_import(row: ImportRow) -> Import {
         status,
         checksum,
         failure_reason,
+        failure_code,
         idempotency_key,
         payload_hash,
         activity_id,
@@ -90,6 +93,7 @@ fn row_to_import(row: ImportRow) -> Import {
         status: parse_status(&status),
         checksum: checksum.and_then(|c| Checksum::new(c).ok()),
         failure_reason,
+        failure_code: failure_code.and_then(|c| FailureCode::parse(&c)),
         idempotency_key,
         payload_hash,
         activity_id: activity_id.map(ActivityId::new),
@@ -105,10 +109,10 @@ impl ImportRepository for PgImportRepository {
             r#"
             INSERT INTO imports.imports (
                 id, owner_id, source_artifact_id, format, status,
-                checksum, failure_reason, idempotency_key, payload_hash,
+                checksum, failure_reason, failure_code, idempotency_key, payload_hash,
                 activity_id, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
         )
         .bind(import.id.0)
@@ -118,6 +122,7 @@ impl ImportRepository for PgImportRepository {
         .bind(import.status.to_string())
         .bind(import.checksum.as_ref().map(|c| c.as_str().to_string()))
         .bind(&import.failure_reason)
+        .bind(import.failure_code.map(|c| c.to_string()))
         .bind(&import.idempotency_key)
         .bind(&import.payload_hash)
         .bind(import.activity_id.map(|a| a.0))
@@ -136,7 +141,7 @@ impl ImportRepository for PgImportRepository {
         let row = sqlx::query_as::<_, ImportRow>(
             r#"
             SELECT id, owner_id, source_artifact_id, format, status,
-                   checksum, failure_reason, idempotency_key, payload_hash,
+                   checksum, failure_reason, failure_code, idempotency_key, payload_hash,
                    activity_id, created_at, updated_at
             FROM imports.imports
             WHERE id = $1
@@ -160,7 +165,7 @@ impl ImportRepository for PgImportRepository {
         let row = sqlx::query_as::<_, ImportRow>(
             r#"
             SELECT id, owner_id, source_artifact_id, format, status,
-                   checksum, failure_reason, idempotency_key, payload_hash,
+                   checksum, failure_reason, failure_code, idempotency_key, payload_hash,
                    activity_id, created_at, updated_at
             FROM imports.imports
             WHERE owner_id = $1 AND idempotency_key = $2
@@ -208,8 +213,9 @@ impl ImportRepository for PgImportRepository {
                 status = $3,
                 checksum = $4,
                 failure_reason = $5,
-                activity_id = $6,
-                updated_at = $7
+                failure_code = $6,
+                activity_id = $7,
+                updated_at = $8
             WHERE id = $1
             "#,
         )
@@ -218,6 +224,7 @@ impl ImportRepository for PgImportRepository {
         .bind(import.status.to_string())
         .bind(import.checksum.as_ref().map(|c| c.as_str().to_string()))
         .bind(&import.failure_reason)
+        .bind(import.failure_code.map(|c| c.to_string()))
         .bind(import.activity_id.map(|a| a.0))
         .bind(import.updated_at)
         .execute(&self.pool)
@@ -227,5 +234,28 @@ impl ImportRepository for PgImportRepository {
         })?;
 
         Ok(())
+    }
+
+    async fn find_abandoned(&self, timeout: chrono::Duration) -> Result<Vec<Import>, ImportError> {
+        let threshold = Utc::now() - timeout;
+
+        let rows = sqlx::query_as::<_, ImportRow>(
+            r#"
+            SELECT id, owner_id, source_artifact_id, format, status,
+                   checksum, failure_reason, failure_code, idempotency_key, payload_hash,
+                   activity_id, created_at, updated_at
+            FROM imports.imports
+            WHERE status IN ('validating', 'queued', 'parsing', 'committing')
+              AND updated_at < $1
+            "#,
+        )
+        .bind(threshold)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ImportError::StorageError {
+            message: e.to_string(),
+        })?;
+
+        Ok(rows.into_iter().map(row_to_import).collect())
     }
 }

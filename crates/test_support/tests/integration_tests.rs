@@ -96,6 +96,10 @@ impl ImportRepository for InMemoryRepo {
             .insert(import.id, import.clone());
         Ok(())
     }
+
+    async fn find_abandoned(&self, _timeout: chrono::Duration) -> Result<Vec<Import>, ImportError> {
+        Ok(vec![])
+    }
 }
 
 struct InMemoryDuplicateChecker {
@@ -226,7 +230,7 @@ async fn full_orchestrator_flow_with_valid_fixture() {
 
     // Verify activity was created
     match result {
-        ImportProcessingResult::Completed { activity_id } => {
+        ImportProcessingResult::Completed { activity_id, .. } => {
             assert_ne!(activity_id.0, Uuid::nil());
         }
         other => panic!("Expected Completed, got {:?}", other),
@@ -352,7 +356,7 @@ async fn duplicate_detection_on_second_import() {
         .unwrap();
 
     let first_activity_id = match result1 {
-        ImportProcessingResult::Completed { activity_id } => activity_id,
+        ImportProcessingResult::Completed { activity_id, .. } => activity_id,
         other => panic!("Expected Completed, got {:?}", other),
     };
 

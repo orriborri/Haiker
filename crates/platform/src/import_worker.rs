@@ -16,6 +16,7 @@ use crate::audit::AuditLog;
 use crate::import_commit::PgImportCommitter;
 use crate::import_persistence::PgImportRepository;
 use crate::job_queue::{Job, JobHandler};
+use crate::metrics;
 use crate::object_storage::ObjectStorageClient;
 
 /// Adapter implementing the domain ObjectStore trait for the platform ObjectStorageClient.
@@ -130,6 +131,9 @@ impl JobHandler for ParseGpxJobHandler {
 
         // Transition from Uploaded -> Validating -> Queued before the orchestrator
         // picks up the import. The orchestrator expects the import to be in Queued state.
+        // Handle re-delivery gracefully: if the import is already in Validating, Queued,
+        // or Parsing state from a previous partial run, skip the transitions that are
+        // already completed rather than erroring.
         {
             let mut import = repo
                 .find_by_id(import_id)
@@ -137,16 +141,38 @@ impl JobHandler for ParseGpxJobHandler {
                 .map_err(|e| format!("failed to load import: {e}"))?
                 .ok_or_else(|| format!("import {} not found", import_id))?;
 
-            if import.status == haiker_app::imports::state_machine::ImportStatus::Uploaded {
-                import
-                    .start_validation()
-                    .map_err(|e| format!("failed to transition to validating: {e}"))?;
-                import
-                    .queue_for_parsing()
-                    .map_err(|e| format!("failed to transition to queued: {e}"))?;
-                repo.update(&import)
-                    .await
-                    .map_err(|e| format!("failed to persist queued status: {e}"))?;
+            match import.status {
+                haiker_app::imports::state_machine::ImportStatus::Uploaded => {
+                    import
+                        .start_validation()
+                        .map_err(|e| format!("failed to transition to validating: {e}"))?;
+                    import
+                        .queue_for_parsing()
+                        .map_err(|e| format!("failed to transition to queued: {e}"))?;
+                    repo.update(&import)
+                        .await
+                        .map_err(|e| format!("failed to persist queued status: {e}"))?;
+                }
+                haiker_app::imports::state_machine::ImportStatus::Validating => {
+                    import
+                        .queue_for_parsing()
+                        .map_err(|e| format!("failed to transition to queued: {e}"))?;
+                    repo.update(&import)
+                        .await
+                        .map_err(|e| format!("failed to persist queued status: {e}"))?;
+                }
+                haiker_app::imports::state_machine::ImportStatus::Queued
+                | haiker_app::imports::state_machine::ImportStatus::Parsing => {
+                    // Already past the pre-orchestrator transitions; nothing to do.
+                    // The orchestrator will handle these states appropriately.
+                }
+                other => {
+                    return Err(format!(
+                        "import {} is in unexpected state '{}' for processing",
+                        import_id, other
+                    )
+                    .into());
+                }
             }
         }
 
@@ -160,6 +186,19 @@ impl JobHandler for ParseGpxJobHandler {
             .await
         {
             Ok(result) => {
+                // Emit success attempt metric
+                metrics::record_import_attempt(PARSE_GPX_JOB_TYPE, job.retry_count + 1, true);
+
+                // Emit file metrics for completed imports
+                if let ImportProcessingResult::Completed {
+                    file_size_bytes,
+                    point_count,
+                    ..
+                } = &result
+                {
+                    metrics::record_import_file_metrics(*file_size_bytes, *point_count);
+                }
+
                 // Write audit event for duplicate detections.
                 // This is an infrastructure concern handled here in the worker
                 // because the domain orchestrator must remain free of infra deps.
@@ -201,6 +240,17 @@ impl JobHandler for ParseGpxJobHandler {
                 Ok(())
             }
             Err(e) => {
+                // Emit failure attempt metric
+                metrics::record_import_attempt(PARSE_GPX_JOB_TYPE, job.retry_count + 1, false);
+
+                // Emit failure code metric if available
+                // Try to reload the import to get the failure code set by the orchestrator
+                if let Ok(Some(failed_import)) = repo.find_by_id(import_id).await {
+                    if let Some(failure_code) = &failed_import.failure_code {
+                        metrics::record_import_failure(failure_code.as_str());
+                    }
+                }
+
                 tracing::warn!(
                     import_id = %payload.import_id,
                     error = %e,

@@ -29,9 +29,18 @@ use crate::imports_dto::{
 ///
 /// This abstracts the job queue infrastructure so the API handlers
 /// do not depend directly on the platform crate's JobQueue.
+///
+/// The `correlation_id` parameter serves as an idempotency key for job
+/// deduplication. When the same correlation_id is provided for the same
+/// job_type, the implementation should return the existing job's ID rather
+/// than creating a duplicate.
 #[async_trait]
 pub trait JobEnqueuer: Send + Sync {
     /// Enqueue a job with the given type and JSON payload.
+    ///
+    /// The `correlation_id` is used as a deduplication key: if an active job
+    /// with the same (job_type, correlation_id) already exists, its ID is
+    /// returned without creating a new job.
     async fn enqueue(
         &self,
         job_type: &str,
@@ -58,6 +67,7 @@ fn import_to_status_response(import: &Import) -> ImportStatusResponse {
             .failure_reason
             .as_deref()
             .map(sanitize_failure_reason),
+        failure_code: import.failure_code.map(|c| c.to_string()),
         activity_id: import.activity_id.map(|a| a.0),
         created_at: import.created_at,
         updated_at: import.updated_at,
@@ -293,7 +303,9 @@ pub async fn post_complete_upload(
     // Enqueue parse_gpx job for async processing
     if let Some(ref job_queue) = state.job_queue {
         let storage_key = format!("imports/{}/{}", import.owner_id, import.id);
-        let correlation_id = Uuid::new_v4();
+        // Use the import_id as correlation_id for idempotent job deduplication.
+        // Retrying this endpoint with the same import will not create duplicate jobs.
+        let correlation_id = import.id.0;
 
         let job_payload = ParseGpxJob {
             import_id: import.id.0,
@@ -422,6 +434,10 @@ impl ImportRepository for InMemoryImportRepository {
             .unwrap()
             .insert(import.id, import.clone());
         Ok(())
+    }
+
+    async fn find_abandoned(&self, _timeout: chrono::Duration) -> Result<Vec<Import>, ImportError> {
+        Ok(vec![])
     }
 }
 
@@ -2216,6 +2232,124 @@ mod tests {
             json["activityId"],
             activity_uuid.to_string(),
             "GET response must include the activity_id when set"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_failed_import_with_failure_code_returns_it_in_response() {
+        let repo = Arc::new(InMemoryImportRepository::new());
+
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import = Import::new(
+            owner_id,
+            haiker_app::imports::ImportFormat::Gpx,
+            "key-failure-code".to_string(),
+            None,
+        )
+        .unwrap();
+        import
+            .fail_with_code(
+                "checksum mismatch: expected abc, got def".to_string(),
+                haiker_app::imports::FailureCode::ChecksumMismatch,
+            )
+            .unwrap();
+
+        repo.imports
+            .lock()
+            .unwrap()
+            .insert(import.id, import.clone());
+
+        let state = ImportAppState {
+            repo,
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports/{import_id}", get(get_import_status))
+            .with_state(state);
+
+        let auth_val = format!("Bearer {}", owner_id.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{}", import.id.0))
+                    .header("Authorization", &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+
+        assert_eq!(json["id"], import.id.0.to_string());
+        assert_eq!(json["status"], "failed");
+        assert_eq!(
+            json["failureCode"], "CHECKSUM_MISMATCH",
+            "API response must include the failure_code as UPPER_SNAKE_CASE"
+        );
+        assert_eq!(
+            json["failureReason"], "checksum mismatch: expected abc, got def",
+            "Safe failure reasons should be passed through"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_failed_import_without_failure_code_omits_field() {
+        let repo = Arc::new(InMemoryImportRepository::new());
+
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import = Import::new(
+            owner_id,
+            haiker_app::imports::ImportFormat::Gpx,
+            "key-no-failure-code".to_string(),
+            None,
+        )
+        .unwrap();
+        import.fail("parsing failed: bad xml".to_string()).unwrap();
+
+        repo.imports
+            .lock()
+            .unwrap()
+            .insert(import.id, import.clone());
+
+        let state = ImportAppState {
+            repo,
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports/{import_id}", get(get_import_status))
+            .with_state(state);
+
+        let auth_val = format!("Bearer {}", owner_id.0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{}", import.id.0))
+                    .header("Authorization", &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+
+        assert_eq!(json["status"], "failed");
+        assert!(
+            json.get("failureCode").is_none() || json["failureCode"].is_null(),
+            "failureCode should be absent when not set"
         );
     }
 }

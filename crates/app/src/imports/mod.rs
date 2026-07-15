@@ -4,9 +4,11 @@
 //! and duplicate detection.
 
 pub mod checksum;
+pub mod cleanup;
 pub mod commands;
 pub mod commit;
 pub mod duplicate_detection;
+pub mod failure_code;
 pub mod gpx_parser;
 pub mod job_types;
 pub mod orchestrator;
@@ -27,8 +29,10 @@ use self::state_machine::ImportStatus;
 
 // Re-export key types for consumers.
 pub use self::checksum::Checksum as ImportChecksum;
+pub use self::cleanup::{fail_abandoned_imports, CleanupResult};
 pub use self::commit::{CommitImport, ImportCommitData};
 pub use self::duplicate_detection::{CheckDuplicate, DuplicateCheckResult};
+pub use self::failure_code::FailureCode;
 pub use self::gpx_parser::{
     parse_gpx, GpxMetadata, GpxParseError, GpxParseErrorCode, GpxParseResult, GpxTrack,
     GpxTrackPoint, GpxTrackSegment, GpxVersion,
@@ -83,6 +87,7 @@ pub struct Import {
     pub status: ImportStatus,
     pub checksum: Option<Checksum>,
     pub failure_reason: Option<String>,
+    pub failure_code: Option<FailureCode>,
     pub idempotency_key: String,
     /// SHA-256 hash of the canonical request payload (filename, content_type, file_size_bytes)
     /// used for idempotency payload mismatch detection.
@@ -116,6 +121,7 @@ impl Import {
             status: ImportStatus::Requested,
             checksum: None,
             failure_reason: None,
+            failure_code: None,
             idempotency_key,
             payload_hash,
             activity_id: None,
@@ -183,6 +189,15 @@ impl Import {
     pub fn fail(&mut self, reason: String) -> Result<(), ImportError> {
         self.status = self.status.transition_to(ImportStatus::Failed)?;
         self.failure_reason = Some(reason);
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
+    /// Transition to Failed state with a reason and a machine-readable failure code.
+    pub fn fail_with_code(&mut self, reason: String, code: FailureCode) -> Result<(), ImportError> {
+        self.status = self.status.transition_to(ImportStatus::Failed)?;
+        self.failure_reason = Some(reason);
+        self.failure_code = Some(code);
         self.updated_at = Utc::now();
         Ok(())
     }
@@ -433,5 +448,58 @@ mod tests {
             actual: "def".to_string(),
         };
         assert_eq!(err.to_string(), "checksum mismatch: expected abc, got def");
+    }
+
+    #[test]
+    fn fail_with_code_sets_both_reason_and_code() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import =
+            Import::new(owner_id, ImportFormat::Gpx, "key-fc".to_string(), None).unwrap();
+
+        import
+            .fail_with_code(
+                "checksum mismatch: expected abc, got def".to_string(),
+                FailureCode::ChecksumMismatch,
+            )
+            .unwrap();
+
+        assert_eq!(import.status, ImportStatus::Failed);
+        assert_eq!(
+            import.failure_reason.as_deref(),
+            Some("checksum mismatch: expected abc, got def")
+        );
+        assert_eq!(import.failure_code, Some(FailureCode::ChecksumMismatch));
+    }
+
+    #[test]
+    fn fail_without_code_leaves_failure_code_none() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import =
+            Import::new(owner_id, ImportFormat::Gpx, "key-no-fc".to_string(), None).unwrap();
+
+        import.fail("generic reason".to_string()).unwrap();
+
+        assert_eq!(import.status, ImportStatus::Failed);
+        assert_eq!(import.failure_reason.as_deref(), Some("generic reason"));
+        assert_eq!(import.failure_code, None);
+    }
+
+    #[test]
+    fn fail_with_code_from_terminal_state_returns_error() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import =
+            Import::new(owner_id, ImportFormat::Gpx, "key-term".to_string(), None).unwrap();
+        import.status = ImportStatus::Completed;
+
+        let result =
+            import.fail_with_code("should not work".to_string(), FailureCode::InternalError);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn new_import_has_no_failure_code() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let import = Import::new(owner_id, ImportFormat::Gpx, "key-new".to_string(), None).unwrap();
+        assert_eq!(import.failure_code, None);
     }
 }
