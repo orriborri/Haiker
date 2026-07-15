@@ -155,7 +155,16 @@ impl<'a> ImportOrchestrator<'a> {
             existing_activity_id,
         } = dup_result
         {
-            // 6. Duplicate found - complete with reference
+            // 6. Duplicate found - complete with reference to the existing activity.
+            //
+            // Concurrency note: a race exists where two workers process the same file
+            // simultaneously, both call find_completed_by_checksum before either commits,
+            // and both get None (no duplicate). In that scenario, one will succeed and the
+            // other will hit the partial unique index (idx_imports_owner_checksum_completed)
+            // on the UPDATE to 'completed' status, surfacing as a StorageError that fails
+            // the second import. This is fail-closed by design: no duplicate activity is
+            // created. A full integration test for this path requires a live database.
+            import.activity_id = existing_activity_id;
             import.start_committing()?;
             import.complete()?;
             self.repo.update(&import).await?;
@@ -290,14 +299,6 @@ mod tests {
             &self,
             _owner_id: UserId,
             _key: &str,
-        ) -> Result<Option<Import>, ImportError> {
-            Ok(None)
-        }
-
-        async fn find_by_checksum(
-            &self,
-            _owner_id: UserId,
-            _checksum: &Checksum,
         ) -> Result<Option<Import>, ImportError> {
             Ok(None)
         }
@@ -558,6 +559,12 @@ mod tests {
             .unwrap()
             .clone();
         assert_eq!(final_import.status, ImportStatus::Completed);
+        // Verify that the existing activity_id is persisted on the duplicate import
+        assert_eq!(
+            final_import.activity_id,
+            Some(existing_activity_id),
+            "Duplicate import must have activity_id set before persisting"
+        );
     }
 
     #[tokio::test]

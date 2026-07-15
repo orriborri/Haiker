@@ -333,20 +333,6 @@ mod tests {
                 .cloned())
         }
 
-        async fn find_by_checksum(
-            &self,
-            owner_id: UserId,
-            checksum: &Checksum,
-        ) -> Result<Option<Import>, ImportError> {
-            Ok(self
-                .imports
-                .lock()
-                .unwrap()
-                .values()
-                .find(|i| i.owner_id == owner_id && i.checksum.as_ref() == Some(checksum))
-                .cloned())
-        }
-
         async fn find_completed_by_checksum(
             &self,
             _owner_id: UserId,

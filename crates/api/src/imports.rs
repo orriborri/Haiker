@@ -407,14 +407,6 @@ impl ImportRepository for InMemoryImportRepository {
             .cloned())
     }
 
-    async fn find_by_checksum(
-        &self,
-        _owner_id: UserId,
-        _checksum: &haiker_app::imports::checksum::Checksum,
-    ) -> Result<Option<Import>, ImportError> {
-        Ok(None)
-    }
-
     async fn find_completed_by_checksum(
         &self,
         _owner_id: UserId,

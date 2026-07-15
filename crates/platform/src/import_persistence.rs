@@ -177,31 +177,6 @@ impl ImportRepository for PgImportRepository {
         Ok(row.map(row_to_import))
     }
 
-    async fn find_by_checksum(
-        &self,
-        owner_id: UserId,
-        checksum: &Checksum,
-    ) -> Result<Option<Import>, ImportError> {
-        let row = sqlx::query_as::<_, ImportRow>(
-            r#"
-            SELECT id, owner_id, source_artifact_id, format, status,
-                   checksum, failure_reason, idempotency_key, payload_hash,
-                   activity_id, created_at, updated_at
-            FROM imports.imports
-            WHERE owner_id = $1 AND checksum = $2 AND status = 'completed'
-            "#,
-        )
-        .bind(owner_id.0)
-        .bind(checksum.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| ImportError::StorageError {
-            message: e.to_string(),
-        })?;
-
-        Ok(row.map(row_to_import))
-    }
-
     async fn find_completed_by_checksum(
         &self,
         owner_id: UserId,

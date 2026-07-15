@@ -81,14 +81,6 @@ impl ImportRepository for InMemoryRepo {
         Ok(None)
     }
 
-    async fn find_by_checksum(
-        &self,
-        _owner_id: UserId,
-        _checksum: &Checksum,
-    ) -> Result<Option<Import>, ImportError> {
-        Ok(None)
-    }
-
     async fn find_completed_by_checksum(
         &self,
         _owner_id: UserId,
