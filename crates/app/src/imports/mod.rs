@@ -502,4 +502,84 @@ mod tests {
         let import = Import::new(owner_id, ImportFormat::Gpx, "key-new".to_string(), None).unwrap();
         assert_eq!(import.failure_code, None);
     }
+
+    #[test]
+    fn import_uploaded_to_queued_transitions_succeed() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import =
+            Import::new(owner_id, ImportFormat::Gpx, "key-uq".to_string(), None).unwrap();
+
+        // Move to Uploaded state (simulating the worker receiving a job)
+        import.start_upload().unwrap();
+        let artifact_id = crate::recorded_activity::SourceArtifactId::new(Uuid::new_v4());
+        let checksum = crate::imports::checksum::Checksum::new("c".repeat(64)).unwrap();
+        import.complete_upload(artifact_id, checksum).unwrap();
+        assert_eq!(import.status, ImportStatus::Uploaded);
+
+        // The worker performs Uploaded -> Validating -> Queued before orchestrator
+        import.start_validation().unwrap();
+        assert_eq!(import.status, ImportStatus::Validating);
+
+        import.queue_for_parsing().unwrap();
+        assert_eq!(import.status, ImportStatus::Queued);
+    }
+
+    #[test]
+    fn import_parsing_cannot_transition_to_validating() {
+        // Verifies re-delivery safety: if an import is already being parsed,
+        // a re-delivered job cannot push it back to Validating.
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import =
+            Import::new(owner_id, ImportFormat::Gpx, "key-pv".to_string(), None).unwrap();
+
+        // Advance to Parsing state
+        import.start_upload().unwrap();
+        let artifact_id = crate::recorded_activity::SourceArtifactId::new(Uuid::new_v4());
+        let checksum = crate::imports::checksum::Checksum::new("d".repeat(64)).unwrap();
+        import.complete_upload(artifact_id, checksum).unwrap();
+        import.start_validation().unwrap();
+        import.queue_for_parsing().unwrap();
+        import.start_parsing().unwrap();
+        assert_eq!(import.status, ImportStatus::Parsing);
+
+        // Attempting to transition back to Validating must fail
+        let result = import.start_validation();
+        assert!(
+            result.is_err(),
+            "Import in Parsing state must not be able to transition to Validating"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            ImportError::InvalidTransition { .. }
+        ));
+    }
+
+    #[test]
+    fn import_queued_cannot_reenter_queued() {
+        // Verifies idempotency boundary: queue_for_parsing() must not be callable
+        // when already in Queued state.
+        let owner_id = UserId::new(Uuid::new_v4());
+        let mut import =
+            Import::new(owner_id, ImportFormat::Gpx, "key-qq".to_string(), None).unwrap();
+
+        // Advance to Queued state
+        import.start_upload().unwrap();
+        let artifact_id = crate::recorded_activity::SourceArtifactId::new(Uuid::new_v4());
+        let checksum = crate::imports::checksum::Checksum::new("e".repeat(64)).unwrap();
+        import.complete_upload(artifact_id, checksum).unwrap();
+        import.start_validation().unwrap();
+        import.queue_for_parsing().unwrap();
+        assert_eq!(import.status, ImportStatus::Queued);
+
+        // Attempting to queue again must fail (no self-transition allowed)
+        let result = import.queue_for_parsing();
+        assert!(
+            result.is_err(),
+            "Import already in Queued state must not be able to re-enter Queued"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            ImportError::InvalidTransition { .. }
+        ));
+    }
 }

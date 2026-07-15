@@ -2300,6 +2300,169 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn contract_get_import_status_transitions_visible_during_progress() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route(
+                "/v1/imports/{import_id}/completion",
+                post(post_complete_upload),
+            )
+            .route("/v1/imports/{import_id}", get(get_import_status))
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        // Start import
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 2048
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-progress-key")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        // After start: polling client sees "uploading"
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{import_id}"))
+                    .header("Authorization", &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(
+            json["status"], "uploading",
+            "After start, polling client must see 'uploading' status"
+        );
+
+        // Complete upload
+        let complete_body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{import_id}/completion"))
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&complete_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // After completion: polling client sees "uploaded"
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/imports/{import_id}"))
+                    .header("Authorization", &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(
+            json["status"], "uploaded",
+            "After upload completion, polling client must see 'uploaded' status"
+        );
+    }
+
+    #[tokio::test]
+    async fn contract_post_imports_empty_body_returns_422() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+
+        // Send a JSON body missing all required fields.
+        // Axum's built-in Json extractor rejects this before the handler runs.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header(&auth_key, &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-empty-body")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Empty/malformed JSON body missing required fields must return 422"
+        );
+    }
+
+    #[tokio::test]
+    async fn contract_get_import_invalid_uuid_returns_400_or_404() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/v1/imports/not-a-uuid")
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Invalid UUID in path should return 400 or 404 (implementation-defined)
+        let status = response.status().as_u16();
+        assert!(
+            status == 400 || status == 404,
+            "Invalid UUID in path must return 400 or 404, got: {status}"
+        );
+    }
+
+    #[tokio::test]
     async fn get_failed_import_without_failure_code_omits_field() {
         let repo = Arc::new(InMemoryImportRepository::new());
 
