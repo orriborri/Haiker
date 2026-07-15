@@ -785,10 +785,10 @@ mod tests {
         let result = normalize_gpx(&parse_result).unwrap();
         let elapsed = start.elapsed();
 
-        // Verify: completes within 10 seconds
+        // Verify: completes within 5 seconds (actual ~2s, with CI variability headroom)
         assert!(
-            elapsed.as_secs() < 10,
-            "Normalization took {:?}, exceeds 10 second budget",
+            elapsed.as_secs() < 5,
+            "Normalization took {:?}, exceeds 5 second budget",
             elapsed
         );
 
