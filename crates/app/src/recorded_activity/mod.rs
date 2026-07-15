@@ -110,6 +110,14 @@ impl Coordinate {
             longitude,
         })
     }
+
+    /// Return the coordinate as a GeoJSON position array: [longitude, latitude].
+    ///
+    /// Per RFC 7946, GeoJSON positions are expressed as [longitude, latitude],
+    /// which is the opposite of the typical geographic (lat, lon) convention.
+    pub fn as_geojson_position(&self) -> [f64; 2] {
+        [self.longitude, self.latitude]
+    }
 }
 
 /// An elevation measurement in meters.
@@ -189,6 +197,19 @@ impl BoundingBox {
             south_west,
             north_east,
         }
+    }
+
+    /// Return the bounding box as a GeoJSON bbox array: [west, south, east, north].
+    ///
+    /// Per RFC 7946, a 2D bounding box is [min_longitude, min_latitude, max_longitude, max_latitude],
+    /// i.e. [west, south, east, north].
+    pub fn as_geojson_bbox(&self) -> [f64; 4] {
+        [
+            self.south_west.longitude,
+            self.south_west.latitude,
+            self.north_east.longitude,
+            self.north_east.latitude,
+        ]
     }
 
     /// Compute a bounding box from a slice of coordinates.
@@ -548,5 +569,55 @@ mod tests {
             err.to_string(),
             "recorded track must have at least one segment"
         );
+    }
+
+    #[test]
+    fn as_geojson_position_returns_longitude_first() {
+        let coord = Coordinate::new(47.5, 11.3).unwrap();
+        let position = coord.as_geojson_position();
+        // GeoJSON RFC 7946: [longitude, latitude]
+        assert_eq!(position[0], 11.3); // longitude first
+        assert_eq!(position[1], 47.5); // latitude second
+    }
+
+    #[test]
+    fn as_geojson_position_negative_coordinates() {
+        let coord = Coordinate::new(-33.8688, 151.2093).unwrap();
+        let position = coord.as_geojson_position();
+        assert_eq!(position[0], 151.2093); // longitude first
+        assert_eq!(position[1], -33.8688); // latitude second
+    }
+
+    #[test]
+    fn as_geojson_position_zero_coordinates() {
+        let coord = Coordinate::new(0.0, 0.0).unwrap();
+        let position = coord.as_geojson_position();
+        assert_eq!(position[0], 0.0);
+        assert_eq!(position[1], 0.0);
+    }
+
+    #[test]
+    fn as_geojson_bbox_returns_west_south_east_north() {
+        let sw = Coordinate::new(47.0, 11.0).unwrap();
+        let ne = Coordinate::new(48.0, 12.0).unwrap();
+        let bbox = BoundingBox::new(sw, ne);
+        let geojson_bbox = bbox.as_geojson_bbox();
+        // GeoJSON RFC 7946: [west, south, east, north]
+        assert_eq!(geojson_bbox[0], 11.0); // west (sw.longitude)
+        assert_eq!(geojson_bbox[1], 47.0); // south (sw.latitude)
+        assert_eq!(geojson_bbox[2], 12.0); // east (ne.longitude)
+        assert_eq!(geojson_bbox[3], 48.0); // north (ne.latitude)
+    }
+
+    #[test]
+    fn as_geojson_bbox_with_negative_coordinates() {
+        let sw = Coordinate::new(-34.0, -58.5).unwrap();
+        let ne = Coordinate::new(-33.0, -57.5).unwrap();
+        let bbox = BoundingBox::new(sw, ne);
+        let geojson_bbox = bbox.as_geojson_bbox();
+        assert_eq!(geojson_bbox[0], -58.5); // west
+        assert_eq!(geojson_bbox[1], -34.0); // south
+        assert_eq!(geojson_bbox[2], -57.5); // east
+        assert_eq!(geojson_bbox[3], -33.0); // north
     }
 }

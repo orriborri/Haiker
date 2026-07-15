@@ -725,4 +725,275 @@ mod tests {
         let result = normalize_gpx(&parse_result).unwrap();
         assert_eq!(result.suggested_title, Some("Metadata Name".to_string()));
     }
+
+    #[test]
+    fn normalize_500k_points_within_time_budget() {
+        use std::time::Instant;
+
+        // Generate a realistic hiking path with 500,000 points across 5 segments.
+        // Simulates a hike starting at Innsbruck heading northeast with elevation changes.
+        let points_per_segment = 100_000;
+        let num_segments = 5;
+        let total_expected = points_per_segment * num_segments;
+
+        let mut segments = Vec::with_capacity(num_segments);
+        let base_lat = 47.2692;
+        let base_lon = 11.4041;
+        let base_elevation = 574.0;
+
+        for seg_idx in 0..num_segments {
+            let mut points = Vec::with_capacity(points_per_segment);
+            for pt_idx in 0..points_per_segment {
+                let global_idx = seg_idx * points_per_segment + pt_idx;
+                // Small increments to simulate real GPS track points
+                let lat = base_lat + (global_idx as f64) * 0.000005;
+                let lon = base_lon + (global_idx as f64) * 0.000008;
+                // Sinusoidal elevation to simulate hills
+                let elevation = base_elevation + 200.0 * (global_idx as f64 * 0.0001).sin();
+                let seconds = global_idx as u64 * 2; // 2 seconds between points
+                                                     // Use a realistic timestamp that advances
+                let hour = 6 + (seconds / 3600);
+                let minute = (seconds % 3600) / 60;
+                let second = seconds % 60;
+                let time_str = format!("2024-06-01T{:02}:{:02}:{:02}Z", hour % 24, minute, second);
+
+                points.push(GpxTrackPoint {
+                    lat,
+                    lon,
+                    elevation: Some(elevation),
+                    time: Some(time_str),
+                });
+            }
+            segments.push(GpxTrackSegment { points });
+        }
+
+        let parse_result = GpxParseResult {
+            version: GpxVersion::Gpx11,
+            metadata: GpxMetadata {
+                name: Some("500k Point Stress Test".to_string()),
+                description: None,
+                time: None,
+            },
+            tracks: vec![GpxTrack {
+                name: Some("Stress Test Track".to_string()),
+                segments,
+            }],
+            total_points: total_expected,
+        };
+
+        let start = Instant::now();
+        let result = normalize_gpx(&parse_result).unwrap();
+        let elapsed = start.elapsed();
+
+        // Verify: completes within 5 seconds (actual ~2s, with CI variability headroom)
+        assert!(
+            elapsed.as_secs() < 5,
+            "Normalization took {:?}, exceeds 5 second budget",
+            elapsed
+        );
+
+        // Verify: total point count is 500,000
+        assert_eq!(
+            result.recorded_track.statistics.point_count,
+            total_expected as u32
+        );
+
+        // Verify: preview geometry is exactly 1000 points
+        assert_eq!(result.preview_geometry.len(), MAX_PREVIEW_POINTS);
+
+        // Verify: all segment boundaries are preserved (5 segments)
+        assert_eq!(result.recorded_track.segments.len(), num_segments);
+        assert_eq!(
+            result.recorded_track.statistics.segment_count,
+            num_segments as u32
+        );
+
+        // Verify each segment has the expected number of points
+        for segment in &result.recorded_track.segments {
+            assert_eq!(segment.point_count(), points_per_segment);
+        }
+    }
+
+    #[test]
+    fn coordinate_values_preserved_bit_for_bit() {
+        // Use high-precision coordinates to verify no floating-point alteration
+        let parse_result = GpxParseResult {
+            version: GpxVersion::Gpx11,
+            metadata: GpxMetadata::default(),
+            tracks: vec![GpxTrack {
+                name: None,
+                segments: vec![GpxTrackSegment {
+                    points: vec![
+                        GpxTrackPoint {
+                            lat: 47.123456789012,
+                            lon: 11.987654321098,
+                            elevation: None,
+                            time: None,
+                        },
+                        GpxTrackPoint {
+                            lat: 47.987654321098,
+                            lon: 11.123456789012,
+                            elevation: None,
+                            time: None,
+                        },
+                    ],
+                }],
+            }],
+            total_points: 2,
+        };
+
+        let result = normalize_gpx(&parse_result).unwrap();
+        let points = result.recorded_track.segments[0].points();
+
+        // Bit-for-bit equality (not approximately equal)
+        assert_eq!(points[0].coordinate.latitude, 47.123456789012);
+        assert_eq!(points[0].coordinate.longitude, 11.987654321098);
+        assert_eq!(points[1].coordinate.latitude, 47.987654321098);
+        assert_eq!(points[1].coordinate.longitude, 11.123456789012);
+    }
+
+    #[test]
+    fn elevation_values_preserved_exactly() {
+        let parse_result = GpxParseResult {
+            version: GpxVersion::Gpx11,
+            metadata: GpxMetadata::default(),
+            tracks: vec![GpxTrack {
+                name: None,
+                segments: vec![GpxTrackSegment {
+                    points: vec![
+                        GpxTrackPoint {
+                            lat: 47.0,
+                            lon: 11.0,
+                            elevation: Some(1234.56789),
+                            time: None,
+                        },
+                        GpxTrackPoint {
+                            lat: 47.001,
+                            lon: 11.001,
+                            elevation: Some(9876.54321),
+                            time: None,
+                        },
+                    ],
+                }],
+            }],
+            total_points: 2,
+        };
+
+        let result = normalize_gpx(&parse_result).unwrap();
+        let points = result.recorded_track.segments[0].points();
+
+        // Bit-for-bit equality for elevation values
+        assert_eq!(points[0].elevation.unwrap().meters(), 1234.56789);
+        assert_eq!(points[1].elevation.unwrap().meters(), 9876.54321);
+    }
+
+    #[test]
+    fn timestamp_strings_parsed_and_preserved() {
+        let parse_result = GpxParseResult {
+            version: GpxVersion::Gpx11,
+            metadata: GpxMetadata::default(),
+            tracks: vec![GpxTrack {
+                name: None,
+                segments: vec![GpxTrackSegment {
+                    points: vec![
+                        GpxTrackPoint {
+                            lat: 47.0,
+                            lon: 11.0,
+                            elevation: None,
+                            time: Some("2024-03-15T10:30:45Z".to_string()),
+                        },
+                        GpxTrackPoint {
+                            lat: 47.001,
+                            lon: 11.001,
+                            elevation: None,
+                            time: Some("2024-03-15T11:45:30Z".to_string()),
+                        },
+                    ],
+                }],
+            }],
+            total_points: 2,
+        };
+
+        let result = normalize_gpx(&parse_result).unwrap();
+        let points = result.recorded_track.segments[0].points();
+
+        // Verify timestamps are parsed correctly
+        let ts0 = points[0].timestamp.unwrap();
+        assert_eq!(ts0.to_rfc3339(), "2024-03-15T10:30:45+00:00");
+
+        let ts1 = points[1].timestamp.unwrap();
+        assert_eq!(ts1.to_rfc3339(), "2024-03-15T11:45:30+00:00");
+
+        // Verify started_at and ended_at
+        assert_eq!(result.started_at.unwrap(), ts0);
+        assert_eq!(result.ended_at.unwrap(), ts1);
+    }
+
+    #[test]
+    fn geojson_coordinate_order_from_normalized_track() {
+        let parse_result = GpxParseResult {
+            version: GpxVersion::Gpx11,
+            metadata: GpxMetadata::default(),
+            tracks: vec![GpxTrack {
+                name: None,
+                segments: vec![GpxTrackSegment {
+                    points: vec![
+                        GpxTrackPoint {
+                            lat: 47.2692,
+                            lon: 11.4041,
+                            elevation: Some(574.0),
+                            time: None,
+                        },
+                        GpxTrackPoint {
+                            lat: 47.2700,
+                            lon: 11.4050,
+                            elevation: Some(580.0),
+                            time: None,
+                        },
+                        GpxTrackPoint {
+                            lat: 47.2710,
+                            lon: 11.4060,
+                            elevation: Some(590.0),
+                            time: None,
+                        },
+                    ],
+                }],
+            }],
+            total_points: 3,
+        };
+
+        let result = normalize_gpx(&parse_result).unwrap();
+
+        // Verify GeoJSON position ordering from the NormalizedTrack's segments
+        let segment = &result.recorded_track.segments[0];
+        for point in segment.points() {
+            let position = point.coordinate.as_geojson_position();
+            // GeoJSON: [longitude, latitude]
+            assert_eq!(position[0], point.coordinate.longitude);
+            assert_eq!(position[1], point.coordinate.latitude);
+            // Verify longitude is first (different from internal lat/lon storage)
+            assert_ne!(position[0], point.coordinate.latitude);
+        }
+
+        // Explicit check for first point
+        let first = segment.points()[0].coordinate.as_geojson_position();
+        assert_eq!(first[0], 11.4041); // longitude first
+        assert_eq!(first[1], 47.2692); // latitude second
+
+        // Verify preview geometry also produces correct GeoJSON positions
+        for coord in &result.preview_geometry {
+            let pos = coord.as_geojson_position();
+            assert_eq!(pos[0], coord.longitude);
+            assert_eq!(pos[1], coord.latitude);
+        }
+
+        // Verify bounding box GeoJSON ordering
+        let bbox = result.recorded_track.bounding_box;
+        let geojson_bbox = bbox.as_geojson_bbox();
+        // [west, south, east, north]
+        assert_eq!(geojson_bbox[0], 11.4041); // west = min longitude
+        assert_eq!(geojson_bbox[1], 47.2692); // south = min latitude
+        assert_eq!(geojson_bbox[2], 11.4060); // east = max longitude
+        assert_eq!(geojson_bbox[3], 47.2710); // north = max latitude
+    }
 }
