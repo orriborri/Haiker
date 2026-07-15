@@ -602,7 +602,20 @@ enum OpKind {
     JoinSegments,
 }
 
+/// Derive a pseudo-random index within `[0, range)` from an f64 value.
+/// Uses the fractional bits of the float to produce variation.
+fn derive_index(source: f64, range: usize) -> usize {
+    if range == 0 {
+        return 0;
+    }
+    // Use the absolute value's bit representation for pseudo-random variation
+    let bits = source.abs().to_bits();
+    (bits as usize) % range
+}
+
 /// Generate a valid operation for the current draft geometry state.
+/// Uses `rng_coord` latitude and longitude to derive varied segment and point indices
+/// so operations target different parts of the geometry across test runs.
 /// Returns None if no valid operation of any kind can be generated given the geometry.
 fn generate_valid_operation(
     geometry: &[Vec<RoutePoint>],
@@ -611,8 +624,8 @@ fn generate_valid_operation(
 ) -> Option<RouteOperation> {
     match kind {
         OpKind::MovePoint => {
-            let seg_idx = 0 % geometry.len();
-            let pt_idx = 0 % geometry[seg_idx].len();
+            let seg_idx = derive_index(rng_coord.latitude, geometry.len());
+            let pt_idx = derive_index(rng_coord.longitude, geometry[seg_idx].len());
             Some(RouteOperation::MovePoint {
                 segment_index: SegmentIndex::new(seg_idx),
                 point_index: PointIndex::new(pt_idx),
@@ -620,8 +633,8 @@ fn generate_valid_operation(
             })
         }
         OpKind::AddPoint => {
-            let seg_idx = 0 % geometry.len();
-            let after_idx = 0 % geometry[seg_idx].len();
+            let seg_idx = derive_index(rng_coord.latitude, geometry.len());
+            let after_idx = derive_index(rng_coord.longitude, geometry[seg_idx].len());
             Some(RouteOperation::AddPoint {
                 segment_index: SegmentIndex::new(seg_idx),
                 after_point_index: PointIndex::new(after_idx),
@@ -629,46 +642,104 @@ fn generate_valid_operation(
             })
         }
         OpKind::DeletePoint => {
-            // Need a segment with > 2 points
-            let seg_idx = geometry.iter().position(|s| s.len() > 2)?;
+            // Find a segment with > 2 points, starting from a derived offset
+            let start = derive_index(rng_coord.latitude, geometry.len());
+            let seg_idx = (0..geometry.len())
+                .map(|i| (start + i) % geometry.len())
+                .find(|&i| geometry[i].len() > 2)?;
+            // Delete at a varied interior index (not first or last to avoid endpoint issues)
+            let interior_count = geometry[seg_idx].len() - 2; // indices 1..len-1
+            let offset = derive_index(rng_coord.longitude, interior_count);
+            let pt_idx = 1 + offset;
             Some(RouteOperation::DeletePoint {
                 segment_index: SegmentIndex::new(seg_idx),
-                point_index: PointIndex::new(1),
+                point_index: PointIndex::new(pt_idx),
             })
         }
         OpKind::DeleteSection => {
             // Need a segment with > 3 points to delete a section and keep >= 2
-            let seg_idx = geometry.iter().position(|s| s.len() > 3)?;
+            let start = derive_index(rng_coord.latitude, geometry.len());
+            let seg_idx = (0..geometry.len())
+                .map(|i| (start + i) % geometry.len())
+                .find(|&i| geometry[i].len() > 3)?;
+            let seg_len = geometry[seg_idx].len();
+            // Deletable interior range: indices 1..=(seg_len - 2)
+            // Must keep at least 2 points after deletion, so max deletable = seg_len - 2
+            let max_deletable = seg_len - 2;
+            // Derive start_index in interior range [1, seg_len - 2]
+            let interior_start = 1 + derive_index(rng_coord.longitude, max_deletable);
+            // Derive end_index >= start_index but within bounds, and ensure >= 2 pts remain
+            // Points remaining = (start_index) + (seg_len - 1 - end_index)
+            // We need start_index + (seg_len - 1 - end_index) >= 2
+            // => end_index <= seg_len - 1 - (2 - start_index) = seg_len - 3 + start_index
+            let max_end = (seg_len - 3 + interior_start).min(seg_len - 2);
+            let end_range = max_end - interior_start + 1;
+            let end_offset = derive_index(rng_coord.latitude + rng_coord.longitude, end_range);
+            let interior_end = interior_start + end_offset;
             Some(RouteOperation::DeleteSection {
                 segment_index: SegmentIndex::new(seg_idx),
-                start_index: PointIndex::new(1),
-                end_index: PointIndex::new(1),
+                start_index: PointIndex::new(interior_start),
+                end_index: PointIndex::new(interior_end),
             })
         }
         OpKind::ReplaceSection => {
-            // Need a segment with >= 3 points for a valid replace
-            let seg_idx = geometry.iter().position(|s| s.len() >= 3)?;
+            // Need a segment with >= 4 points for a multi-point range replacement
+            let start = derive_index(rng_coord.latitude, geometry.len());
+            let seg_idx = (0..geometry.len())
+                .map(|i| (start + i) % geometry.len())
+                .find(|&i| geometry[i].len() >= 4)?;
             let seg = &geometry[seg_idx];
-            // Replace indices 1..=1 with 2 points (matching endpoints)
-            let start_coord = seg[1].coordinate;
-            let end_coord = seg[1].coordinate;
-            let replacement = vec![
-                RoutePoint::new(start_coord, None),
-                RoutePoint::new(end_coord, None),
-            ];
+            let seg_len = seg.len();
+            // Choose start_index in [1, seg_len - 3] so there is room for end > start
+            let start_range = seg_len - 3; // at least 1
+            let start_idx = 1 + derive_index(rng_coord.longitude, start_range);
+            // Choose end_index in [start_idx + 1, seg_len - 2] for a multi-point range
+            let end_range = (seg_len - 2) - start_idx;
+            let end_idx = if end_range > 0 {
+                start_idx + 1 + derive_index(rng_coord.latitude + rng_coord.longitude, end_range)
+            } else {
+                start_idx
+            };
+            // Endpoint continuity: replacement[0] must match geometry[start_idx],
+            // replacement[last] must match geometry[end_idx]
+            let start_coord = seg[start_idx].coordinate;
+            let end_coord = seg[end_idx].coordinate;
+            // Build replacement with 2-4 intermediate points plus matching endpoints
+            let num_intermediate = 1 + derive_index(rng_coord.latitude * rng_coord.longitude, 3);
+            let mut replacement = Vec::with_capacity(num_intermediate + 2);
+            replacement.push(RoutePoint::new(start_coord, None));
+            for i in 0..num_intermediate {
+                // Generate intermediate points by interpolating + offset from rng_coord
+                let frac = (i + 1) as f64 / (num_intermediate + 1) as f64;
+                let lat = start_coord.latitude + (end_coord.latitude - start_coord.latitude) * frac;
+                let lon = start_coord.longitude
+                    + (end_coord.longitude - start_coord.longitude) * frac
+                    + rng_coord.longitude * 0.001;
+                let interp_coord =
+                    Coordinate::new(lat.clamp(-90.0, 90.0), lon.clamp(-180.0, 180.0)).unwrap();
+                replacement.push(RoutePoint::new(interp_coord, None));
+            }
+            replacement.push(RoutePoint::new(end_coord, None));
             Some(RouteOperation::ReplaceSection {
                 segment_index: SegmentIndex::new(seg_idx),
-                start_index: PointIndex::new(1),
-                end_index: PointIndex::new(1),
+                start_index: PointIndex::new(start_idx),
+                end_index: PointIndex::new(end_idx),
                 replacement,
             })
         }
         OpKind::SplitSegment => {
             // Need a segment with >= 3 points to have a valid interior split point
-            let seg_idx = geometry.iter().position(|s| s.len() >= 3)?;
+            let start = derive_index(rng_coord.latitude, geometry.len());
+            let seg_idx = (0..geometry.len())
+                .map(|i| (start + i) % geometry.len())
+                .find(|&i| geometry[i].len() >= 3)?;
+            // Interior split point: index in [1, seg_len - 2]
+            let interior_count = geometry[seg_idx].len() - 2;
+            let split_offset = derive_index(rng_coord.longitude, interior_count);
+            let at_point = 1 + split_offset;
             Some(RouteOperation::SplitSegment {
                 segment_index: SegmentIndex::new(seg_idx),
-                at_point_index: PointIndex::new(1),
+                at_point_index: PointIndex::new(at_point),
             })
         }
         OpKind::JoinSegments => {
@@ -676,9 +747,12 @@ fn generate_valid_operation(
             if geometry.len() < 2 {
                 return None;
             }
+            // Pick an adjacent pair based on rng_coord
+            let max_first = geometry.len() - 1; // first can be 0..=(len-2)
+            let first_idx = derive_index(rng_coord.latitude, max_first);
             Some(RouteOperation::JoinSegments {
-                first_segment_index: SegmentIndex::new(0),
-                second_segment_index: SegmentIndex::new(1),
+                first_segment_index: SegmentIndex::new(first_idx),
+                second_segment_index: SegmentIndex::new(first_idx + 1),
             })
         }
     }

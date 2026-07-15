@@ -411,6 +411,11 @@ describe("Conflict resolution journeys", () => {
     expect(state.conflictError).toBeNull();
   });
 
+  // Note: The reducer logic for RESOLVE_CONFLICT_RETRY is intentionally identical to
+  // RESOLVE_CONFLICT_RELOAD. The difference between retry and reload is handled at the
+  // hook layer (useRouteEditing), where retry re-submits conflictLocalOps against the
+  // new server state while reload simply discards them. The reducer's job in both cases
+  // is to accept the server draft as the new baseline.
   it("RESOLVE_CONFLICT_RETRY updates state to server draft values and clears conflict", () => {
     let state = createLoadedState();
 
