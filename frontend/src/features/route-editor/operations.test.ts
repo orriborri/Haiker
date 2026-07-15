@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { AddPointOperation, DeletePointOperation } from "./types";
-import { ApiError } from "@/api/client";
+import { ApiError, applyOperation } from "@/api/client";
 
 describe("AddPointOperation", () => {
   it("constructs payload with coordinates only (latitude, longitude)", () => {
@@ -131,5 +131,115 @@ describe("INSUFFICIENT_POINTS error handling", () => {
     // Verify non-matching errors get the generic message
     const otherError = new Error("network failure");
     expect(getUserMessage(otherError)).toBe("An unknown error occurred.");
+  });
+});
+
+describe("applyOperation integration", () => {
+  const mockFetch = vi.fn();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch);
+    // Mock localStorage so getAuthToken() returns a token
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => "test-token-abc"),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+    // Mock crypto.randomUUID for deterministic Idempotency-Key
+    vi.stubGlobal("crypto", {
+      randomUUID: () => "00000000-1111-2222-3333-444444444444",
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("sends correct HTTP request for addPoint operation", async () => {
+    const mockResponse = {
+      draftId: "draft-123",
+      revision: 1,
+      canUndo: true,
+      canRedo: false,
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => mockResponse,
+    });
+
+    const operation = {
+      type: "addPoint",
+      segmentIndex: 0,
+      afterPointIndex: 2,
+      point: { latitude: 47.123, longitude: 11.456 },
+    };
+
+    const result = await applyOperation("draft-123", operation, 0);
+
+    // Verify fetch was called exactly once
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    const [url, options] = mockFetch.mock.calls[0]!;
+
+    // Verify the URL
+    expect(url).toBe("/v1/route-drafts/draft-123/operations");
+
+    // Verify method
+    expect(options.method).toBe("POST");
+
+    // Verify headers
+    expect(options.headers["Content-Type"]).toBe("application/json");
+    expect(options.headers["Idempotency-Key"]).toBe(
+      "00000000-1111-2222-3333-444444444444",
+    );
+    expect(options.headers["Authorization"]).toBe("Bearer test-token-abc");
+
+    // Verify body contains operation and expectedRevision
+    const body = JSON.parse(options.body);
+    expect(body.operation).toEqual(operation);
+    expect(body.expectedRevision).toBe(0);
+
+    // Verify the parsed response
+    expect(result).toEqual(mockResponse);
+  });
+
+  it("propagates 422 INSUFFICIENT_POINTS as ApiError", async () => {
+    const errorBody = {
+      code: "INSUFFICIENT_POINTS",
+      detail: "Cannot delete point: segment must have at least 2 points",
+      type: "https://haiker.app/problems/insufficient-points",
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 422,
+      statusText: "Unprocessable Entity",
+      json: async () => errorBody,
+    });
+
+    const operation = {
+      type: "deletePoint",
+      segmentIndex: 0,
+      pointIndex: 0,
+    };
+
+    try {
+      await applyOperation("draft-456", operation, 1);
+      expect.fail("Expected applyOperation to throw ApiError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      const apiError = err as InstanceType<typeof ApiError>;
+      expect(apiError.status).toBe(422);
+      expect(apiError.code).toBe("INSUFFICIENT_POINTS");
+      expect(apiError.message).toBe(
+        "Cannot delete point: segment must have at least 2 points",
+      );
+      expect(apiError.problemType).toBe(
+        "https://haiker.app/problems/insufficient-points",
+      );
+    }
   });
 });
