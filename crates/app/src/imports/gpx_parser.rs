@@ -5,6 +5,8 @@
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+/// Maximum input size in bytes (100 MiB).
+const MAX_INPUT_SIZE: usize = 100 * 1024 * 1024;
 /// Maximum XML nesting depth allowed.
 const MAX_DEPTH: usize = 20;
 /// Maximum number of track points allowed across all tracks.
@@ -24,6 +26,7 @@ pub enum GpxParseErrorCode {
     XmlTooDeep,
     ExternalEntity,
     InvalidCoordinates,
+    InputTooLarge,
 }
 
 impl std::fmt::Display for GpxParseErrorCode {
@@ -36,6 +39,7 @@ impl std::fmt::Display for GpxParseErrorCode {
             Self::XmlTooDeep => "XML_TOO_DEEP",
             Self::ExternalEntity => "EXTERNAL_ENTITY",
             Self::InvalidCoordinates => "INVALID_COORDINATES",
+            Self::InputTooLarge => "INPUT_TOO_LARGE",
         };
         write!(f, "{s}")
     }
@@ -134,6 +138,17 @@ fn sanitize_metadata(s: &str) -> String {
 
 /// Parse a GPX document from raw XML bytes.
 pub fn parse_gpx(input: &[u8]) -> Result<GpxParseResult, GpxParseError> {
+    if input.len() > MAX_INPUT_SIZE {
+        return Err(GpxParseError::new(
+            GpxParseErrorCode::InputTooLarge,
+            format!(
+                "input size {} bytes exceeds maximum of {} bytes",
+                input.len(),
+                MAX_INPUT_SIZE
+            ),
+        ));
+    }
+
     // Check for XXE patterns in raw input
     let input_str = std::str::from_utf8(input).map_err(|_| {
         GpxParseError::new(GpxParseErrorCode::InvalidXml, "input is not valid UTF-8")
@@ -471,7 +486,15 @@ pub fn parse_gpx(input: &[u8]) -> Result<GpxParseResult, GpxParseError> {
                     current_text_target = None;
                 }
             }
-            Ok(Event::Eof) => break,
+            Ok(Event::Eof) => {
+                if depth > 0 {
+                    return Err(GpxParseError::new(
+                        GpxParseErrorCode::InvalidXml,
+                        "unexpected end of input: unclosed XML elements",
+                    ));
+                }
+                break;
+            }
             Ok(Event::DocType(_)) => {
                 return Err(GpxParseError::new(
                     GpxParseErrorCode::ExternalEntity,
