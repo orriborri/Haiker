@@ -348,12 +348,16 @@ proptest! {
     fn mixed_undo_redo_is_deterministic(
         geometry in arb_geometry(),
         n in 2usize..=8,
-        k_ratio in 1usize..=100,  // percentage of n to undo
-        redo_ratio in 1usize..=100,  // percentage of k to redo
+        k in 1usize..=8,
+        redo_count in 1usize..=8,
         seg_indices in proptest::collection::vec(0usize..3, 8),
         pt_indices in proptest::collection::vec(0usize..20, 8),
         new_positions in proptest::collection::vec(arb_coordinate(), 8),
     ) {
+        // Ensure k <= n and redo_count <= k for valid undo/redo depths
+        prop_assume!(k <= n);
+        prop_assume!(redo_count <= k);
+
         let mut draft = make_draft(geometry);
         let seg_count = draft.geometry.len();
         let mut revision = 0u64;
@@ -380,15 +384,13 @@ proptest! {
             geometry_snapshots.push(draft.geometry.clone());
         }
 
-        // Undo k of them (k is derived from k_ratio as a percentage of n)
-        let k = (k_ratio * n / 100).clamp(1, n);
+        // Undo k of them
         for _ in 0..k {
             draft.undo(revision).unwrap();
             revision += 1;
         }
 
-        // Redo some of those k (redo_count derived from redo_ratio as a percentage of k)
-        let redo_count = (redo_ratio * k / 100).clamp(1, k);
+        // Redo redo_count of those k
         for j in 0..redo_count {
             draft.redo(revision).unwrap();
             revision += 1;
@@ -403,6 +405,118 @@ proptest! {
                 expected_idx,
             );
         }
+    }
+
+    /// Topology-changing operations (SplitSegment, JoinSegments) are correctly
+    /// reversed and replayed through undo/redo, preserving exact geometry including
+    /// segment count changes.
+    #[test]
+    fn topology_operations_undo_redo_determinism(
+        segment in proptest::collection::vec(arb_route_point(), 5..=15),
+        split_offset in 1usize..14,
+        move_positions in proptest::collection::vec(arb_coordinate(), 3),
+    ) {
+        let seg_len = segment.len();
+        // Clamp split_at to a valid interior index (not first, not last)
+        let split_at = split_offset % (seg_len - 2) + 1;
+
+        let original_geometry = vec![segment];
+        let mut draft = make_draft(original_geometry.clone());
+        let mut revision = 0u64;
+
+        // Step 1: Move a point (pre-split)
+        let pt_idx = 0;
+        draft.apply_operation(
+            OperationId::generate(),
+            RouteOperation::MovePoint {
+                segment_index: SegmentIndex::new(0),
+                point_index: PointIndex::new(pt_idx),
+                new_position: move_positions[0],
+            },
+            revision,
+        ).unwrap();
+        revision += 1;
+        let geometry_after_move = draft.geometry.clone();
+
+        // Step 2: Split the segment (topology change: 1 segment -> 2 segments)
+        draft.apply_operation(
+            OperationId::generate(),
+            RouteOperation::SplitSegment {
+                segment_index: SegmentIndex::new(0),
+                at_point_index: PointIndex::new(split_at),
+            },
+            revision,
+        ).unwrap();
+        revision += 1;
+        let geometry_after_split = draft.geometry.clone();
+        prop_assert_eq!(geometry_after_split.len(), 2, "split should produce 2 segments");
+
+        // Step 3: Move a point in the second segment (post-split)
+        let second_seg_len = draft.geometry[1].len();
+        let pt_in_second = if second_seg_len > 1 { 1 } else { 0 };
+        draft.apply_operation(
+            OperationId::generate(),
+            RouteOperation::MovePoint {
+                segment_index: SegmentIndex::new(1),
+                point_index: PointIndex::new(pt_in_second),
+                new_position: move_positions[1],
+            },
+            revision,
+        ).unwrap();
+        revision += 1;
+        let geometry_after_second_move = draft.geometry.clone();
+
+        // Step 4: Join segments back (topology change: 2 segments -> 1 segment)
+        draft.apply_operation(
+            OperationId::generate(),
+            RouteOperation::JoinSegments {
+                first_segment_index: SegmentIndex::new(0),
+                second_segment_index: SegmentIndex::new(1),
+            },
+            revision,
+        ).unwrap();
+        revision += 1;
+        let geometry_after_join = draft.geometry.clone();
+        prop_assert_eq!(geometry_after_join.len(), 1, "join should produce 1 segment");
+
+        // Now undo all 4 operations and verify geometry at each step
+        // Undo join -> back to 2 segments
+        draft.undo(revision).unwrap();
+        revision += 1;
+        prop_assert_eq!(&draft.geometry, &geometry_after_second_move);
+
+        // Undo second move -> back to post-split geometry
+        draft.undo(revision).unwrap();
+        revision += 1;
+        prop_assert_eq!(&draft.geometry, &geometry_after_split);
+
+        // Undo split -> back to 1 segment
+        draft.undo(revision).unwrap();
+        revision += 1;
+        prop_assert_eq!(&draft.geometry, &geometry_after_move);
+        prop_assert_eq!(draft.geometry.len(), 1, "undo split should restore 1 segment");
+
+        // Undo first move -> back to original
+        draft.undo(revision).unwrap();
+        revision += 1;
+        prop_assert_eq!(&draft.geometry, &original_geometry);
+
+        // Redo all 4 and verify determinism at each step
+        draft.redo(revision).unwrap();
+        revision += 1;
+        prop_assert_eq!(&draft.geometry, &geometry_after_move);
+
+        draft.redo(revision).unwrap();
+        revision += 1;
+        prop_assert_eq!(&draft.geometry, &geometry_after_split);
+
+        draft.redo(revision).unwrap();
+        revision += 1;
+        prop_assert_eq!(&draft.geometry, &geometry_after_second_move);
+
+        draft.redo(revision).unwrap();
+        // revision += 1; // not needed after last operation
+        prop_assert_eq!(&draft.geometry, &geometry_after_join);
     }
 
     /// After undoing operations, applying a new operation clears the redo stack.
