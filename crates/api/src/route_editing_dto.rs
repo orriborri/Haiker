@@ -201,14 +201,6 @@ pub struct UndoRedoRequest {
     pub expected_revision: u64,
 }
 
-/// Request body for POST /v1/route-drafts/{draftId}/reset.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(rename_all = "camelCase")]
-pub struct ResetRequest {
-    pub expected_revision: u64,
-}
-
 /// Response body for GET /v1/route-drafts/{draftId}.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

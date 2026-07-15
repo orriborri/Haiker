@@ -63,5 +63,3 @@ components:
       $ref: "components/route-editing.yaml#/OperationResultResponse"
     UndoRedoRequest:
       $ref: "components/route-editing.yaml#/UndoRedoRequest"
-    ResetRequest:
-      $ref: "components/route-editing.yaml#/ResetRequest"

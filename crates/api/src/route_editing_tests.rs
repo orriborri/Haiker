@@ -2605,3 +2605,81 @@ async fn reset_cross_owner_returns_403() {
 
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn reset_gateway_rejects_geometry_returns_422() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    // Register the version for validation (so draft creation succeeds)
+    // but WITHOUT geometry, so get_route_version_geometry returns Err.
+    // This simulates a deleted base version or storage failure.
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![(
+            version_id,
+            activity_id,
+        )])),
+    };
+    let app = test_app_with_state(state);
+
+    // Create draft with baseRouteVersionId (validation passes)
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Reset should fail because the gateway cannot produce geometry
+    let reset_body = serde_json::json!({
+        "expectedRevision": 0
+    });
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/reset"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&reset_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "INVALID_BASE_ROUTE_VERSION");
+    assert_eq!(json["type"], "/problems/invalid-base-route-version");
+    assert_eq!(json["status"], 422);
+}

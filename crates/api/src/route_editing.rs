@@ -22,7 +22,7 @@ use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
 use crate::route_editing_dto::{
     draft_to_response, geometry_to_domain, parse_idempotency_key, ApplyOperationRequest,
-    CreateRouteDraftRequest, OperationResultResponse, ResetRequest, UndoRedoRequest,
+    CreateRouteDraftRequest, OperationResultResponse, UndoRedoRequest,
 };
 
 /// Shared application state for route editing handlers.
@@ -617,7 +617,7 @@ pub async fn post_reset(
     actor: AuthenticatedActor,
     Path(draft_id): Path<Uuid>,
     headers: HeaderMap,
-    Json(body): Json<ResetRequest>,
+    Json(body): Json<UndoRedoRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let _idempotency_key = extract_idempotency_key(&headers)?;
 

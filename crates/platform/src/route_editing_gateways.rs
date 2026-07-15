@@ -71,7 +71,10 @@ impl RouteVersionGateway for PgRouteVersionGateway {
         _route_version_id: Uuid,
         _activity_id: ActivityId,
     ) -> Result<Vec<Vec<RoutePoint>>, RouteEditingError> {
-        // Placeholder: not yet backed by persistence
-        Err(RouteEditingError::InvalidBaseRouteVersion)
+        // Placeholder: always succeeds until integrated with actual persistence.
+        // Returns an empty geometry (single empty segment) as a stand-in.
+        // This keeps the placeholder consistent with validate_route_version_exists
+        // which also returns Ok(()) unconditionally.
+        Ok(vec![vec![]])
     }
 }
