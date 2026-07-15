@@ -15,6 +15,7 @@ use crate::activity_catalog::{ActivityId, ActivityType};
 use crate::identity::UserId;
 use crate::recorded_activity::normalization::normalize_gpx;
 use crate::recorded_activity::{RecordedTrackId, SourceArtifactId, SourceRevisionId};
+use crate::route_versioning::RouteVersion;
 
 use super::checksum::Checksum;
 use super::commit::{CommitImport, ImportCommitData};
@@ -249,6 +250,27 @@ impl<'a> ImportOrchestrator<'a> {
             .suggested_title
             .unwrap_or_else(|| "Imported Activity".to_string());
 
+        // Construct the initial route version via the domain factory to enforce
+        // the geometry invariant (minimum 2 points).
+        let statistics_json =
+            serde_json::to_value(normalized.recorded_track.statistics).map_err(|e| {
+                ImportError::ValidationFailed {
+                    message: format!("failed to serialize statistics: {e}"),
+                }
+            })?;
+
+        let route_version = RouteVersion::new_initial(
+            activity_id,
+            normalized.preview_geometry.clone(),
+            normalized.recorded_track.bounding_box,
+            statistics_json,
+            PARSER_VERSION.to_string(),
+            owner_id,
+        )
+        .map_err(|e| ImportError::ValidationFailed {
+            message: format!("route version validation failed: {e}"),
+        })?;
+
         let commit_data = ImportCommitData {
             owner_id,
             import_id,
@@ -271,6 +293,7 @@ impl<'a> ImportOrchestrator<'a> {
             activity_type: ActivityType::Hike,
             started_at: normalized.started_at,
             ended_at: normalized.ended_at,
+            route_version_id: route_version.id,
         };
 
         // Capture time spent in Committing state (before commit completes)
