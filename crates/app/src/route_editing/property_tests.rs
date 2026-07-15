@@ -1,4 +1,5 @@
-//! Property-based tests for SplitSegment and JoinSegments topology operations.
+//! Property-based tests for route editing operations: SplitSegment/JoinSegments topology
+//! and undo/redo sequence determinism.
 
 use proptest::prelude::*;
 
@@ -288,5 +289,185 @@ proptest! {
 
         prop_assert_eq!(&draft.geometry, &geometry_after_first);
         prop_assert_eq!(draft.revision, revision_after_first);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Undo/Redo Sequence Determinism Property Tests
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// Applying 1-10 random MovePoint operations then undoing all of them
+    /// restores the original geometry exactly.
+    #[test]
+    fn undo_all_restores_original_geometry(
+        geometry in arb_geometry(),
+        op_count in 1usize..=10,
+        // Generate max operations worth of indices and coordinates
+        seg_indices in proptest::collection::vec(0usize..3, 10),
+        pt_indices in proptest::collection::vec(0usize..20, 10),
+        new_positions in proptest::collection::vec(arb_coordinate(), 10),
+    ) {
+        let original_geometry = geometry.clone();
+        let mut draft = make_draft(geometry);
+
+        let seg_count = draft.geometry.len();
+        let mut revision = 0u64;
+
+        // Apply op_count MovePoint operations with valid indices
+        for i in 0..op_count {
+            let seg_idx = seg_indices[i] % seg_count;
+            let pt_count = draft.geometry[seg_idx].len();
+            let pt_idx = pt_indices[i] % pt_count;
+
+            draft.apply_operation(
+                OperationId::generate(),
+                RouteOperation::MovePoint {
+                    segment_index: SegmentIndex::new(seg_idx),
+                    point_index: PointIndex::new(pt_idx),
+                    new_position: new_positions[i],
+                },
+                revision,
+            ).unwrap();
+            revision += 1;
+        }
+
+        // Undo all operations one by one
+        for _ in 0..op_count {
+            draft.undo(revision).unwrap();
+            revision += 1;
+        }
+
+        prop_assert_eq!(&draft.geometry, &original_geometry);
+    }
+
+    /// Apply N operations, undo K of them, redo some of those K,
+    /// and verify each redo restores the exact geometry that existed
+    /// after the original apply.
+    #[test]
+    fn mixed_undo_redo_is_deterministic(
+        geometry in arb_geometry(),
+        n in 2usize..=8,
+        k_ratio in 1usize..=100,  // percentage of n to undo
+        redo_ratio in 1usize..=100,  // percentage of k to redo
+        seg_indices in proptest::collection::vec(0usize..3, 8),
+        pt_indices in proptest::collection::vec(0usize..20, 8),
+        new_positions in proptest::collection::vec(arb_coordinate(), 8),
+    ) {
+        let mut draft = make_draft(geometry);
+        let seg_count = draft.geometry.len();
+        let mut revision = 0u64;
+
+        // Record geometry after each operation
+        let mut geometry_snapshots: Vec<Vec<Vec<RoutePoint>>> = Vec::new();
+
+        // Apply n operations
+        for i in 0..n {
+            let seg_idx = seg_indices[i] % seg_count;
+            let pt_count = draft.geometry[seg_idx].len();
+            let pt_idx = pt_indices[i] % pt_count;
+
+            draft.apply_operation(
+                OperationId::generate(),
+                RouteOperation::MovePoint {
+                    segment_index: SegmentIndex::new(seg_idx),
+                    point_index: PointIndex::new(pt_idx),
+                    new_position: new_positions[i],
+                },
+                revision,
+            ).unwrap();
+            revision += 1;
+            geometry_snapshots.push(draft.geometry.clone());
+        }
+
+        // Undo k of them (k is derived from k_ratio as a percentage of n)
+        let k = (k_ratio * n / 100).clamp(1, n);
+        for _ in 0..k {
+            draft.undo(revision).unwrap();
+            revision += 1;
+        }
+
+        // Redo some of those k (redo_count derived from redo_ratio as a percentage of k)
+        let redo_count = (redo_ratio * k / 100).clamp(1, k);
+        for j in 0..redo_count {
+            draft.redo(revision).unwrap();
+            revision += 1;
+
+            // After redo j, geometry should match snapshot at index (n - k + j)
+            let expected_idx = n - k + j;
+            prop_assert_eq!(
+                &draft.geometry,
+                &geometry_snapshots[expected_idx],
+                "Redo {} did not restore expected geometry (snapshot index {})",
+                j,
+                expected_idx,
+            );
+        }
+    }
+
+    /// After undoing operations, applying a new operation clears the redo stack.
+    /// Subsequent redo attempts return NothingToRedo.
+    #[test]
+    fn new_operation_after_undo_clears_redo_stack(
+        geometry in arb_geometry(),
+        op_count in 2usize..=6,
+        undo_count_ratio in 1usize..=100,
+        seg_indices in proptest::collection::vec(0usize..3, 7),
+        pt_indices in proptest::collection::vec(0usize..20, 7),
+        new_positions in proptest::collection::vec(arb_coordinate(), 7),
+    ) {
+        let mut draft = make_draft(geometry);
+        let seg_count = draft.geometry.len();
+        let mut revision = 0u64;
+
+        // Apply op_count operations
+        for i in 0..op_count {
+            let seg_idx = seg_indices[i] % seg_count;
+            let pt_count = draft.geometry[seg_idx].len();
+            let pt_idx = pt_indices[i] % pt_count;
+
+            draft.apply_operation(
+                OperationId::generate(),
+                RouteOperation::MovePoint {
+                    segment_index: SegmentIndex::new(seg_idx),
+                    point_index: PointIndex::new(pt_idx),
+                    new_position: new_positions[i],
+                },
+                revision,
+            ).unwrap();
+            revision += 1;
+        }
+
+        // Undo some operations (at least 1)
+        let undo_count = (undo_count_ratio * op_count / 100).clamp(1, op_count);
+        for _ in 0..undo_count {
+            draft.undo(revision).unwrap();
+            revision += 1;
+        }
+
+        // Apply a new operation (uses the last available position/index)
+        let new_seg_idx = seg_indices[op_count] % seg_count;
+        let new_pt_count = draft.geometry[new_seg_idx].len();
+        let new_pt_idx = pt_indices[op_count] % new_pt_count;
+
+        draft.apply_operation(
+            OperationId::generate(),
+            RouteOperation::MovePoint {
+                segment_index: SegmentIndex::new(new_seg_idx),
+                point_index: PointIndex::new(new_pt_idx),
+                new_position: new_positions[op_count],
+            },
+            revision,
+        ).unwrap();
+        revision += 1;
+
+        // Redo should now fail with NothingToRedo
+        let result = draft.redo(revision);
+        let is_nothing_to_redo = matches!(result, Err(RouteEditingError::NothingToRedo));
+        prop_assert!(
+            is_nothing_to_redo,
+            "expected NothingToRedo, got {:?}",
+            result,
+        );
     }
 }
