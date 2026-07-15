@@ -1,5 +1,5 @@
-//! Property-based tests for route editing operations: SplitSegment/JoinSegments topology
-//! and undo/redo sequence determinism.
+//! Property-based tests for route editing operations: SplitSegment/JoinSegments topology,
+//! undo/redo sequence determinism, and mixed operation sequence invariants.
 
 use proptest::prelude::*;
 
@@ -583,5 +583,289 @@ proptest! {
             "expected NothingToRedo, got {:?}",
             result,
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mixed Operation Sequence Property Tests
+// ---------------------------------------------------------------------------
+
+/// Enum representing a randomly chosen operation type for generation purposes.
+#[derive(Debug, Clone, Copy)]
+enum OpKind {
+    MovePoint,
+    AddPoint,
+    DeletePoint,
+    DeleteSection,
+    ReplaceSection,
+    SplitSegment,
+    JoinSegments,
+}
+
+/// Generate a valid operation for the current draft geometry state.
+/// Returns None if no valid operation of any kind can be generated given the geometry.
+fn generate_valid_operation(
+    geometry: &[Vec<RoutePoint>],
+    kind: OpKind,
+    rng_coord: Coordinate,
+) -> Option<RouteOperation> {
+    match kind {
+        OpKind::MovePoint => {
+            let seg_idx = 0 % geometry.len();
+            let pt_idx = 0 % geometry[seg_idx].len();
+            Some(RouteOperation::MovePoint {
+                segment_index: SegmentIndex::new(seg_idx),
+                point_index: PointIndex::new(pt_idx),
+                new_position: rng_coord,
+            })
+        }
+        OpKind::AddPoint => {
+            let seg_idx = 0 % geometry.len();
+            let after_idx = 0 % geometry[seg_idx].len();
+            Some(RouteOperation::AddPoint {
+                segment_index: SegmentIndex::new(seg_idx),
+                after_point_index: PointIndex::new(after_idx),
+                point: RoutePoint::new(rng_coord, None),
+            })
+        }
+        OpKind::DeletePoint => {
+            // Need a segment with > 2 points
+            let seg_idx = geometry.iter().position(|s| s.len() > 2)?;
+            Some(RouteOperation::DeletePoint {
+                segment_index: SegmentIndex::new(seg_idx),
+                point_index: PointIndex::new(1),
+            })
+        }
+        OpKind::DeleteSection => {
+            // Need a segment with > 3 points to delete a section and keep >= 2
+            let seg_idx = geometry.iter().position(|s| s.len() > 3)?;
+            Some(RouteOperation::DeleteSection {
+                segment_index: SegmentIndex::new(seg_idx),
+                start_index: PointIndex::new(1),
+                end_index: PointIndex::new(1),
+            })
+        }
+        OpKind::ReplaceSection => {
+            // Need a segment with >= 3 points for a valid replace
+            let seg_idx = geometry.iter().position(|s| s.len() >= 3)?;
+            let seg = &geometry[seg_idx];
+            // Replace indices 1..=1 with 2 points (matching endpoints)
+            let start_coord = seg[1].coordinate;
+            let end_coord = seg[1].coordinate;
+            let replacement = vec![
+                RoutePoint::new(start_coord, None),
+                RoutePoint::new(end_coord, None),
+            ];
+            Some(RouteOperation::ReplaceSection {
+                segment_index: SegmentIndex::new(seg_idx),
+                start_index: PointIndex::new(1),
+                end_index: PointIndex::new(1),
+                replacement,
+            })
+        }
+        OpKind::SplitSegment => {
+            // Need a segment with >= 3 points to have a valid interior split point
+            let seg_idx = geometry.iter().position(|s| s.len() >= 3)?;
+            Some(RouteOperation::SplitSegment {
+                segment_index: SegmentIndex::new(seg_idx),
+                at_point_index: PointIndex::new(1),
+            })
+        }
+        OpKind::JoinSegments => {
+            // Need at least 2 segments
+            if geometry.len() < 2 {
+                return None;
+            }
+            Some(RouteOperation::JoinSegments {
+                first_segment_index: SegmentIndex::new(0),
+                second_segment_index: SegmentIndex::new(1),
+            })
+        }
+    }
+}
+
+/// Try to generate any valid operation for the current geometry.
+/// Tries all operation kinds in a deterministic order and returns the first valid one.
+#[allow(dead_code)]
+fn any_valid_operation(
+    geometry: &[Vec<RoutePoint>],
+    rng_coord: Coordinate,
+) -> Option<RouteOperation> {
+    let kinds = [
+        OpKind::MovePoint,
+        OpKind::AddPoint,
+        OpKind::DeletePoint,
+        OpKind::SplitSegment,
+        OpKind::JoinSegments,
+        OpKind::DeleteSection,
+        OpKind::ReplaceSection,
+    ];
+    for kind in kinds {
+        if let Some(op) = generate_valid_operation(geometry, kind, rng_coord) {
+            return Some(op);
+        }
+    }
+    None
+}
+
+/// Pick a valid operation kind based on a selector byte and the current geometry.
+fn pick_operation(
+    geometry: &[Vec<RoutePoint>],
+    selector: u8,
+    rng_coord: Coordinate,
+) -> Option<RouteOperation> {
+    let all_kinds = [
+        OpKind::MovePoint,
+        OpKind::AddPoint,
+        OpKind::DeletePoint,
+        OpKind::DeleteSection,
+        OpKind::ReplaceSection,
+        OpKind::SplitSegment,
+        OpKind::JoinSegments,
+    ];
+    // Rotate the list using the selector to get variety
+    let start = (selector as usize) % all_kinds.len();
+    for i in 0..all_kinds.len() {
+        let kind = all_kinds[(start + i) % all_kinds.len()];
+        if let Some(op) = generate_valid_operation(geometry, kind, rng_coord) {
+            return Some(op);
+        }
+    }
+    None
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    /// Applying N random mixed operations (all types) then undoing all N
+    /// restores the original geometry exactly.
+    #[test]
+    fn mixed_ops_undo_all_restores_original(
+        geometry in arb_geometry(),
+        op_selectors in proptest::collection::vec(0u8..255, 3..=8),
+        coords in proptest::collection::vec(arb_coordinate(), 8),
+    ) {
+        let original_geometry = geometry.clone();
+        let mut draft = make_draft(geometry);
+        let mut revision = 0u64;
+        let mut applied_count = 0usize;
+
+        for (i, &selector) in op_selectors.iter().enumerate() {
+            let coord = coords[i % coords.len()];
+            if let Some(op) = pick_operation(&draft.geometry, selector, coord) {
+                draft.apply_operation(
+                    OperationId::generate(),
+                    op,
+                    revision,
+                ).unwrap();
+                revision += 1;
+                applied_count += 1;
+            }
+        }
+
+        // Undo all applied operations
+        for _ in 0..applied_count {
+            draft.undo(revision).unwrap();
+            revision += 1;
+        }
+
+        prop_assert_eq!(&draft.geometry, &original_geometry);
+    }
+
+    /// After any sequence of valid operations, every segment in the geometry
+    /// always has >= 2 points (topology preservation invariant).
+    #[test]
+    fn mixed_ops_preserve_minimum_segment_length(
+        geometry in arb_geometry(),
+        op_selectors in proptest::collection::vec(0u8..255, 3..=10),
+        coords in proptest::collection::vec(arb_coordinate(), 10),
+    ) {
+        let mut draft = make_draft(geometry);
+        let mut revision = 0u64;
+
+        for (i, &selector) in op_selectors.iter().enumerate() {
+            let coord = coords[i % coords.len()];
+            if let Some(op) = pick_operation(&draft.geometry, selector, coord) {
+                draft.apply_operation(
+                    OperationId::generate(),
+                    op,
+                    revision,
+                ).unwrap();
+                revision += 1;
+
+                // Invariant check: every segment must have >= 2 points
+                for (seg_idx, seg) in draft.geometry.iter().enumerate() {
+                    prop_assert!(
+                        seg.len() >= 2,
+                        "Segment {} has only {} points after operation {}",
+                        seg_idx,
+                        seg.len(),
+                        i,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Applying random operations, then interleaving undo and redo calls,
+    /// always results in geometry matching the expected position in the
+    /// operation history.
+    #[test]
+    fn mixed_undo_redo_interleave_determinism(
+        geometry in arb_geometry(),
+        op_selectors in proptest::collection::vec(0u8..255, 3..=6),
+        coords in proptest::collection::vec(arb_coordinate(), 6),
+        undo_count_raw in 1usize..=6,
+        redo_count_raw in 1usize..=6,
+    ) {
+        let mut draft = make_draft(geometry);
+        let mut revision = 0u64;
+        let mut snapshots: Vec<Vec<Vec<RoutePoint>>> = Vec::new();
+
+        // Apply operations and record snapshots
+        for (i, &selector) in op_selectors.iter().enumerate() {
+            let coord = coords[i % coords.len()];
+            if let Some(op) = pick_operation(&draft.geometry, selector, coord) {
+                draft.apply_operation(
+                    OperationId::generate(),
+                    op,
+                    revision,
+                ).unwrap();
+                revision += 1;
+                snapshots.push(draft.geometry.clone());
+            }
+        }
+
+        let n = snapshots.len();
+        prop_assume!(n >= 2);
+
+        let undo_count = undo_count_raw.min(n);
+        let redo_count = redo_count_raw.min(undo_count);
+
+        // Undo
+        for _ in 0..undo_count {
+            draft.undo(revision).unwrap();
+            revision += 1;
+        }
+
+        // After undoing `undo_count` ops from n total, we are at position n - undo_count
+        if n > undo_count {
+            prop_assert_eq!(&draft.geometry, &snapshots[n - undo_count - 1]);
+        }
+
+        // Redo
+        for j in 0..redo_count {
+            draft.redo(revision).unwrap();
+            revision += 1;
+
+            let expected_idx = n - undo_count + j;
+            prop_assert_eq!(
+                &draft.geometry,
+                &snapshots[expected_idx],
+                "After redo {}, geometry did not match snapshot at index {}",
+                j,
+                expected_idx,
+            );
+        }
     }
 }

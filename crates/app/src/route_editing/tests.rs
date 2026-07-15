@@ -1719,3 +1719,319 @@ fn reset_on_discarded_draft_returns_draft_not_active() {
     let r = d.reset(0, new_geo);
     assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
 }
+
+// --- Immutability guard: published draft rejects ALL mutations ---
+
+#[test]
+fn published_draft_rejects_move_point() {
+    let mut d = draft();
+    d.publish().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::MovePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+            new_position: coord(1.0, 1.0),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn published_draft_rejects_add_point() {
+    let mut d = draft();
+    d.publish().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::AddPoint {
+            segment_index: SegmentIndex::new(0),
+            after_point_index: PointIndex::new(0),
+            point: pt(1.0, 1.0),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn published_draft_rejects_delete_point() {
+    let mut d = draft();
+    d.publish().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::DeletePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(1),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn published_draft_rejects_delete_section() {
+    let mut d = draft();
+    d.publish().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn published_draft_rejects_replace_section() {
+    let mut d = draft();
+    d.publish().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement: vec![pt(45.1, 10.1), pt(45.2, 10.2)],
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn published_draft_rejects_split_segment() {
+    let mut d = draft();
+    d.publish().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::SplitSegment {
+            segment_index: SegmentIndex::new(0),
+            at_point_index: PointIndex::new(2),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn published_draft_rejects_join_segments() {
+    let mut d = draft2();
+    d.publish().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::JoinSegments {
+            first_segment_index: SegmentIndex::new(0),
+            second_segment_index: SegmentIndex::new(1),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn published_draft_rejects_reset() {
+    let mut d = draft();
+    d.publish().unwrap();
+    let new_geo = vec![vec![pt(1.0, 1.0), pt(2.0, 2.0), pt(3.0, 3.0)]];
+    let r = d.reset(0, new_geo);
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn published_draft_rejects_undo() {
+    let mut d = draft();
+    d.apply_operation(
+        op_id(),
+        RouteOperation::MovePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+            new_position: coord(50.0, 15.0),
+        },
+        0,
+    )
+    .unwrap();
+    d.publish().unwrap();
+    let r = d.undo(1);
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn published_draft_rejects_redo() {
+    let mut d = draft();
+    d.apply_operation(
+        op_id(),
+        RouteOperation::MovePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+            new_position: coord(50.0, 15.0),
+        },
+        0,
+    )
+    .unwrap();
+    d.undo(1).unwrap();
+    d.publish().unwrap();
+    let r = d.redo(2);
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+// --- Immutability guard: discarded draft rejects ALL mutations ---
+
+#[test]
+fn discarded_draft_rejects_move_point() {
+    let mut d = draft();
+    d.discard().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::MovePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+            new_position: coord(1.0, 1.0),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn discarded_draft_rejects_add_point() {
+    let mut d = draft();
+    d.discard().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::AddPoint {
+            segment_index: SegmentIndex::new(0),
+            after_point_index: PointIndex::new(0),
+            point: pt(1.0, 1.0),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn discarded_draft_rejects_delete_point() {
+    let mut d = draft();
+    d.discard().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::DeletePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(1),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn discarded_draft_rejects_delete_section() {
+    let mut d = draft();
+    d.discard().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::DeleteSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn discarded_draft_rejects_replace_section() {
+    let mut d = draft();
+    d.discard().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement: vec![pt(45.1, 10.1), pt(45.2, 10.2)],
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn discarded_draft_rejects_split_segment() {
+    let mut d = draft();
+    d.discard().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::SplitSegment {
+            segment_index: SegmentIndex::new(0),
+            at_point_index: PointIndex::new(2),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn discarded_draft_rejects_join_segments() {
+    let mut d = draft2();
+    d.discard().unwrap();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::JoinSegments {
+            first_segment_index: SegmentIndex::new(0),
+            second_segment_index: SegmentIndex::new(1),
+        },
+        0,
+    );
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn discarded_draft_rejects_reset() {
+    let mut d = draft();
+    d.discard().unwrap();
+    let new_geo = vec![vec![pt(1.0, 1.0), pt(2.0, 2.0), pt(3.0, 3.0)]];
+    let r = d.reset(0, new_geo);
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn discarded_draft_rejects_undo() {
+    let mut d = draft();
+    d.apply_operation(
+        op_id(),
+        RouteOperation::MovePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+            new_position: coord(50.0, 15.0),
+        },
+        0,
+    )
+    .unwrap();
+    d.discard().unwrap();
+    let r = d.undo(1);
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}
+
+#[test]
+fn discarded_draft_rejects_redo() {
+    let mut d = draft();
+    d.apply_operation(
+        op_id(),
+        RouteOperation::MovePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+            new_position: coord(50.0, 15.0),
+        },
+        0,
+    )
+    .unwrap();
+    d.undo(1).unwrap();
+    d.discard().unwrap();
+    let r = d.redo(2);
+    assert!(matches!(r, Err(RouteEditingError::DraftNotActive)));
+}

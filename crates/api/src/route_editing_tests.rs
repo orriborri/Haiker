@@ -156,6 +156,7 @@ impl ActivityGateway for InMemoryActivityGateway {
 /// When versions are explicitly registered, it validates against them.
 pub struct InMemoryRouteVersionGateway {
     /// Set of valid (route_version_id, activity_id) pairs with optional geometry.
+    #[allow(clippy::type_complexity)]
     valid_versions: Mutex<Vec<(Uuid, ActivityId, Option<Vec<Vec<RoutePoint>>>)>>,
     /// When true, an empty set means "permit all". When false, empty set means "deny all".
     permit_when_empty: bool,
@@ -2682,4 +2683,295 @@ async fn reset_gateway_rejects_geometry_returns_422() {
     assert_eq!(json["code"], "INVALID_BASE_ROUTE_VERSION");
     assert_eq!(json["type"], "/problems/invalid-base-route-version");
     assert_eq!(json["status"], 422);
+}
+
+// --- Immutability guard API tests: published/discarded drafts return 409 ---
+
+/// Helper to publish a draft via the DELETE endpoint (discard) or by directly
+/// manipulating the in-memory repo. Since there is no publish endpoint in the API,
+/// we directly update the draft state in the repository.
+async fn publish_draft_in_repo(repo: &InMemoryRouteDraftRepository, draft_id: &str) {
+    let id = RouteDraftId::new(Uuid::parse_str(draft_id).unwrap());
+    let mut draft = repo.find_by_id(id).await.unwrap().unwrap();
+    draft.publish().unwrap();
+    repo.update(&draft).await.unwrap();
+}
+
+#[tokio::test]
+async fn apply_operation_to_published_draft_returns_409() {
+    let repo = Arc::new(InMemoryRouteDraftRepository::new());
+    let state = RouteEditingAppState {
+        repo: repo.clone(),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Publish the draft directly in the repo
+    publish_draft_in_repo(&repo, draft_id).await;
+
+    // Attempt to apply an operation
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "DRAFT_NOT_ACTIVE");
+}
+
+#[tokio::test]
+async fn apply_operation_to_discarded_draft_returns_409() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Discard the draft via the DELETE endpoint
+    let delete_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/v1/route-drafts/{draft_id}"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+    // Attempt to apply an operation to the discarded draft
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "DRAFT_NOT_ACTIVE");
+}
+
+#[tokio::test]
+async fn undo_on_published_draft_returns_409() {
+    let repo = Arc::new(InMemoryRouteDraftRepository::new());
+    let state = RouteEditingAppState {
+        repo: repo.clone(),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Apply an operation first so undo would be valid on an active draft
+    let apply_body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&apply_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Publish the draft
+    publish_draft_in_repo(&repo, draft_id).await;
+
+    // Attempt undo
+    let undo_body = serde_json::json!({"expectedRevision": 1});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/undo"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&undo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "DRAFT_NOT_ACTIVE");
+}
+
+#[tokio::test]
+async fn redo_on_discarded_draft_returns_409() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Apply an operation, then undo it so redo would be valid on an active draft
+    let apply_body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&apply_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Undo
+    let undo_body = serde_json::json!({"expectedRevision": 1});
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/undo"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&undo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Discard the draft
+    let delete_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/v1/route-drafts/{draft_id}"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+    // Attempt redo
+    let redo_body = serde_json::json!({"expectedRevision": 2});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/redo"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&redo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "DRAFT_NOT_ACTIVE");
 }
