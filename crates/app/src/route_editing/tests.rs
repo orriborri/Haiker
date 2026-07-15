@@ -993,3 +993,193 @@ fn move_point_rejects_invalid_coordinates_longitude_too_high() {
         other => panic!("expected InvalidCoordinate, got: {:?}", other),
     }
 }
+
+// --- AddPoint acceptance criteria tests ---
+
+#[test]
+fn add_point_with_elevation_only() {
+    let mut d = draft();
+    let new_point = RoutePoint::new(coord(45.05, 10.05), Some(Elevation::new(750.0)));
+    d.apply_operation(
+        op_id(),
+        RouteOperation::AddPoint {
+            segment_index: SegmentIndex::new(0),
+            after_point_index: PointIndex::new(0),
+            point: new_point.clone(),
+        },
+        0,
+    )
+    .unwrap();
+    let stored = &d.geometry[0][1];
+    assert_eq!(stored.coordinate, coord(45.05, 10.05));
+    assert_eq!(stored.elevation.unwrap().meters(), 750.0);
+    // RoutePoint only has coordinate and elevation fields - no timestamps or sensor values
+    assert_eq!(*stored, new_point);
+}
+
+#[test]
+fn add_point_without_elevation() {
+    let mut d = draft();
+    let new_point = RoutePoint::new(coord(45.05, 10.05), None);
+    d.apply_operation(
+        op_id(),
+        RouteOperation::AddPoint {
+            segment_index: SegmentIndex::new(0),
+            after_point_index: PointIndex::new(1),
+            point: new_point.clone(),
+        },
+        0,
+    )
+    .unwrap();
+    let stored = &d.geometry[0][2];
+    assert_eq!(stored.coordinate, coord(45.05, 10.05));
+    assert!(stored.elevation.is_none());
+}
+
+#[test]
+fn add_point_increments_revision() {
+    let mut d = draft();
+    assert_eq!(d.revision, 0);
+    d.apply_operation(
+        op_id(),
+        RouteOperation::AddPoint {
+            segment_index: SegmentIndex::new(0),
+            after_point_index: PointIndex::new(0),
+            point: pt(45.05, 10.05),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(d.revision, 1);
+}
+
+#[test]
+fn add_point_idempotent_with_same_operation_id() {
+    let mut d = draft();
+    let id = op_id();
+    d.apply_operation(
+        id,
+        RouteOperation::AddPoint {
+            segment_index: SegmentIndex::new(0),
+            after_point_index: PointIndex::new(0),
+            point: pt(45.05, 10.05),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(d.revision, 1);
+    let geo_after_first = d.geometry.clone();
+
+    // Apply same operation_id again - should be idempotent no-op
+    d.apply_operation(
+        id,
+        RouteOperation::AddPoint {
+            segment_index: SegmentIndex::new(0),
+            after_point_index: PointIndex::new(0),
+            point: pt(80.0, 80.0), // different payload but same id
+        },
+        1,
+    )
+    .unwrap();
+    assert_eq!(d.revision, 1);
+    assert_eq!(d.geometry, geo_after_first);
+}
+
+#[test]
+fn add_point_undo_redo_deterministic() {
+    let mut d = draft();
+    let orig_geo = d.geometry.clone();
+    d.apply_operation(
+        op_id(),
+        RouteOperation::AddPoint {
+            segment_index: SegmentIndex::new(0),
+            after_point_index: PointIndex::new(1),
+            point: pt(45.15, 10.15),
+        },
+        0,
+    )
+    .unwrap();
+    let post_add_geo = d.geometry.clone();
+    assert_eq!(d.geometry[0].len(), 5);
+
+    // Undo: geometry must be restored to original
+    d.undo(1).unwrap();
+    assert_eq!(d.geometry, orig_geo);
+
+    // Redo: geometry must match post-add state exactly
+    d.redo(2).unwrap();
+    assert_eq!(d.geometry, post_add_geo);
+}
+
+// --- DeletePoint acceptance criteria tests ---
+
+#[test]
+fn delete_point_increments_revision() {
+    let mut d = draft();
+    assert_eq!(d.revision, 0);
+    d.apply_operation(
+        op_id(),
+        RouteOperation::DeletePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(1),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(d.revision, 1);
+}
+
+#[test]
+fn delete_point_idempotent_with_same_operation_id() {
+    let mut d = draft();
+    let id = op_id();
+    d.apply_operation(
+        id,
+        RouteOperation::DeletePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(1),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(d.revision, 1);
+    let geo_after_first = d.geometry.clone();
+
+    // Apply same operation_id again - should be idempotent no-op
+    d.apply_operation(
+        id,
+        RouteOperation::DeletePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(0),
+        },
+        1,
+    )
+    .unwrap();
+    assert_eq!(d.revision, 1);
+    assert_eq!(d.geometry, geo_after_first);
+}
+
+#[test]
+fn delete_point_undo_redo_deterministic() {
+    let mut d = draft();
+    let orig_geo = d.geometry.clone();
+    d.apply_operation(
+        op_id(),
+        RouteOperation::DeletePoint {
+            segment_index: SegmentIndex::new(0),
+            point_index: PointIndex::new(2),
+        },
+        0,
+    )
+    .unwrap();
+    let post_delete_geo = d.geometry.clone();
+    assert_eq!(d.geometry[0].len(), 3);
+
+    // Undo: geometry must be restored to original
+    d.undo(1).unwrap();
+    assert_eq!(d.geometry, orig_geo);
+
+    // Redo: geometry must match post-delete state exactly
+    d.redo(2).unwrap();
+    assert_eq!(d.geometry, post_delete_geo);
+}
