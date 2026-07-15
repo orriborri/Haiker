@@ -195,6 +195,8 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
   }
 }
 
+export { editorReducer, initialState };
+
 export function useEditorState() {
   const [state, dispatch] = useReducer(editorReducer, initialState);
 
