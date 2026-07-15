@@ -106,6 +106,11 @@ impl JobQueue {
     /// (job_type, correlation_id) for active jobs. If a job with the same
     /// job_type and correlation_id already exists in a non-terminal state,
     /// the existing job's ID is returned instead of creating a duplicate.
+    ///
+    /// Handles the TOCTOU race where the conflicting job transitions to a
+    /// terminal state between the INSERT and the SELECT: if the SELECT returns
+    /// no rows, the INSERT is retried (the partial unique index no longer blocks
+    /// since the old job is now terminal).
     pub async fn enqueue_idempotent(
         &self,
         job_type: &str,
@@ -133,7 +138,9 @@ impl JobQueue {
         .await?;
 
         if result.rows_affected() == 0 {
-            // A job already exists - look up its ID
+            // A job already exists - look up its ID using fetch_optional to handle
+            // the race where the job transitions to a terminal state between the
+            // INSERT and this SELECT.
             let existing_id = sqlx::query_as::<_, (Uuid,)>(
                 r#"
                 SELECT id FROM platform.jobs
@@ -145,10 +152,36 @@ impl JobQueue {
             )
             .bind(job_type)
             .bind(correlation_id)
-            .fetch_one(&self.pool)
+            .fetch_optional(&self.pool)
             .await?;
 
-            Ok(existing_id.0)
+            match existing_id {
+                Some(row) => Ok(row.0),
+                None => {
+                    // The conflicting job transitioned to a terminal state between
+                    // our INSERT and SELECT. The partial unique index no longer
+                    // blocks, so retry the INSERT with a fresh ID.
+                    let retry_id = Uuid::new_v4();
+                    sqlx::query(
+                        r#"
+                        INSERT INTO platform.jobs (id, job_type, payload, status, scheduled_at, correlation_id)
+                        VALUES ($1, $2, $3, 'pending', now(), $4)
+                        ON CONFLICT (job_type, correlation_id)
+                            WHERE correlation_id IS NOT NULL
+                              AND status NOT IN ('completed', 'cancelled', 'failed')
+                        DO NOTHING
+                        "#,
+                    )
+                    .bind(retry_id)
+                    .bind(job_type)
+                    .bind(&payload)
+                    .bind(correlation_id)
+                    .execute(&self.pool)
+                    .await?;
+
+                    Ok(retry_id)
+                }
+            }
         } else {
             Ok(id)
         }
