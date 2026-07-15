@@ -278,7 +278,6 @@ export function redoOperation(
 export function resetDraft(
   draftId: string,
   expectedRevision: number,
-  geometry: RouteGeometryPayload,
 ): Promise<OperationResultResponse> {
   return apiFetch(
     `/route-drafts/${draftId}/reset`,
@@ -288,7 +287,7 @@ export function resetDraft(
       headers: {
         "Idempotency-Key": crypto.randomUUID(),
       },
-      body: JSON.stringify({ expectedRevision, geometry }),
+      body: JSON.stringify({ expectedRevision }),
     },
   );
 }

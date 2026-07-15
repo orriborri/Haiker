@@ -207,7 +207,6 @@ pub struct UndoRedoRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ResetRequest {
     pub expected_revision: u64,
-    pub geometry: Vec<Vec<RoutePointDto>>,
 }
 
 /// Response body for GET /v1/route-drafts/{draftId}.

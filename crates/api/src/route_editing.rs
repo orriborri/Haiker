@@ -608,7 +608,9 @@ pub async fn post_redo(
 
 /// POST /v1/route-drafts/{draftId}/reset
 ///
-/// Reset the draft to new base geometry. Requires Idempotency-Key header.
+/// Reset the draft to its immutable base version geometry. The server fetches the
+/// base geometry from the RouteVersionGateway rather than accepting it from the client.
+/// Requires Idempotency-Key header.
 /// Note: Idempotency for reset is enforced via expectedRevision (same as undo/redo).
 pub async fn post_reset(
     State(state): State<RouteEditingAppState>,
@@ -618,16 +620,6 @@ pub async fn post_reset(
     Json(body): Json<ResetRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let _idempotency_key = extract_idempotency_key(&headers)?;
-
-    let geometry = geometry_to_domain(&body.geometry).map_err(|msg| ApiError {
-        status: StatusCode::UNPROCESSABLE_ENTITY,
-        code: "VALIDATION_FAILED".to_string(),
-        message: msg,
-        problem_type: Some("/problems/validation-failed".to_string()),
-        title: Some("Validation Failed".to_string()),
-        request_id: None,
-        details: None,
-    })?;
 
     let mut draft = state
         .repo
@@ -649,8 +641,26 @@ pub async fn post_reset(
         });
     }
 
+    // The draft must have a base_route_version_id to reset against
+    let base_version_id = draft.base_route_version_id.ok_or_else(|| ApiError {
+        status: StatusCode::UNPROCESSABLE_ENTITY,
+        code: "NO_BASE_ROUTE_VERSION".to_string(),
+        message: "draft has no base route version to reset to".to_string(),
+        problem_type: Some("/problems/no-base-route-version".to_string()),
+        title: Some("No Base Route Version".to_string()),
+        request_id: None,
+        details: None,
+    })?;
+
+    // Fetch the immutable base geometry from the gateway
+    let base_geometry = state
+        .route_version_gateway
+        .get_route_version_geometry(base_version_id, draft.activity_id)
+        .await
+        .map_err(route_editing_error_to_api_error)?;
+
     draft
-        .reset(body.expected_revision, geometry)
+        .reset(body.expected_revision, base_geometry)
         .map_err(route_editing_error_to_api_error)?;
 
     state

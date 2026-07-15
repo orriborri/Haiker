@@ -120,10 +120,10 @@ export function useResetDraft(
   return useMutation<
     OperationResultResponse,
     Error,
-    { draftId: string; expectedRevision: number; geometry: RouteGeometryPayload }
+    { draftId: string; expectedRevision: number }
   >({
-    mutationFn: ({ draftId, expectedRevision, geometry }) =>
-      resetDraft(draftId, expectedRevision, geometry),
+    mutationFn: ({ draftId, expectedRevision }) =>
+      resetDraft(draftId, expectedRevision),
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({
         queryKey: ["routeDraft", variables.draftId],

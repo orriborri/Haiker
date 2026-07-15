@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::activity_catalog::ActivityId;
 use crate::identity::UserId;
 
+use super::value_objects::RoutePoint;
 use super::RouteEditingError;
 
 /// Gateway for validating activity existence, ownership, and lifecycle state.
@@ -47,4 +48,15 @@ pub trait RouteVersionGateway: Send + Sync {
         route_version_id: Uuid,
         activity_id: ActivityId,
     ) -> Result<(), RouteEditingError>;
+
+    /// Fetch the immutable geometry of a route version.
+    ///
+    /// Returns:
+    /// - `Ok(geometry)` with the base geometry as segments of route points
+    /// - `Err(RouteEditingError::InvalidBaseRouteVersion)` if the version does not exist or does not belong to the activity
+    async fn get_route_version_geometry(
+        &self,
+        route_version_id: Uuid,
+        activity_id: ActivityId,
+    ) -> Result<Vec<Vec<RoutePoint>>, RouteEditingError>;
 }

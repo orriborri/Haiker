@@ -87,9 +87,6 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     dragCancel,
   } = useEditorState();
 
-  // Track base geometry for reset operations
-  const baseGeometryRef = useRef<RoutePointDto[][] | null>(null);
-
   // Pending section deletion awaiting confirmation
   const [pendingDeleteSection, setPendingDeleteSection] = useState<SectionSelection | null>(null);
 
@@ -200,7 +197,6 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
     // Convert FeatureCollection to domain geometry format
     const geometry = recordedRouteToGeometry(recordedRoute);
-    baseGeometryRef.current = geometry;
 
     createDraft.mutate(
       { activityId, geometry },
@@ -386,12 +382,10 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
   const handleReset = useCallback(() => {
     if (!state.draftId || state.isOffline) return;
-    const geometry = state.baseGeometry ?? baseGeometryRef.current;
-    if (!geometry) return;
 
     operationStart();
     resetOp.mutate(
-      { draftId: state.draftId, expectedRevision: state.revision, geometry },
+      { draftId: state.draftId, expectedRevision: state.revision },
       {
         onSuccess: async (result) => {
           const { data: updatedDraft } = await refetchDraft();
@@ -417,7 +411,6 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     state.draftId,
     state.revision,
     state.optimisticGeometry,
-    state.baseGeometry,
     state.isOffline,
     operationStart,
     resetOp,
