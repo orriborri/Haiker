@@ -1,4 +1,4 @@
-.PHONY: build check test fmt lint run-api run-worker infra infra-down clean
+.PHONY: build check test fmt lint run-api run-worker backend frontend infra infra-down clean
 
 # Build the entire workspace
 build:
@@ -30,6 +30,17 @@ run-api:
 # Run the background worker
 run-worker:
 	cargo run --bin haiker-worker
+
+# Run the API server and worker together
+backend:
+	@trap 'kill 0' EXIT; \
+	cargo run --bin haiker-api & \
+	cargo run --bin haiker-worker & \
+	wait
+
+# Install frontend deps and run the dev server
+frontend:
+	cd frontend && pnpm install && pnpm dev
 
 # Start local infrastructure (PostgreSQL + MinIO)
 infra:

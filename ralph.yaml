@@ -1,0 +1,29 @@
+# Ralph Configuration
+# See: https://github.com/your-org/ralph
+
+backend:
+  type: kiro                      # Backend type (only "kiro" supported)
+  timeout: 600                    # Session timeout in seconds
+
+models:
+  implementation: default         # Model for RED/GREEN/REFACTOR phases
+  review: default                 # Model for REVIEW phase
+
+agents:
+  # Names of EXISTING kiro-cli agents (see `kiro-cli agent list`).
+  # Ralph never creates agents — these must already be available globally
+  # (~/.kiro/agents/) or in the workspace (.kiro/agents/), or be a built-in.
+  implementation: kiro_default    # Agent for RED/GREEN/REFACTOR phases
+  review: review-critical         # Agent for the REVIEW phase
+
+execution:
+  retries: 2                      # Max retry attempts per phase
+  auto_commit: true               # Git commit after successful task
+  run_tests: true                 # Run test command in pipeline
+  mark_tasks: true                # Update tasks.md checkboxes
+  parallel: 4                     # Max concurrent tasks (each gets own worktree)
+
+commands:
+  build: ""                       # Build command (e.g., "cargo build")
+  lint: ""                        # Lint command (e.g., "cargo clippy")
+  test: ""                        # Test command (e.g., "cargo test")

@@ -1,0 +1,559 @@
+{
+  "repo": "orriborri/Haiker",
+  "milestone": {
+    "title": "MVP / First Release",
+    "description": "Complete the private, server-authoritative GPX journey: import, inspect, correct, publish, and export a hiking route."
+  },
+  "labels": [
+    {"name": "epic", "color": "3E4B9E", "description": "Epic tracking issue"},
+    {"name": "mvp", "color": "0E8A16", "description": "Required for the first production release"},
+    {"name": "platform", "color": "D93F0B", "description": "Platform and infrastructure"},
+    {"name": "backend", "color": "5319E7", "description": "Rust backend implementation"},
+    {"name": "frontend", "color": "1D76DB", "description": "React web application"},
+    {"name": "api", "color": "0052CC", "description": "REST and OpenAPI contract"},
+    {"name": "persistence", "color": "006B75", "description": "Database and object storage"},
+    {"name": "worker", "color": "FBCA04", "description": "Background jobs and workers"},
+    {"name": "identity", "color": "C2E0C6", "description": "Identity and access"},
+    {"name": "importing", "color": "FEF2C0", "description": "Activity importing"},
+    {"name": "recorded-activity", "color": "D4C5F9", "description": "Immutable recorded activity data"},
+    {"name": "activity-catalog", "color": "BFD4F2", "description": "Activity library and lifecycle"},
+    {"name": "route-editing", "color": "F9D0C4", "description": "Route draft editing"},
+    {"name": "route-versioning", "color": "C5DEF5", "description": "Immutable corrected route versions"},
+    {"name": "exporting", "color": "BFDADC", "description": "Route export generation and delivery"},
+    {"name": "security", "color": "B60205", "description": "Security and privacy"},
+    {"name": "observability", "color": "0366D6", "description": "Tracing, metrics, logs, and alerts"},
+    {"name": "testing", "color": "7057FF", "description": "Automated verification and quality"},
+    {"name": "operations", "color": "0B5345", "description": "Production operations and recovery"},
+    {"name": "accessibility", "color": "D876E3", "description": "Accessible user experience"},
+    {"name": "agent-ready", "color": "2DA44E", "description": "Unblocked and eligible for agent dispatch"},
+    {"name": "agent-dispatching", "color": "BF8700", "description": "Dispatcher claim; inspect before clearing"},
+    {"name": "agent-dispatched", "color": "8250DF", "description": "Kiro acknowledged this task; clear only after terminal verification"}
+  ],
+  "dispatch": {
+    "ready_label": "agent-ready",
+    "claim_label": "agent-dispatching",
+    "dispatched_label": "agent-dispatched",
+    "trigger_label": "kiro",
+    "max_concurrency": 1,
+    "ack_timeout_seconds": 90
+  },
+  "resource_groups": {
+    "api-core": {
+      "capacity": 1,
+      "description": "Shared API middleware, errors, authentication, request IDs, and common OpenAPI components",
+      "paths": ["crates/api/src/*.rs", "crates/platform/src/request_id.rs", "openapi/components/**", "openapi/openapi.yaml"]
+    },
+    "frontend-client": {
+      "capacity": 1,
+      "description": "Shared frontend API client, application shell, and router",
+      "paths": ["frontend/src/api/**", "frontend/src/App.tsx", "frontend/src/router.tsx"]
+    },
+    "route-editing": {
+      "capacity": 1,
+      "description": "Route-editing domain, API, persistence, OpenAPI, and editor files",
+      "paths": ["crates/**/route_editing/**", "crates/**/src/route_editing*.rs", "openapi/**/*route-editing*", "frontend/src/features/route-editor/**", "migrations/*route_editing*"]
+    },
+    "backup-recovery": {
+      "capacity": 1,
+      "description": "Backup, restore, verification, and recovery documentation",
+      "paths": ["deploy/backup/**", "scripts/*backup*", "scripts/*restore*", "scripts/*verify*", "scripts/smoke-test.sh", "docs/adr/*backup*", "docs/runbooks/*backup*", "migrations/**"]
+    }
+  },
+  "issues": [
+    {
+      "id": "EPIC-A",
+      "title": "[Epic A] Platform foundation",
+      "labels": ["epic", "mvp", "platform"],
+      "body": "## Outcome\nHaiker has a deployable, observable, contract-driven foundation on which complete vertical slices can be built.\n\n## Scope\nTrack workspace, persistence, identity, storage, jobs, outbox, API governance, telemetry, and staging foundations.\n\n## Acceptance criteria\n- [ ] Every Epic A child issue is complete.\n- [ ] The local stack and staging deployment both pass health checks.\n- [ ] Security, telemetry, and contract checks are part of the baseline rather than deferred feature work.\n\n<!-- haiker-issue-id: EPIC-A -->"
+    },
+    {
+      "id": "EPIC-B",
+      "title": "[Epic B] Import GPX",
+      "labels": ["epic", "mvp", "importing"],
+      "body": "## Outcome\nAn authenticated user can securely upload a GPX 1.0 or 1.1 file and receive exactly one imported activity or an actionable failure.\n\n## Scope\nTrack the upload UI, import API, hostile-file controls, asynchronous parsing, duplicate detection, normalization, transactional commit, and import verification.\n\n## Acceptance criteria\n- [ ] Every Epic B child issue is complete.\n- [ ] A valid GPX appears once in the activity catalog.\n- [ ] Invalid or duplicate input cannot create partial or duplicate activity data.\n\n<!-- haiker-issue-id: EPIC-B -->"
+    },
+    {
+      "id": "EPIC-C",
+      "title": "[Epic C] Activity library",
+      "labels": ["epic", "mvp", "activity-catalog"],
+      "body": "## Outcome\nA user can find, inspect, rename, and delete only their own imported activities, including useful route views when map tiles fail.\n\n## Scope\nTrack catalog queries, responsive frontend views, route geometry delivery, ownership checks, rename, and deletion.\n\n## Acceptance criteria\n- [ ] Every Epic C child issue is complete.\n- [ ] Activity and route reads meet the provisional performance targets.\n- [ ] No activity or storage details are exposed across owners.\n\n<!-- haiker-issue-id: EPIC-C -->"
+    },
+    {
+      "id": "EPIC-D",
+      "title": "[Epic D] Route editor",
+      "labels": ["epic", "mvp", "route-editing"],
+      "body": "## Outcome\nA user can correct route geometry in a recoverable draft using all MVP operations without changing recorded truth.\n\n## Scope\nTrack draft persistence, editor UX, point and section operations, segment operations, undo/redo, reset, concurrency, and local recovery.\n\n## Acceptance criteria\n- [ ] Every Epic D child issue is complete.\n- [ ] Operations are deterministic, idempotent, authorized, and revision checked.\n- [ ] Unsaved work can be recovered without treating browser state as authoritative.\n\n<!-- haiker-issue-id: EPIC-D -->"
+    },
+    {
+      "id": "EPIC-E",
+      "title": "[Epic E] Route versions",
+      "labels": ["epic", "mvp", "route-versioning"],
+      "body": "## Outcome\nA valid draft can be published as an immutable corrected version, compared with history, and selected without altering the recorded route.\n\n## Scope\nTrack validation, transactional publication, corrected statistics, version history, comparison, and current-version selection.\n\n## Acceptance criteria\n- [ ] Every Epic E child issue is complete.\n- [ ] Publication, audit, and current-route selection commit atomically.\n- [ ] Recorded and corrected statistics remain visibly distinct.\n\n<!-- haiker-issue-id: EPIC-E -->"
+    },
+    {
+      "id": "EPIC-F",
+      "title": "[Epic F] GPX export",
+      "labels": ["epic", "mvp", "exporting"],
+      "body": "## Outcome\nA user can request and securely download a GPX export of a fixed immutable route version.\n\n## Scope\nTrack export requests, worker generation, private artifact storage, status UX, authorized download, expiry, and round-trip verification.\n\n## Acceptance criteria\n- [ ] Every Epic F child issue is complete.\n- [ ] Exported geometry round trips within the agreed tolerance.\n- [ ] Expired or unauthorized artifacts cannot be downloaded.\n\n<!-- haiker-issue-id: EPIC-F -->"
+    },
+    {
+      "id": "EPIC-G",
+      "title": "[Epic G] Production readiness",
+      "labels": ["epic", "mvp", "operations"],
+      "body": "## Outcome\nThe complete MVP can be operated securely and recovered within approved targets under realistic load and failure conditions.\n\n## Scope\nTrack abuse controls, security review, compatibility, accessibility, load tests, backup and restore, alerting, runbooks, and release evidence.\n\n## Acceptance criteria\n- [ ] Every Epic G child issue is complete.\n- [ ] Critical and high security findings are resolved.\n- [ ] One full restore succeeds and release criteria have recorded evidence.\n\n<!-- haiker-issue-id: EPIC-G -->"
+    },
+    {
+      "id": "A-01",
+      "title": "Initialize the Rust workspace and module boundaries",
+      "labels": ["mvp", "platform", "backend"],
+      "parent_id": "EPIC-A",
+      "body": "## Outcome\nDevelopers can build and run a modular-monolith skeleton with clear bounded-context ownership.\n\n## Scope\nCreate the Cargo workspace and app, API, worker, platform, and test-support crates; establish context modules, configuration conventions, health endpoints, and one-command local startup.\n\n## Acceptance criteria\n- [ ] The workspace builds, formats, lints, and tests in CI.\n- [ ] Domain modules do not depend on Axum, SQLx, or storage SDK types.\n- [ ] API and worker processes start locally and expose health/readiness status.\n\n<!-- haiker-issue-id: A-01 -->"
+    },
+    {
+      "id": "A-02",
+      "title": "Provision PostgreSQL, PostGIS, and context-owned migrations",
+      "labels": ["mvp", "platform", "persistence", "backend"],
+      "parent_id": "EPIC-A",
+      "blocked_by": ["A-01"],
+      "body": "## Outcome\nThe application has a reproducible spatial database whose schemas and migrations preserve bounded-context ownership.\n\n## Scope\nAdd local and staging PostgreSQL/PostGIS configuration, SQLx migration tooling, context schemas, least-privilege roles, migration checks, and integrity-test scaffolding.\n\n## Acceptance criteria\n- [ ] A clean environment applies all migrations and verifies PostGIS.\n- [ ] Each context owns its schema and migration path.\n- [ ] CI detects migration failures and validates rollback or forward-recovery procedures.\n\n<!-- haiker-issue-id: A-02 -->"
+    },
+    {
+      "id": "A-03",
+      "title": "Implement OIDC authentication, secure sessions, and ownership policy",
+      "labels": ["mvp", "identity", "security", "api", "backend"],
+      "parent_id": "EPIC-A",
+      "blocked_by": ["A-01", "A-02"],
+      "body": "## Outcome\nThe web client can establish and end a secure session, and backend slices share one deny-by-default ownership policy.\n\n## Scope\nIntegrate the selected managed OIDC provider, HTTP-only SameSite cookies, CSRF defense, session expiry/logout, current-user endpoint, and reusable actor-scoped authorization checks.\n\n## Acceptance criteria\n- [ ] Login, current-user, expiry, and logout flows work end to end.\n- [ ] Session fixation and CSRF controls are covered by tests.\n- [ ] Missing, invalid, and cross-owner access returns the documented non-disclosing response.\n\n<!-- haiker-issue-id: A-03 -->"
+    },
+    {
+      "id": "A-04",
+      "title": "Configure private object storage and signed access",
+      "labels": ["mvp", "platform", "persistence", "security"],
+      "parent_id": "EPIC-A",
+      "blocked_by": ["A-01"],
+      "body": "## Outcome\nOriginal uploads and generated exports can be stored privately with integrity and lifecycle controls.\n\n## Scope\nAdd an S3-compatible adapter, private encrypted buckets, versioning for source artifacts, checksum verification, short-lived signed operations, lifecycle policies, and local test storage.\n\n## Acceptance criteria\n- [ ] Buckets reject public access and require encryption.\n- [ ] Object keys and signed URLs never appear in normal API payloads or logs.\n- [ ] Integration tests cover upload, download, checksum mismatch, expiry, and unavailable storage.\n\n<!-- haiker-issue-id: A-04 -->"
+    },
+    {
+      "id": "A-05",
+      "title": "Add the PostgreSQL job queue and bounded worker runtime",
+      "labels": ["mvp", "platform", "worker", "persistence", "backend"],
+      "parent_id": "EPIC-A",
+      "blocked_by": ["A-01", "A-02"],
+      "body": "## Outcome\nLong-running work executes asynchronously with durable state and predictable failure behavior.\n\n## Scope\nImplement the PostgreSQL-backed queue, worker polling, stable job IDs, idempotent claims, retries, maximum attempts, failed state, cancellation hooks, timeouts, correlation IDs, and graceful shutdown.\n\n## Acceptance criteria\n- [ ] Jobs survive worker restarts and are not executed concurrently after a valid claim.\n- [ ] Retry exhaustion produces a queryable failed state.\n- [ ] Queue depth, duration, attempts, and failures are instrumented.\n\n<!-- haiker-issue-id: A-05 -->"
+    },
+    {
+      "id": "A-06",
+      "title": "Implement transactional outbox and server-side audit events",
+      "labels": ["mvp", "platform", "persistence", "worker", "observability"],
+      "parent_id": "EPIC-A",
+      "blocked_by": ["A-02", "A-05"],
+      "body": "## Outcome\nState changes can atomically record auditable facts and reliably trigger asynchronous reactions.\n\n## Scope\nAdd outbox and append-only audit storage, transaction APIs, idempotent dispatch, retention hooks, actor/action/resource metadata, and privacy-safe payload conventions.\n\n## Acceptance criteria\n- [ ] Domain state, audit record, and outbox message commit or roll back together.\n- [ ] Re-dispatch is idempotent and preserves event ordering where required.\n- [ ] Tests prove sensitive file contents and route coordinates are not recorded.\n\n<!-- haiker-issue-id: A-06 -->"
+    },
+    {
+      "id": "A-07",
+      "title": "Establish OpenAPI 3.1.1 governance and generated client CI",
+      "labels": ["mvp", "api", "platform", "frontend", "testing"],
+      "parent_id": "EPIC-A",
+      "blocked_by": ["A-01"],
+      "body": "## Outcome\nThe external REST contract is authoritative, reviewable, and consumed through a generated TypeScript client.\n\n## Scope\nCreate the multi-file /v1 OpenAPI 3.1.1 description, Problem Details envelope, security and idempotency conventions, bundling/linting, unique operation-ID checks, breaking-change detection, client generation, preview docs, and Rust contract-test harness.\n\n## Acceptance criteria\n- [ ] CI resolves every reference and rejects invalid or undocumented responses.\n- [ ] CI rejects unapproved breaking changes and stale generated artifacts.\n- [ ] The frontend compiles against the generated client and Rust contract tests exercise the bundled contract.\n\n<!-- haiker-issue-id: A-07 -->"
+    },
+    {
+      "id": "A-08",
+      "title": "Instrument API, workers, database, storage, and queue",
+      "labels": ["mvp", "platform", "observability", "backend"],
+      "parent_id": "EPIC-A",
+      "blocked_by": ["A-01", "A-05"],
+      "body": "## Outcome\nOperators can follow a request through asynchronous work and identify latency or failure without exposing private route data.\n\n## Scope\nAdd structured tracing and OpenTelemetry propagation, request IDs, correlation IDs, operation-ID metrics, dependency timing, redaction rules, and baseline dashboards.\n\n## Acceptance criteria\n- [ ] HTTP-to-job-to-worker traces retain one correlation chain.\n- [ ] Metrics cover latency, error rate, database/storage timing, and queue health.\n- [ ] User IDs, activity IDs, file contents, and coordinates are absent from labels and normal logs.\n\n<!-- haiker-issue-id: A-08 -->"
+    },
+    {
+      "id": "A-09",
+      "title": "Deploy the application stack to staging",
+      "labels": ["mvp", "platform", "operations", "security"],
+      "parent_id": "EPIC-A",
+      "blocked_by": ["A-02", "A-03", "A-04", "A-05", "A-07", "A-08"],
+      "body": "## Outcome\nA production-shaped staging environment can run the web client, API, workers, database, and storage with managed secrets.\n\n## Scope\nAutomate deployment, environment configuration, TLS, secret injection and rotation procedure, database migration execution, health/readiness checks, smoke tests, and rollback.\n\n## Acceptance criteria\n- [ ] A clean deployment reaches healthy status without manual database changes.\n- [ ] Secrets are kept out of source, build artifacts, client bundles, and logs.\n- [ ] Smoke tests cover authentication plus API, worker, database, and storage connectivity.\n\n<!-- haiker-issue-id: A-09 -->"
+    },
+    {
+      "id": "B-01",
+      "title": "Define the import API contract and state machine",
+      "labels": ["mvp", "importing", "api", "backend"],
+      "parent_id": "EPIC-B",
+      "blocked_by": ["A-03", "A-07"],
+      "body": "## Outcome\nClients can start an import, complete its upload, and query a stable, documented status model.\n\n## Scope\nSpecify and implement POST /v1/imports, upload completion, and GET import status with stable operation IDs, idempotency, ownership, valid transitions, Problem Details errors, and sanitized failure reasons.\n\n## Acceptance criteria\n- [ ] The contract represents all MVP import states and terminal outcomes.\n- [ ] Duplicate idempotency keys replay only matching requests; invalid transitions fail.\n- [ ] Authorization and contract tests cover every operation and documented response.\n\n<!-- haiker-issue-id: B-01 -->"
+    },
+    {
+      "id": "B-02",
+      "title": "Build the GPX upload and import-progress experience",
+      "labels": ["mvp", "importing", "frontend", "accessibility"],
+      "resource_locks": ["frontend-client"],
+      "parent_id": "EPIC-B",
+      "blocked_by": ["B-01", "A-07"],
+      "body": "## Outcome\nA user can select a GPX file, upload it, follow asynchronous progress, and understand duplicate or failure outcomes.\n\n## Scope\nBuild the React import feature with client validation, upload progress, polling through TanStack Query, cancellation-safe navigation, accessible status announcements, retry affordance, and actionable errors.\n\n## Acceptance criteria\n- [ ] The UI accepts GPX only and explains size or media-type rejection before upload where possible.\n- [ ] Refreshing or navigating back resumes status from the server.\n- [ ] Completed, failed, and exact-duplicate states lead to the correct activity or recovery action.\n\n<!-- haiker-issue-id: B-02 -->"
+    },
+    {
+      "id": "B-03",
+      "title": "Securely receive and finalize original GPX uploads",
+      "labels": ["mvp", "importing", "persistence", "security", "api"],
+      "resource_locks": ["api-core"],
+      "parent_id": "EPIC-B",
+      "blocked_by": ["A-04", "B-01"],
+      "body": "## Outcome\nAn authorized import receives one immutable original artifact without parsing large files in the API process.\n\n## Scope\nIssue a bounded upload target, validate media type and 50 MB limit, sanitize metadata, finalize only owned uploads, verify object metadata, and transition Requested through Uploading to Uploaded.\n\n## Acceptance criteria\n- [ ] Oversized, missing, mismatched, and cross-owner completions fail safely.\n- [ ] The original object is immutable and private after completion.\n- [ ] API resource use remains bounded and object-storage failures leave a recoverable import state.\n\n<!-- haiker-issue-id: B-03 -->"
+    },
+    {
+      "id": "B-04",
+      "title": "Calculate checksums and prevent exact duplicate activities",
+      "labels": ["mvp", "importing", "persistence", "backend"],
+      "parent_id": "EPIC-B",
+      "blocked_by": ["A-02", "B-03"],
+      "body": "## Outcome\nUploading identical file bytes for the same owner does not create a second activity.\n\n## Scope\nCalculate and persist SHA-256, enforce the owner-scoped duplicate rule under concurrency, return an authorized existing reference, and audit duplicate outcomes without logging file content.\n\n## Acceptance criteria\n- [ ] Concurrent identical uploads result in at most one imported activity.\n- [ ] A duplicate response never reveals another owner's import or activity.\n- [ ] Checksum failure is reported and cannot advance the import to parsing.\n\n<!-- haiker-issue-id: B-04 -->"
+    },
+    {
+      "id": "B-05",
+      "title": "Orchestrate durable GPX parsing jobs and import transitions",
+      "labels": ["mvp", "importing", "worker", "backend", "observability"],
+      "parent_id": "EPIC-B",
+      "blocked_by": ["A-05", "B-03", "B-04"],
+      "body": "## Outcome\nEvery finalized non-duplicate upload progresses asynchronously to completion or a stable, actionable failure.\n\n## Scope\nQueue parsing once, enforce Uploaded through Validating, Queued, Parsing, and Committing transitions, configure retries/timeouts/cancellation, expose sanitized failure codes, and clean up abandoned work.\n\n## Acceptance criteria\n- [ ] Enqueue and transition behavior is idempotent across retries and restarts.\n- [ ] Worker unavailability leaves the import queued and queryable.\n- [ ] Metrics report state duration, attempts, failures, file size, and point count without private labels.\n\n<!-- haiker-issue-id: B-05 -->"
+    },
+    {
+      "id": "B-06",
+      "title": "Harden GPX 1.0 and 1.1 validation and parsing",
+      "labels": ["mvp", "importing", "worker", "security", "backend"],
+      "parent_id": "EPIC-B",
+      "blocked_by": ["B-05"],
+      "body": "## Outcome\nSupported GPX files are parsed predictably while hostile or malformed XML is rejected within strict resource bounds.\n\n## Scope\nImplement GPX 1.0/1.1 validation, disable external entities and URL retrieval, enforce XML depth, point, segment, memory, and time limits, sanitize metadata, and handle missing optional elevation or time.\n\n## Acceptance criteria\n- [ ] Valid 1.0 and 1.1 fixtures parse without fabricating telemetry.\n- [ ] Corrupt XML, invalid coordinates, excessive depth, 500,001 points, and 10,001 segments fail with stable codes.\n- [ ] Parser fuzz/property tests and timeout tests run in CI.\n\n<!-- haiker-issue-id: B-06 -->"
+    },
+    {
+      "id": "B-07",
+      "title": "Normalize recorded tracks, segments, points, and previews",
+      "labels": ["mvp", "importing", "recorded-activity", "backend", "persistence"],
+      "parent_id": "EPIC-B",
+      "blocked_by": ["B-06"],
+      "body": "## Outcome\nParsed input becomes validated immutable recorded geometry plus efficient preview data without losing segment meaning.\n\n## Scope\nConstruct domain coordinates, preserve track and segment boundaries, normalize timestamps/elevation when present, calculate recorded statistics and bounds, create preview geometry, and benchmark the full-resolution representation.\n\n## Acceptance criteria\n- [ ] Longitude/latitude order is correct at GeoJSON boundaries.\n- [ ] Original point values and segment boundaries are preserved.\n- [ ] Representative 500,000-point fixtures meet the agreed worker memory and preview-generation budgets.\n\n<!-- haiker-issue-id: B-07 -->"
+    },
+    {
+      "id": "B-08",
+      "title": "Commit an imported activity and immutable original route",
+      "labels": ["mvp", "importing", "recorded-activity", "activity-catalog", "persistence"],
+      "parent_id": "EPIC-B",
+      "blocked_by": ["A-06", "B-04", "B-07"],
+      "body": "## Outcome\nA successfully parsed file creates exactly one catalog activity, recorded source, and original route version.\n\n## Scope\nCoordinate context application interfaces to persist the source artifact reference, immutable source revision and recorded route, catalog activity, initial route version, summaries, audit event, and outbox messages in one transaction.\n\n## Acceptance criteria\n- [ ] Success creates one coherent activity and marks the import Completed.\n- [ ] Any write failure rolls back all activity-domain records and leaves the original artifact available for controlled retry.\n- [ ] Database constraints prevent mutation of finalized recorded data and original versions.\n\n<!-- haiker-issue-id: B-08 -->"
+    },
+    {
+      "id": "B-09",
+      "title": "Verify the complete import slice with immutable fixtures",
+      "labels": ["mvp", "importing", "testing", "frontend", "security"],
+      "parent_id": "EPIC-B",
+      "blocked_by": ["B-02", "B-08"],
+      "body": "## Outcome\nThe upload-to-catalog flow is protected against format regressions, authorization gaps, retries, and partial writes.\n\n## Scope\nCreate immutable GPX fixtures and domain, PostgreSQL, contract, worker, and browser tests for valid variants, large routes, non-ASCII metadata, malformed input, exact duplicates, outages, and cross-owner access.\n\n## Acceptance criteria\n- [ ] End-to-end tests prove valid upload, visible progress, completion, and catalog navigation.\n- [ ] Duplicate, parser failure, object-storage failure, and worker restart scenarios leave consistent state.\n- [ ] Tests assert no source mutation, private-data leakage, or partial activity creation.\n\n<!-- haiker-issue-id: B-09 -->"
+    },
+    {
+      "id": "C-01",
+      "title": "Expose an owner-scoped paginated activity list",
+      "labels": ["mvp", "activity-catalog", "api", "backend", "persistence"],
+      "parent_id": "EPIC-C",
+      "blocked_by": ["B-08"],
+      "body": "## Outcome\nAn authenticated user can efficiently page through only their own active activities.\n\n## Scope\nImplement GET /v1/activities with cursor pagination, stable ordering, client-oriented summaries, preview references, owner scoping, query indexes, OpenAPI examples, and operation telemetry.\n\n## Acceptance criteria\n- [ ] Pagination has no duplicates or gaps while new activities are added.\n- [ ] Responses contain title, type, times, recorded summary, corrected summary when available, and preview metadata.\n- [ ] Integration and authorization tests prove owner isolation and the metadata p95 target.\n\n<!-- haiker-issue-id: C-01 -->"
+    },
+    {
+      "id": "C-02",
+      "title": "Build the responsive activity library",
+      "labels": ["mvp", "activity-catalog", "frontend", "accessibility"],
+      "parent_id": "EPIC-C",
+      "blocked_by": ["C-01", "A-07"],
+      "body": "## Outcome\nA user can scan imported hikes and open one from a responsive, keyboard-accessible library.\n\n## Scope\nBuild paginated TanStack Query loading, summary rows, preview thumbnails, empty/loading/error/offline states, focus management, and cache of recent summaries without making the browser authoritative.\n\n## Acceptance criteria\n- [ ] The library works at supported mobile and desktop sizes without layout shift or clipped text.\n- [ ] Loading, empty, failed, and cached-offline states are distinguishable and accessible.\n- [ ] Selecting an activity navigates to its detail view and preserves list position on return.\n\n<!-- haiker-issue-id: C-02 -->"
+    },
+    {
+      "id": "C-03",
+      "title": "Expose owner-scoped activity detail",
+      "labels": ["mvp", "activity-catalog", "api", "backend"],
+      "parent_id": "EPIC-C",
+      "blocked_by": ["B-08"],
+      "body": "## Outcome\nA user can retrieve complete metadata and route references for one owned activity.\n\n## Scope\nImplement GET /v1/activities/{activityId} with current route selection, recorded and corrected summaries, lifecycle state, route links, ownership checks, Problem Details errors, and telemetry.\n\n## Acceptance criteria\n- [ ] The response conforms to OpenAPI and never exposes object keys.\n- [ ] Missing and cross-owner IDs return the same non-disclosing result.\n- [ ] Database and contract tests cover original-only and corrected-version activities.\n\n<!-- haiker-issue-id: C-03 -->"
+    },
+    {
+      "id": "C-04",
+      "title": "Build activity detail and recorded-route map views",
+      "labels": ["mvp", "activity-catalog", "recorded-activity", "frontend", "accessibility"],
+      "parent_id": "EPIC-C",
+      "blocked_by": ["C-03", "C-05"],
+      "body": "## Outcome\nA user can inspect an activity's recorded route and metadata even when the external map provider is unavailable.\n\n## Scope\nBuild the detail page with MapLibre route rendering, map-to-route bounds, loading/error/offline states, route-data fallback, keyboard navigation, and a path to editing.\n\n## Acceptance criteria\n- [ ] Recorded geometry remains visible against a neutral fallback when tiles fail.\n- [ ] Route information does not rely on color alone and controls have visible focus.\n- [ ] Large routes remain interactive using preview-first then full-geometry loading.\n\n<!-- haiker-issue-id: C-04 -->"
+    },
+    {
+      "id": "C-05",
+      "title": "Serve preview and full recorded-route geometry",
+      "labels": ["mvp", "recorded-activity", "api", "backend", "persistence"],
+      "parent_id": "EPIC-C",
+      "blocked_by": ["B-08"],
+      "body": "## Outcome\nClients can load fast previews and authorized full-resolution recorded geometry without storage leakage.\n\n## Scope\nImplement recorded-route preview and full geometry reads using application/geo+json where practical, bounding boxes, spatial indexes, conditional caching, ownership checks, and performance telemetry.\n\n## Acceptance criteria\n- [ ] GeoJSON uses longitude, latitude ordering and preserves segment structure.\n- [ ] Preview p95 is under 500 ms in the agreed representative test.\n- [ ] Unauthorized requests and responses reveal neither geometry nor object-storage details.\n\n<!-- haiker-issue-id: C-05 -->"
+    },
+    {
+      "id": "C-06",
+      "title": "Deliver activity rename as a complete slice",
+      "labels": ["mvp", "activity-catalog", "api", "backend", "frontend"],
+      "parent_id": "EPIC-C",
+      "blocked_by": ["C-02", "C-03"],
+      "body": "## Outcome\nA user can rename an owned activity and immediately see the sanitized title everywhere.\n\n## Scope\nAdd PATCH title contract, domain validation, ownership enforcement, persistence, audit event, optimistic UI with rollback, inline errors, telemetry, and tests.\n\n## Acceptance criteria\n- [ ] Valid titles update list and detail caches consistently.\n- [ ] Empty, excessive, unknown-field, and metadata-XSS inputs are rejected or safely rendered.\n- [ ] Cross-owner mutation fails without disclosing existence and is covered end to end.\n\n<!-- haiker-issue-id: C-06 -->"
+    },
+    {
+      "id": "C-07",
+      "title": "Deliver owner-safe activity deletion",
+      "labels": ["mvp", "activity-catalog", "api", "backend", "frontend", "security"],
+      "parent_id": "EPIC-C",
+      "blocked_by": ["C-02", "C-03", "A-06"],
+      "body": "## Outcome\nA user can deliberately remove an activity from normal use without cross-owner impact or orphaned active work.\n\n## Scope\nImplement the activity lifecycle deletion command, ownership and state rules, treatment of drafts/jobs/artifacts, audit/outbox records, confirmation UX, cache invalidation, and retention-aware cleanup.\n\n## Acceptance criteria\n- [ ] Deleted activities disappear from normal list/detail reads and reject new edits.\n- [ ] Confirmation identifies the affected activity and is keyboard accessible.\n- [ ] Repeated or cross-owner deletion is safe, non-disclosing, audited, and tested.\n\n<!-- haiker-issue-id: C-07 -->"
+    },
+    {
+      "id": "D-01",
+      "title": "Create, load, and persist an owner-scoped route draft",
+      "labels": ["mvp", "route-editing", "api", "backend", "persistence"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["C-03", "C-05"],
+      "body": "## Outcome\nA user can start or resume a server-authoritative draft based on an immutable route version.\n\n## Scope\nImplement draft aggregate and storage plus create/get endpoints with base version, current geometry, revision zero, operation history, ownership, idempotency, lifecycle rules, and expiry metadata.\n\n## Acceptance criteria\n- [ ] Draft creation records one owned activity and fixed base version without copying mutable recorded truth.\n- [ ] Reload returns exact server geometry and current revision.\n- [ ] Deleted activities, invalid bases, and cross-owner access fail with documented errors.\n\n<!-- haiker-issue-id: D-01 -->"
+    },
+    {
+      "id": "D-02",
+      "title": "Build the accessible route-editor shell and selection model",
+      "labels": ["mvp", "route-editing", "frontend", "accessibility"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-01"],
+      "body": "## Outcome\nA user can enter the editor, distinguish original from corrected geometry, select route elements, and understand draft state.\n\n## Scope\nBuild the MapLibre editor shell, tool controls, explicit point/section/segment selection, stable toolbar dimensions, distinct line styles beyond color, touch targets, focus states, keyboard actions where feasible, and tile-failure fallback.\n\n## Acceptance criteria\n- [ ] Recorded and draft routes remain visually distinguishable in all supported states.\n- [ ] Selection and tool state are explicit and announced accessibly.\n- [ ] Mobile and desktop layouts have no overlapping controls, clipped labels, or inaccessible actions.\n\n<!-- haiker-issue-id: D-02 -->"
+    },
+    {
+      "id": "D-03",
+      "title": "Implement MovePoint from interaction through persistence",
+      "labels": ["mvp", "route-editing", "api", "backend", "frontend"],
+      "resource_locks": ["route-editing"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-01", "D-02"],
+      "body": "## Outcome\nA user can move one inaccurate point and receive immediate, durable corrected geometry.\n\n## Scope\nDefine the MovePoint operation, coordinate validation, Idempotency-Key and expectedRevision handling, operation persistence, distance preview, pointer interaction, optimistic feedback, errors, telemetry, and audit behavior.\n\n## Acceptance criteria\n- [ ] An accepted move increments revision exactly once and survives reload.\n- [ ] Replayed operation IDs are idempotent and stale revisions return 409.\n- [ ] Invalid coordinates and attempts against another owner's draft are rejected and tested.\n\n<!-- haiker-issue-id: D-03 -->"
+    },
+    {
+      "id": "D-04",
+      "title": "Implement AddPoint and DeletePoint operations",
+      "labels": ["mvp", "route-editing", "api", "backend", "frontend"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-03"],
+      "body": "## Outcome\nA user can insert a corrected coordinate or remove an erroneous point without inventing recorded telemetry.\n\n## Scope\nAdd domain operations and UI tools for insertion position, optional elevation, deletion constraints, revision/idempotency rules, deterministic previews, structured errors, persistence, and audit.\n\n## Acceptance criteria\n- [ ] Added points contain coordinates and optional elevation only; timestamps and sensor values remain absent.\n- [ ] Deletion cannot violate minimum valid segment geometry.\n- [ ] Both operations increment revision once, survive reload, and have domain/API/browser coverage.\n\n<!-- haiker-issue-id: D-04 -->"
+    },
+    {
+      "id": "D-05",
+      "title": "Select and delete a contiguous route section",
+      "labels": ["mvp", "route-editing", "api", "backend", "frontend"],
+      "resource_locks": ["route-editing"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-01", "D-02"],
+      "body": "## Outcome\nA user can clearly select a bounded erroneous section and remove it while retaining valid route topology.\n\n## Scope\nModel stable section endpoints, selection interaction and confirmation, DeleteSection validation, revision/idempotency behavior, persistence, preview distance, and structured failures.\n\n## Acceptance criteria\n- [ ] The selected range is visible before destructive confirmation.\n- [ ] Reversed, stale, missing, and topology-breaking ranges are rejected deterministically.\n- [ ] Accepted deletion increments revision once and produces the same geometry after reload.\n\n<!-- haiker-issue-id: D-05 -->"
+    },
+    {
+      "id": "D-06",
+      "title": "Draw and apply a replacement route section",
+      "labels": ["mvp", "route-editing", "api", "backend", "frontend"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-04", "D-05"],
+      "body": "## Outcome\nA user can replace a bad section with deliberately drawn corrected geometry.\n\n## Scope\nBuild replacement drawing and editing, endpoint continuity rules, ReplaceSection operation, coordinate and complexity limits, expectedRevision/idempotency, persistence, distance preview, failure UX, and telemetry.\n\n## Acceptance criteria\n- [ ] A valid replacement joins the intended endpoints and persists exactly.\n- [ ] Invalid, excessive, disconnected, or stale replacement input leaves draft state unchanged.\n- [ ] New replacement points do not receive fabricated timestamps or sensor telemetry.\n\n<!-- haiker-issue-id: D-06 -->"
+    },
+    {
+      "id": "D-07",
+      "title": "Implement split-segment and compatible join operations",
+      "labels": ["mvp", "route-editing", "api", "backend", "frontend"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-04", "D-05"],
+      "body": "## Outcome\nA user can deliberately change segment topology while preserving ordered geometry.\n\n## Scope\nDefine SplitSegment and JoinSegments rules, compatible-end selection, stable identifiers, UI affordances, revision/idempotency handling, persistence, errors, and topology tests.\n\n## Acceptance criteria\n- [ ] Split produces two valid ordered segments without losing points.\n- [ ] Join accepts only compatible segment ends and produces deterministic order.\n- [ ] Invalid or stale topology operations leave revision and geometry unchanged.\n\n<!-- haiker-issue-id: D-07 -->"
+    },
+    {
+      "id": "D-08",
+      "title": "Implement deterministic undo and redo",
+      "labels": ["mvp", "route-editing", "api", "backend", "frontend", "testing"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-03", "D-06", "D-07"],
+      "body": "## Outcome\nA user can reverse and reapply every supported edit with exact, predictable geometry.\n\n## Scope\nModel undo/redo history for all operations, endpoints and UI controls, revision checks, redo invalidation after a new edit, disabled states, persistence, keyboard actions, and sequence property tests.\n\n## Acceptance criteria\n- [ ] Undo restores the exact prior geometry and redo restores the exact undone result.\n- [ ] A new operation after undo clears the invalid redo branch.\n- [ ] Long mixed-operation sequences remain deterministic across reloads and retries.\n\n<!-- haiker-issue-id: D-08 -->"
+    },
+    {
+      "id": "D-09",
+      "title": "Reset a draft to its immutable base version",
+      "labels": ["mvp", "route-editing", "api", "backend", "frontend"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-08"],
+      "body": "## Outcome\nA user can intentionally discard draft changes and return to the exact base geometry.\n\n## Scope\nImplement reset command, confirmation UX, expectedRevision and idempotency, history handling, server persistence, audit event, cache update, and tests against original and corrected bases.\n\n## Acceptance criteria\n- [ ] Reset reproduces the fixed base version byte-for-byte at the domain representation.\n- [ ] Stale or cross-owner reset cannot change state.\n- [ ] UI clearly identifies the destructive effect and immediately reflects the new revision and history state.\n\n<!-- haiker-issue-id: D-09 -->"
+    },
+    {
+      "id": "D-10",
+      "title": "Handle edit idempotency and stale-revision conflicts end to end",
+      "labels": ["mvp", "route-editing", "api", "backend", "frontend", "testing"],
+      "resource_locks": ["api-core", "frontend-client", "route-editing"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-01", "A-07"],
+      "body": "## Outcome\nRetries never double-apply edits, and concurrent changes produce a clear recovery flow instead of silent overwrite.\n\n## Scope\nCentralize operation-ID and payload replay rules, expectedRevision validation, 409 Problem Details, request retry behavior, conflict UI with server reload and local-operation preservation, and concurrency tests.\n\n## Acceptance criteria\n- [ ] Matching retries replay the original response; key reuse with different payload fails.\n- [ ] No mutation endpoint accepts a stale expectedRevision.\n- [ ] The conflict UI shows server state and lets the user safely recover or discard pending local work.\n\n<!-- haiker-issue-id: D-10 -->"
+    },
+    {
+      "id": "D-11",
+      "title": "Autosave and recover unsaved local draft operations",
+      "labels": ["mvp", "route-editing", "frontend", "persistence"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-01", "D-10"],
+      "body": "## Outcome\nA browser crash or transient disconnection does not silently lose unacknowledged edits or issue unsafe writes.\n\n## Scope\nPersist pending operations and base revision in IndexedDB, reconcile acknowledged operations with server state, cache the application shell and recent read models, provide recovery/discard UX, and block server writes while offline.\n\n## Acceptance criteria\n- [ ] Only unacknowledged operations are offered for recovery after reload.\n- [ ] Reconnection revalidates server revision before sending pending work.\n- [ ] Local data never overwrites server state automatically and is cleared after publish, reset, discard, or confirmed replay.\n\n<!-- haiker-issue-id: D-11 -->"
+    },
+    {
+      "id": "D-12",
+      "title": "Verify route-editing invariants and complete editor journeys",
+      "labels": ["mvp", "route-editing", "testing", "frontend", "security"],
+      "parent_id": "EPIC-D",
+      "blocked_by": ["D-04", "D-06", "D-07", "D-09", "D-10", "D-11"],
+      "body": "## Outcome\nThe complete editor is regression-protected across geometry, persistence, authorization, concurrency, accessibility, and recovery behavior.\n\n## Scope\nAdd domain and proptest sequences, PostgreSQL concurrency tests, OpenAPI contract tests, and browser journeys covering every operation, undo/redo/reset, reload, offline recovery, conflict, map failure, and unauthorized access.\n\n## Acceptance criteria\n- [ ] Random valid operation sequences preserve topology and deterministic undo/redo.\n- [ ] Browser tests complete point, section, and segment correction flows with keyboard and pointer input.\n- [ ] No test can mutate recorded or published geometry through draft APIs.\n\n<!-- haiker-issue-id: D-12 -->"
+    },
+    {
+      "id": "E-01",
+      "title": "Validate a draft for publication",
+      "labels": ["mvp", "route-versioning", "route-editing", "api", "backend"],
+      "parent_id": "EPIC-E",
+      "blocked_by": ["D-09", "D-12"],
+      "body": "## Outcome\nA user receives precise, stable validation results before a draft can become an immutable route version.\n\n## Scope\nDefine publication validation for ownership, draft state, revision, coordinate ranges, segment topology, point counts, and base version; expose structured domain errors and frontend validation feedback.\n\n## Acceptance criteria\n- [ ] Valid geometry passes without changing draft or route-version state.\n- [ ] Every invalid condition maps to a documented 422 or 409 Problem Details response.\n- [ ] The editor highlights actionable validation failures without exposing internal storage details.\n\n<!-- haiker-issue-id: E-01 -->"
+    },
+    {
+      "id": "E-02",
+      "title": "Publish an immutable route version transactionally",
+      "labels": ["mvp", "route-versioning", "api", "backend", "persistence", "security"],
+      "parent_id": "EPIC-E",
+      "blocked_by": ["E-01", "A-06"],
+      "body": "## Outcome\nA user can publish a corrected route exactly once without changing the recorded route.\n\n## Scope\nImplement the idempotent publication command and endpoint to revalidate expectedRevision, allocate a per-activity version, persist immutable geometry, update the current-route pointer, mark the draft published, and append audit/outbox records in one transaction.\n\n## Acceptance criteria\n- [ ] All publication writes commit atomically or none do.\n- [ ] Replays cannot create duplicate versions and cross-owner publication fails.\n- [ ] Database and domain rules reject updates to published versions and recorded geometry remains unchanged.\n\n<!-- haiker-issue-id: E-02 -->"
+    },
+    {
+      "id": "E-03",
+      "title": "Calculate and display separate corrected statistics",
+      "labels": ["mvp", "route-versioning", "activity-catalog", "backend", "frontend"],
+      "parent_id": "EPIC-E",
+      "blocked_by": ["E-02"],
+      "body": "## Outcome\nA user can tell what the device recorded from what the corrected route geometry now measures.\n\n## Scope\nCalculate deterministic corrected distance and relevant geometry-derived statistics during publication, persist them with the version, update catalog read models, and render recorded and corrected values with explicit labels.\n\n## Acceptance criteria\n- [ ] Recorded statistics are never overwritten by corrected calculations.\n- [ ] Corrected distance is reproducible from the published geometry within defined numeric tolerance.\n- [ ] Library, detail, and publication-success views clearly distinguish both value sets.\n\n<!-- haiker-issue-id: E-03 -->"
+    },
+    {
+      "id": "E-04",
+      "title": "List and inspect immutable route versions",
+      "labels": ["mvp", "route-versioning", "api", "backend", "frontend"],
+      "parent_id": "EPIC-E",
+      "blocked_by": ["E-02"],
+      "body": "## Outcome\nA user can review the chronological corrected-route history for an owned activity.\n\n## Scope\nImplement owner-scoped version list, detail, and geometry contracts plus frontend history view with version number, parent, publication time, statistics, current marker, loading/error states, and route selection.\n\n## Acceptance criteria\n- [ ] Version numbers are unique and ordered within an activity.\n- [ ] Original and corrected versions have unambiguous labels and immutable geometry links.\n- [ ] Cross-owner list, detail, and geometry access returns a non-disclosing result.\n\n<!-- haiker-issue-id: E-04 -->"
+    },
+    {
+      "id": "E-05",
+      "title": "Compare recorded and corrected route versions",
+      "labels": ["mvp", "route-versioning", "recorded-activity", "frontend", "api"],
+      "parent_id": "EPIC-E",
+      "blocked_by": ["E-03", "E-04", "C-05"],
+      "body": "## Outcome\nA user can visually and numerically compare recorded truth with a selected corrected version.\n\n## Scope\nProvide comparison read data and a MapLibre view with independently styled geometries, separate statistics, shared bounds, version selectors, accessible legend, and tile-failure behavior.\n\n## Acceptance criteria\n- [ ] Comparison never labels corrected coordinates as recorded.\n- [ ] Lines are distinguishable without relying on color alone.\n- [ ] Switching versions updates geometry and statistics consistently without mutating selection state.\n\n<!-- haiker-issue-id: E-05 -->"
+    },
+    {
+      "id": "E-06",
+      "title": "Select an owned version as the activity's current route",
+      "labels": ["mvp", "route-versioning", "activity-catalog", "api", "backend", "frontend"],
+      "parent_id": "EPIC-E",
+      "blocked_by": ["E-03", "E-04", "C-03", "A-06"],
+      "body": "## Outcome\nA user can deliberately choose which immutable version represents the activity's current corrected route.\n\n## Scope\nAdd the owner-scoped selection command, activity/version membership invariant, audit/outbox behavior, catalog read-model update, UI action and confirmation state, cache invalidation, and tests.\n\n## Acceptance criteria\n- [ ] Only a version belonging to the activity can be selected.\n- [ ] Selection changes the pointer and displayed corrected statistics but no immutable geometry.\n- [ ] Detail, history, and comparison views converge on the selected current version after success.\n\n<!-- haiker-issue-id: E-06 -->"
+    },
+    {
+      "id": "F-01",
+      "title": "Request and query an idempotent GPX export",
+      "labels": ["mvp", "exporting", "api", "backend", "persistence"],
+      "parent_id": "EPIC-F",
+      "blocked_by": ["E-02", "A-05"],
+      "body": "## Outcome\nA user can request an export of one owned immutable route version and query its durable status.\n\n## Scope\nImplement export aggregate, POST activity export and GET export status contracts, fixed routeVersionId, Idempotency-Key behavior, ownership, Queued/Generating/Ready/Failed/Expired states, persistence, and telemetry.\n\n## Acceptance criteria\n- [ ] A request captures a fixed owned route version and returns 202.\n- [ ] Matching retries return the same export; key reuse with a different payload fails.\n- [ ] Status is queryable through worker delays and exposes sanitized actionable failures.\n\n<!-- haiker-issue-id: F-01 -->"
+    },
+    {
+      "id": "F-02",
+      "title": "Generate standards-compliant GPX in a bounded worker",
+      "labels": ["mvp", "exporting", "worker", "backend", "testing"],
+      "parent_id": "EPIC-F",
+      "blocked_by": ["F-01"],
+      "body": "## Outcome\nThe worker produces deterministic GPX from the requested corrected geometry without fabricating recorded telemetry.\n\n## Scope\nImplement idempotent generation, segment preservation, XML escaping, coordinate/elevation serialization, bounded memory and execution, retry/failure handling, checksums, metrics, and deterministic fixtures.\n\n## Acceptance criteria\n- [ ] Output validates as supported GPX and preserves route geometry and segment boundaries within tolerance.\n- [ ] Added or moved points do not gain invented timestamp or sensor values.\n- [ ] Worker restart, timeout, and retry cannot create conflicting ready artifacts.\n\n<!-- haiker-issue-id: F-02 -->"
+    },
+    {
+      "id": "F-03",
+      "title": "Store, verify, and expire private export artifacts",
+      "labels": ["mvp", "exporting", "persistence", "worker", "security"],
+      "parent_id": "EPIC-F",
+      "blocked_by": ["F-02", "A-04"],
+      "body": "## Outcome\nGenerated GPX artifacts remain private and integrity checked, then expire on a defined lifecycle.\n\n## Scope\nPersist export metadata and checksum, write private encrypted objects, mark Ready only after verification, schedule expiry, delete or make artifacts unavailable per retention policy, and retain audit-safe status.\n\n## Acceptance criteria\n- [ ] Ready is impossible before object and checksum verification succeeds.\n- [ ] Expiry is idempotent and an expired export cannot return a usable artifact.\n- [ ] Storage keys, signed URLs, and route coordinates remain absent from logs and normal status responses.\n\n<!-- haiker-issue-id: F-03 -->"
+    },
+    {
+      "id": "F-04",
+      "title": "Build export request and status UX",
+      "labels": ["mvp", "exporting", "frontend", "accessibility"],
+      "parent_id": "EPIC-F",
+      "blocked_by": ["F-01", "A-07"],
+      "body": "## Outcome\nA user can choose an immutable version, request GPX, follow generation, and recover from failure or expiry.\n\n## Scope\nBuild version selection, request action, progress polling, duplicate-request handling, accessible status announcements, ready/download state, failure retry, expiry state, offline prevention, and cache invalidation.\n\n## Acceptance criteria\n- [ ] The selected version is visible before and throughout export.\n- [ ] Refresh resumes server status without issuing a second request.\n- [ ] Ready, failed, expired, offline, and unauthorized states have distinct accessible behavior.\n\n<!-- haiker-issue-id: F-04 -->"
+    },
+    {
+      "id": "F-05",
+      "title": "Authorize and deliver short-lived GPX downloads",
+      "labels": ["mvp", "exporting", "api", "backend", "security"],
+      "parent_id": "EPIC-F",
+      "blocked_by": ["F-03", "A-03"],
+      "body": "## Outcome\nOnly the owning user can download a ready, unexpired export through short-lived access.\n\n## Scope\nImplement the download endpoint, owner and status checks, safe filename and content headers, short-lived signed delivery or controlled streaming, no-store policy, request audit, and leakage tests.\n\n## Acceptance criteria\n- [ ] Cross-owner, failed, non-ready, and expired requests never receive a usable URL or bytes.\n- [ ] Signed access expires at the configured short interval and is not logged.\n- [ ] Successful downloads have the expected media type, filename, and checksum.\n\n<!-- haiker-issue-id: F-05 -->"
+    },
+    {
+      "id": "F-06",
+      "title": "Verify GPX export round trip and failure handling",
+      "labels": ["mvp", "exporting", "testing", "frontend", "security"],
+      "parent_id": "EPIC-F",
+      "blocked_by": ["F-04", "F-05", "B-06"],
+      "body": "## Outcome\nThe corrected-route export journey is regression-protected from request through authorized download and re-import.\n\n## Scope\nAdd domain, worker, storage, contract, and browser tests for multiple segments, optional elevation, non-ASCII names, large tracks, generation failure, retry, storage outage, expiry, unauthorized access, and export re-import.\n\n## Acceptance criteria\n- [ ] A published corrected route can be exported, downloaded, and re-imported with geometry preserved within tolerance.\n- [ ] Failure, retry, and expiration retain the fixed source version and consistent status.\n- [ ] Authorization tests cover every export and download state.\n\n<!-- haiker-issue-id: F-06 -->"
+    },
+    {
+      "id": "G-01",
+      "title": "Enforce API rate limits and worker resource budgets",
+      "labels": ["mvp", "operations", "security", "api", "worker"],
+      "parent_id": "EPIC-G",
+      "blocked_by": ["B-08", "F-02"],
+      "body": "## Outcome\nAbusive upload, mutation, and job traffic cannot exhaust shared capacity or bypass normal user protections.\n\n## Scope\nDefine actor/IP-aware limits for authentication-sensitive, import, editing, and export operations; add 429 contracts, upload quotas, queue backpressure, worker CPU/memory/time limits, and privacy-safe abuse metrics.\n\n## Acceptance criteria\n- [ ] Limits protect expensive operations without using high-cardinality metric labels.\n- [ ] Responses include documented retry guidance and normal cached reads remain available during worker pressure.\n- [ ] Load tests demonstrate bounded API and worker resource use under abusive scenarios.\n\n<!-- haiker-issue-id: G-01 -->"
+    },
+    {
+      "id": "G-02",
+      "title": "Complete threat modeling, privacy review, and authorization matrix",
+      "labels": ["mvp", "operations", "security", "testing"],
+      "parent_id": "EPIC-G",
+      "blocked_by": ["C-07", "D-12", "F-05"],
+      "body": "## Outcome\nLaunch-critical security and privacy risks are understood, tested, assigned, and resolved.\n\n## Scope\nReview broken object authorization, XML attacks, metadata XSS, signed-link leakage, sessions/CSRF, upload abuse, resource exhaustion, duplicate replay, stale writes, analytics/log exposure, secret rotation, and private-default routes; build a protected-operation matrix.\n\n## Acceptance criteria\n- [ ] Every protected operation has automated unauthenticated and cross-owner tests.\n- [ ] Critical and high findings are fixed and medium findings have accepted owners and dates.\n- [ ] Logs, telemetry, analytics, error reports, and client bundles pass privacy and secret scans.\n\n<!-- haiker-issue-id: G-02 -->"
+    },
+    {
+      "id": "G-03",
+      "title": "Meet performance targets and validate the browser matrix",
+      "labels": ["mvp", "operations", "testing", "frontend", "observability"],
+      "parent_id": "EPIC-G",
+      "blocked_by": ["E-06", "F-06", "A-09"],
+      "body": "## Outcome\nThe supported journey remains usable with representative large routes across the agreed desktop and mobile browsers.\n\n## Scope\nDefine the browser matrix and performance test environment; load-test metadata, preview, mutations, 50 MB and 500,000-point imports, export, queue pressure, editor interaction, autosave, map failure, and worker outage.\n\n## Acceptance criteria\n- [ ] API and preview p95 targets are met or formally revised with evidence.\n- [ ] Supported browsers complete the GPX-to-export journey without blocking defects or incoherent layout.\n- [ ] Bottlenecks have traces, reproducible results, capacity assumptions, and resolved launch blockers.\n\n<!-- haiker-issue-id: G-03 -->"
+    },
+    {
+      "id": "G-04",
+      "title": "Audit and remediate MVP accessibility",
+      "labels": ["mvp", "operations", "accessibility", "frontend", "testing"],
+      "parent_id": "EPIC-G",
+      "blocked_by": ["C-04", "D-02", "F-04"],
+      "body": "## Outcome\nUsers can complete the core journey with keyboard, touch, screen-reader, and non-color cues without blocking accessibility defects.\n\n## Scope\nAudit authentication, import, library, detail, editor, version, and export flows; verify semantics, focus order, announcements, contrast, target size, reduced motion, zoom/reflow, errors, and route-style alternatives; remediate findings.\n\n## Acceptance criteria\n- [ ] Automated checks and documented manual assistive-technology tests pass the agreed standard.\n- [ ] All core commands are reachable with visible focus and meaningful names.\n- [ ] No blocking issue remains; other findings have accepted owners and dates.\n\n<!-- haiker-issue-id: G-04 -->"
+    },
+    {
+      "id": "G-05",
+      "title": "Automate independent database and object-storage backups",
+      "labels": ["mvp", "operations", "persistence", "security"],
+      "parent_id": "EPIC-G",
+      "blocked_by": ["A-02", "A-04", "A-09"],
+      "body": "## Outcome\nAuthoritative database state and critical artifacts are backed up automatically with copies isolated from routine production failure.\n\n## Scope\nConfigure PostgreSQL automated backups and point-in-time recovery for the provisional 15-minute RPO, versioned critical objects, independent backup copies, encryption and access controls, retention, monitoring, and backup-failure alerts.\n\n## Acceptance criteria\n- [ ] Scheduled backups and PITR coverage are verifiably current and encrypted.\n- [ ] Independent copies cannot be deleted by normal application credentials.\n- [ ] Backup age, failure, capacity, and retention violations alert with documented ownership.\n\n<!-- haiker-issue-id: G-05 -->"
+    },
+    {
+      "id": "G-06",
+      "title": "Prove restore, integrity, and migration recovery procedures",
+      "labels": ["mvp", "operations", "persistence", "testing"],
+      "resource_locks": ["backup-recovery"],
+      "parent_id": "EPIC-G",
+      "blocked_by": ["G-05"],
+      "body": "## Outcome\nOperators have successfully restored a coherent Haiker environment and know how to recover from data or migration failure.\n\n## Scope\nDocument and execute a full restore drill covering database PITR, object versions, checksums, cross-context integrity, secrets, deployment, migration rollback/forward recovery, smoke tests, and provisional four-hour RTO measurement.\n\n## Acceptance criteria\n- [ ] A clean isolated environment restores authoritative state and critical artifacts successfully.\n- [ ] Integrity checks confirm activities, recorded routes, published versions, current pointers, audit records, and artifacts are coherent.\n- [ ] Measured RPO/RTO, gaps, owners, and remediation are recorded and approved before launch.\n\n<!-- haiker-issue-id: G-06 -->"
+    },
+    {
+      "id": "G-07",
+      "title": "Finalize alerts, runbooks, release checks, and production E2E",
+      "labels": ["mvp", "operations", "observability", "testing"],
+      "parent_id": "EPIC-G",
+      "blocked_by": ["G-01", "G-02", "G-03", "G-04", "G-06"],
+      "body": "## Outcome\nOn-call operators can detect, triage, and recover MVP failures, and release owners have auditable launch evidence.\n\n## Scope\nCreate actionable alerts and dashboards for API, database, storage, queue, workers, imports, exports, conflicts, and contract failures; write incident, rollback, secret rotation, data recovery, and dependency-outage runbooks; automate the production-shaped GPX-to-export E2E and release checklist.\n\n## Acceptance criteria\n- [ ] Alert tests reach the correct owner and link to exercised runbooks.\n- [ ] The production-shaped E2E covers sign-in, upload, import, view, edit, publish, export, download, duplicate, conflict, failure, and unauthorized paths.\n- [ ] Every release criterion has recorded evidence, owner approval, or an explicit launch block.\n\n<!-- haiker-issue-id: G-07 -->"
+    }
+  ]
+}
