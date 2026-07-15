@@ -5,9 +5,11 @@ import { EditorToolbar } from "./EditorToolbar";
 import { ConflictDialog } from "./ConflictDialog";
 import { DeleteSectionConfirmDialog } from "./DeleteSectionConfirmDialog";
 import { RecoveryDialog } from "./RecoveryDialog";
+import { DrawingSectionPanel } from "./DrawingSectionPanel";
 import { useEditorState } from "./useEditorState";
 import { useAutosave } from "./useAutosave";
 import { useOnlineStatus } from "./useOnlineStatus";
+import { useDrawReplacementSection } from "./useDrawReplacementSection";
 import {
   useGetRouteDraft,
   useCreateRouteDraft,
@@ -64,6 +66,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   const { isOnline } = useOnlineStatus();
   const {
     state,
+    dispatch,
     setTool,
     setSelection,
     clearSelection,
@@ -262,6 +265,14 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
               operationFailure(
                 "Revision conflict. The draft was modified elsewhere.",
               );
+            } else if (error instanceof ApiError && error.code === "ENDPOINT_CONTINUITY_VIOLATION") {
+              operationFailure(
+                "The drawn section does not connect to the route endpoints.",
+              );
+            } else if (error instanceof ApiError && error.code === "REPLACEMENT_TOO_LARGE") {
+              operationFailure(
+                "Too many points in the replacement (maximum 500).",
+              );
             } else {
               operationFailure(error.message);
             }
@@ -284,6 +295,22 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
       operationFailure,
     ],
   );
+
+  // Drawing replacement section hook
+  const {
+    isDrawing,
+    startDrawing,
+    addPoint: drawingAddPoint,
+    removeLastPoint: drawingRemoveLastPoint,
+    finishDrawing,
+    cancelDrawing,
+    currentDistance: drawingDistance,
+    pointCount: drawingPointCount,
+  } = useDrawReplacementSection({
+    state,
+    dispatch,
+    dispatchOperation,
+  });
 
   const handleUndo = useCallback(() => {
     if (!state.draftId || state.isOffline) return;
@@ -504,15 +531,29 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         return;
       }
 
-      // Escape dismisses delete confirmation dialog if open, otherwise clears selection
+      // Escape dismisses delete confirmation dialog if open, cancels drawing, or clears selection
       if (e.key === "Escape") {
         e.preventDefault();
-        if (pendingDeleteSection) {
+        if (isDrawing) {
+          cancelDrawing();
+        } else if (pendingDeleteSection) {
           setPendingDeleteSection(null);
         } else {
           clearSelection();
         }
         return;
+      }
+
+      // Enter finishes drawing if active
+      if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+        if (isDrawing) {
+          e.preventDefault();
+          const error = finishDrawing();
+          if (error) {
+            operationFailure(error);
+          }
+          return;
+        }
       }
 
       // Delete/Backspace triggers delete on selection
@@ -526,7 +567,35 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [state.canUndo, state.canRedo, state.isOperationPending, state.selection, pendingDeleteSection, handleUndo, handleRedo, handleDelete, clearSelection]);
+  }, [state.canUndo, state.canRedo, state.isOperationPending, state.selection, pendingDeleteSection, handleUndo, handleRedo, handleDelete, clearSelection, isDrawing, cancelDrawing, finishDrawing, operationFailure]);
+
+  // Auto-start drawing when draw-section tool is active and a section is selected
+  useEffect(() => {
+    if (
+      state.currentTool === "draw-section" &&
+      state.selection?.type === "section" &&
+      !isDrawing &&
+      !state.isOperationPending
+    ) {
+      startDrawing(state.selection);
+    }
+  }, [state.currentTool, state.selection, isDrawing, state.isOperationPending, startDrawing]);
+
+  // Handle finish drawing with error display
+  const handleFinishDrawing = useCallback(() => {
+    const error = finishDrawing();
+    if (error) {
+      operationFailure(error);
+    }
+  }, [finishDrawing, operationFailure]);
+
+  // Handle drawing map click
+  const handleDrawingClick = useCallback(
+    (latitude: number, longitude: number) => {
+      drawingAddPoint(latitude, longitude);
+    },
+    [drawingAddPoint],
+  );
 
   const handleSplit = useCallback(() => {
     if (!state.selection || state.selection.type !== "point") return;
@@ -835,6 +904,17 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         selectionDescription={selectionDescription}
       />
 
+      {/* Drawing section panel */}
+      {isDrawing && (
+        <DrawingSectionPanel
+          currentDistance={drawingDistance}
+          pointCount={drawingPointCount}
+          onUndoLastPoint={drawingRemoveLastPoint}
+          onFinish={handleFinishDrawing}
+          onCancel={cancelDrawing}
+        />
+      )}
+
       {/* Map area */}
       <div className="flex-1 relative" aria-label="Map editing area">
         <EditorMap
@@ -843,9 +923,11 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
           selection={state.selection}
           currentTool={state.currentTool}
           drag={state.drag}
+          drawing={state.drawing}
           onSelectionChange={handleSelectionChange}
           onMovePoint={handleMovePoint}
           onAddPoint={handleAddPoint}
+          onDrawingClick={handleDrawingClick}
           onDragStart={dragStart}
           onDragPreview={dragPreview}
           onDragEnd={dragEnd}

@@ -108,6 +108,7 @@ export interface EditorState {
   conflictServerDraft: RouteDraftResponse | null;
   conflictLocalOps: PendingOperation[];
   drag: DragState | null;
+  drawing: DrawingState | null;
 }
 
 /** Actions dispatched to the editor state reducer */
@@ -130,7 +131,12 @@ export type EditorAction =
   | { type: "DRAG_START"; segmentIndex: number; pointIndex: number; latitude: number; longitude: number }
   | { type: "DRAG_PREVIEW"; latitude: number; longitude: number }
   | { type: "DRAG_END" }
-  | { type: "DRAG_CANCEL" };
+  | { type: "DRAG_CANCEL" }
+  | { type: "DRAWING_START"; segmentIndex: number; startIndex: number; endIndex: number; firstPoint: { latitude: number; longitude: number; elevation?: number } }
+  | { type: "DRAWING_ADD_POINT"; point: { latitude: number; longitude: number; elevation?: number } }
+  | { type: "DRAWING_REMOVE_LAST_POINT" }
+  | { type: "DRAWING_CANCEL" }
+  | { type: "DRAWING_COMMIT" };
 
 /** Pending operation stored in IndexedDB for autosave/recovery */
 export interface PendingOperation {
@@ -150,4 +156,13 @@ export interface DragState {
   originalLongitude: number;
   previewLatitude: number;
   previewLongitude: number;
+}
+
+/** State tracked during the draw-replacement-section workflow */
+export interface DrawingState {
+  segmentIndex: number;
+  startIndex: number;
+  endIndex: number;
+  points: Array<{ latitude: number; longitude: number; elevation?: number }>;
+  isActive: boolean;
 }

@@ -4,6 +4,9 @@
 
 const EARTH_RADIUS_METERS = 6_371_000;
 
+/** Maximum number of points allowed in a replacement section */
+export const MAX_REPLACEMENT_POINTS = 500;
+
 /** Convert degrees to radians */
 function toRadians(degrees: number): number {
   return (degrees * Math.PI) / 180;
@@ -29,6 +32,27 @@ export function haversineDistance(
       Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return EARTH_RADIUS_METERS * c;
+}
+
+/**
+ * Calculate the total distance of a polyline (sequence of points) in meters.
+ * Sums haversine distance between consecutive points.
+ */
+export function polylineDistance(
+  points: Array<{ latitude: number; longitude: number }>,
+): number {
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const current = points[i]!;
+    const next = points[i + 1]!;
+    total += haversineDistance(
+      current.latitude,
+      current.longitude,
+      next.latitude,
+      next.longitude,
+    );
+  }
+  return total;
 }
 
 /**
