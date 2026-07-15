@@ -15,6 +15,7 @@ use crate::activity_catalog::{ActivityId, ActivityType};
 use crate::identity::UserId;
 use crate::recorded_activity::normalization::normalize_gpx;
 use crate::recorded_activity::{RecordedTrackId, SourceArtifactId, SourceRevisionId};
+use crate::route_versioning::RouteVersionId;
 
 use super::checksum::Checksum;
 use super::commit::{CommitImport, ImportCommitData};
@@ -271,6 +272,7 @@ impl<'a> ImportOrchestrator<'a> {
             activity_type: ActivityType::Hike,
             started_at: normalized.started_at,
             ended_at: normalized.ended_at,
+            route_version_id: RouteVersionId::generate(),
         };
 
         // Capture time spent in Committing state (before commit completes)

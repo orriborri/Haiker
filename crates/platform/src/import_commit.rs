@@ -39,9 +39,11 @@ impl CommitImport for PgImportCommitter {
     /// 2. Insert source_revision
     /// 3. Insert recorded_track
     /// 4. Insert activity
-    /// 5. Update import status to Completed
-    /// 6. Write audit event
-    /// 7. Write outbox event (ImportedActivityCommitted)
+    /// 5. Insert initial route version
+    /// 6. Update activity with current_route_version_id and recorded_summary_json
+    /// 7. Update import status to Completed
+    /// 8. Write audit event
+    /// 9. Write outbox event (ImportedActivityCommitted)
     async fn commit(&self, data: &ImportCommitData) -> Result<ActivityId, ImportError> {
         let mut tx = self
             .pool
@@ -158,7 +160,77 @@ impl CommitImport for PgImportCommitter {
             message: format!("failed to insert activity: {e}"),
         })?;
 
-        // 5. Update import status to Completed with activity_id
+        // 5. Insert initial route version
+        let route_geometry_json = serde_json::to_value(&data.preview_geometry).map_err(|e| {
+            ImportError::StorageError {
+                message: format!("failed to serialize route version geometry: {e}"),
+            }
+        })?;
+
+        let route_bbox_json =
+            serde_json::to_value(data.bounding_box).map_err(|e| ImportError::StorageError {
+                message: format!("failed to serialize route version bounding_box: {e}"),
+            })?;
+
+        let corrected_statistics_json = json!({
+            "distance_meters": data.statistics.distance_meters,
+            "duration_seconds": data.statistics.duration_seconds,
+            "elevation_gain_meters": data.statistics.elevation_gain_meters,
+            "elevation_loss_meters": data.statistics.elevation_loss_meters,
+            "point_count": data.statistics.point_count,
+            "segment_count": data.statistics.segment_count,
+        });
+
+        sqlx::query(
+            r#"
+            INSERT INTO route_versioning.route_versions (
+                id, activity_id, parent_version_id, version_number,
+                geometry_json, bounding_box_json, corrected_statistics_json,
+                calculation_version, edit_summary, created_by, created_at
+            )
+            VALUES ($1, $2, NULL, 1, $3, $4, $5, $6, 'Initial import', $7, now())
+            "#,
+        )
+        .bind(data.route_version_id.0)
+        .bind(data.activity_id.0)
+        .bind(&route_geometry_json)
+        .bind(&route_bbox_json)
+        .bind(&corrected_statistics_json)
+        .bind(&data.parser_version)
+        .bind(data.owner_id.0)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ImportError::StorageError {
+            message: format!("failed to insert route_version: {e}"),
+        })?;
+
+        // 6. Update activity with current_route_version_id and recorded_summary_json
+        let recorded_summary_json = json!({
+            "distance_meters": data.statistics.distance_meters,
+            "duration_seconds": data.statistics.duration_seconds,
+            "elevation_gain_meters": data.statistics.elevation_gain_meters,
+            "elevation_loss_meters": data.statistics.elevation_loss_meters,
+            "point_count": data.statistics.point_count,
+            "segment_count": data.statistics.segment_count,
+        });
+
+        sqlx::query(
+            r#"
+            UPDATE activity_catalog.activities
+            SET current_route_version_id = $2, recorded_summary_json = $3, updated_at = now()
+            WHERE id = $1
+            "#,
+        )
+        .bind(data.activity_id.0)
+        .bind(data.route_version_id.0)
+        .bind(&recorded_summary_json)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ImportError::StorageError {
+            message: format!("failed to update activity with route version: {e}"),
+        })?;
+
+        // 7. Update import status to Completed with activity_id
         sqlx::query(
             r#"
             UPDATE imports.imports
@@ -174,7 +246,7 @@ impl CommitImport for PgImportCommitter {
             message: format!("failed to update import status: {e}"),
         })?;
 
-        // 6. Write audit event
+        // 8. Write audit event
         let audit_metadata = json!({
             "import_id": data.import_id.0.to_string(),
             "activity_id": data.activity_id.0.to_string(),
@@ -194,11 +266,12 @@ impl CommitImport for PgImportCommitter {
             message: format!("failed to write audit event: {e}"),
         })?;
 
-        // 7. Write outbox event (ImportedActivityCommitted)
+        // 9. Write outbox event (ImportedActivityCommitted)
         let outbox_payload = json!({
             "import_id": data.import_id.0.to_string(),
             "activity_id": data.activity_id.0.to_string(),
             "owner_id": data.owner_id.0.to_string(),
+            "route_version_id": data.route_version_id.0.to_string(),
             "distance_meters": data.statistics.distance_meters,
             "duration_seconds": data.statistics.duration_seconds,
             "elevation_gain_meters": data.statistics.elevation_gain_meters,

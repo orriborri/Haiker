@@ -14,6 +14,7 @@ use crate::recorded_activity::{
     BoundingBox, Coordinate, RecordedStatistics, RecordedTrackId, SourceArtifactId,
     SourceRevisionId, TrackSegment,
 };
+use crate::route_versioning::RouteVersionId;
 
 use super::ImportError;
 use super::ImportId;
@@ -55,6 +56,9 @@ pub struct ImportCommitData {
     pub activity_type: ActivityType,
     pub started_at: Option<DateTime<Utc>>,
     pub ended_at: Option<DateTime<Utc>>,
+
+    // -- Route Version (route_versioning context) --
+    pub route_version_id: RouteVersionId,
 }
 
 /// Trait for committing a fully parsed import in a single transaction.
@@ -64,9 +68,11 @@ pub struct ImportCommitData {
 /// 2. Insert the source revision linking artifact to activity
 /// 3. Insert the recorded track with segments and statistics
 /// 4. Insert the activity in the catalog
-/// 5. Update the import status to Completed with the activity_id
-/// 6. Write an audit event
-/// 7. Write an outbox event (ImportedActivityCommitted)
+/// 5. Insert the initial route version in route_versioning.route_versions
+/// 6. Update activity_catalog.activities to set current_route_version_id and recorded_summary_json
+/// 7. Update the import status to Completed with the activity_id
+/// 8. Write an audit event
+/// 9. Write an outbox event (ImportedActivityCommitted)
 ///
 /// All of the above must happen in a single database transaction.
 /// If any step fails, the entire transaction must roll back.
@@ -82,6 +88,7 @@ pub trait CommitImport: Send + Sync {
 mod tests {
     use super::*;
     use crate::recorded_activity::{Coordinate, Elevation, TrackPoint};
+    use crate::route_versioning::RouteVersionId;
 
     #[test]
     fn import_commit_data_can_be_constructed() {
@@ -137,6 +144,7 @@ mod tests {
             activity_type: ActivityType::Hike,
             started_at: None,
             ended_at: None,
+            route_version_id: RouteVersionId::generate(),
         };
 
         assert_eq!(data.owner_id, owner_id);
