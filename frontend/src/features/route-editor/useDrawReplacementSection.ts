@@ -115,9 +115,6 @@ export function useDrawReplacementSection({
       return `Too many points in the replacement (maximum ${MAX_REPLACEMENT_POINTS}).`;
     }
 
-    // Commit drawing state
-    dispatch({ type: "DRAWING_COMMIT" });
-
     // Construct and dispatch the operation
     const operation: ReplaceSectionOperation = {
       type: "replaceSection",
@@ -129,8 +126,8 @@ export function useDrawReplacementSection({
 
     void dispatchOperation(operation);
 
-    // Clear drawing after dispatch
-    dispatch({ type: "DRAWING_CANCEL" });
+    // Atomically clear drawing state
+    dispatch({ type: "DRAWING_FINISH" });
 
     return null;
   }, [drawing, state.optimisticGeometry, dispatch, dispatchOperation]);

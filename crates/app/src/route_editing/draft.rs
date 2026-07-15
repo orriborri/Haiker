@@ -367,16 +367,21 @@ impl RouteDraft {
                     });
                 }
 
+                // Minimum replacement size: must have at least 2 points
+                if replacement.len() < 2 {
+                    return Err(RouteEditingError::InvalidOperation {
+                        message: "replacement must contain at least 2 points".to_string(),
+                    });
+                }
+
                 // Endpoint continuity: first replacement point must match geometry at start_index
                 if let Some(first) = replacement.first() {
                     let expected = &segment[start_index.value()].coordinate;
                     if first.coordinate != *expected {
                         return Err(RouteEditingError::EndpointContinuityViolation {
                             position: "start".to_string(),
-                            expected_lat: expected.latitude,
-                            expected_lon: expected.longitude,
-                            actual_lat: first.coordinate.latitude,
-                            actual_lon: first.coordinate.longitude,
+                            expected: *expected,
+                            actual: first.coordinate,
                         });
                     }
                 }
@@ -387,10 +392,8 @@ impl RouteDraft {
                     if last.coordinate != *expected {
                         return Err(RouteEditingError::EndpointContinuityViolation {
                             position: "end".to_string(),
-                            expected_lat: expected.latitude,
-                            expected_lon: expected.longitude,
-                            actual_lat: last.coordinate.latitude,
-                            actual_lon: last.coordinate.longitude,
+                            expected: *expected,
+                            actual: last.coordinate,
                         });
                     }
                 }
@@ -404,7 +407,7 @@ impl RouteDraft {
                     });
                 }
 
-                tracing::info!(
+                tracing::debug!(
                     segment_index = segment_index.value(),
                     start_index = start_index.value(),
                     end_index = end_index.value(),

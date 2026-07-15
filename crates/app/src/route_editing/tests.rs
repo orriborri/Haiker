@@ -1242,16 +1242,14 @@ fn replace_section_rejects_mismatched_start_endpoint() {
     match r {
         Err(RouteEditingError::EndpointContinuityViolation {
             position,
-            expected_lat,
-            expected_lon,
-            actual_lat,
-            actual_lon,
+            expected,
+            actual,
         }) => {
             assert_eq!(position, "start");
-            assert_eq!(expected_lat, 45.1);
-            assert_eq!(expected_lon, 10.1);
-            assert_eq!(actual_lat, 50.0);
-            assert_eq!(actual_lon, 15.0);
+            assert_eq!(expected.latitude, 45.1);
+            assert_eq!(expected.longitude, 10.1);
+            assert_eq!(actual.latitude, 50.0);
+            assert_eq!(actual.longitude, 15.0);
         }
         other => panic!("expected EndpointContinuityViolation, got: {:?}", other),
     }
@@ -1279,16 +1277,14 @@ fn replace_section_rejects_mismatched_end_endpoint() {
     match r {
         Err(RouteEditingError::EndpointContinuityViolation {
             position,
-            expected_lat,
-            expected_lon,
-            actual_lat,
-            actual_lon,
+            expected,
+            actual,
         }) => {
             assert_eq!(position, "end");
-            assert_eq!(expected_lat, 45.2);
-            assert_eq!(expected_lon, 10.2);
-            assert_eq!(actual_lat, 60.0);
-            assert_eq!(actual_lon, 20.0);
+            assert_eq!(expected.latitude, 45.2);
+            assert_eq!(expected.longitude, 10.2);
+            assert_eq!(actual.latitude, 60.0);
+            assert_eq!(actual.longitude, 20.0);
         }
         other => panic!("expected EndpointContinuityViolation, got: {:?}", other),
     }
@@ -1325,4 +1321,58 @@ fn replace_section_accepts_matching_endpoints() {
     assert_eq!(d.revision, 1);
     assert_eq!(d.geometry[0][1], replacement[0]);
     assert_eq!(d.geometry[0][5], replacement[4]);
+}
+
+#[test]
+fn replace_section_rejects_empty_replacement() {
+    let mut d = draft();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement: vec![],
+        },
+        0,
+    );
+    match r {
+        Err(RouteEditingError::InvalidOperation { message }) => {
+            assert_eq!(message, "replacement must contain at least 2 points");
+        }
+        other => panic!(
+            "expected InvalidOperation for empty replacement, got: {:?}",
+            other
+        ),
+    }
+    // Draft state unchanged
+    assert_eq!(d.revision, 0);
+    assert_eq!(d.geometry, sample_geo());
+}
+
+#[test]
+fn replace_section_rejects_single_point_replacement() {
+    let mut d = draft();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement: vec![pt(45.1, 10.1)],
+        },
+        0,
+    );
+    match r {
+        Err(RouteEditingError::InvalidOperation { message }) => {
+            assert_eq!(message, "replacement must contain at least 2 points");
+        }
+        other => panic!(
+            "expected InvalidOperation for single-point replacement, got: {:?}",
+            other
+        ),
+    }
+    // Draft state unchanged
+    assert_eq!(d.revision, 0);
+    assert_eq!(d.geometry, sample_geo());
 }

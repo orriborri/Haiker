@@ -173,15 +173,14 @@ fn route_editing_error_to_api_error(err: RouteEditingError) -> ApiError {
         },
         RouteEditingError::EndpointContinuityViolation {
             position,
-            expected_lat,
-            expected_lon,
-            actual_lat,
-            actual_lon,
+            expected,
+            actual,
         } => ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "ENDPOINT_CONTINUITY_VIOLATION".to_string(),
             message: format!(
-                "endpoint continuity violation at {position}: expected ({expected_lat}, {expected_lon}), got ({actual_lat}, {actual_lon})"
+                "endpoint continuity violation at {position}: expected ({}, {}), got ({}, {})",
+                expected.latitude, expected.longitude, actual.latitude, actual.longitude
             ),
             problem_type: Some("/problems/endpoint-continuity-violation".to_string()),
             title: Some("Endpoint Continuity Violation".to_string()),

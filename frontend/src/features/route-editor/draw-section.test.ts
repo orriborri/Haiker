@@ -51,6 +51,9 @@ function drawingReducer(state: EditorState, action: EditorAction): EditorState {
       if (!state.drawing) return state;
       return { ...state, drawing: { ...state.drawing, isActive: false } };
     }
+    case "DRAWING_FINISH": {
+      return { ...state, drawing: null };
+    }
     default:
       return state;
   }

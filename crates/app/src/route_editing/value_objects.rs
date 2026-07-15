@@ -38,6 +38,12 @@ impl Coordinate {
 
 impl Eq for Coordinate {}
 
+impl std::fmt::Display for Coordinate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}, {}", self.latitude, self.longitude)
+    }
+}
+
 /// An elevation measurement in meters.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Elevation(pub f64);

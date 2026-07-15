@@ -21,7 +21,7 @@ pub use self::value_objects::{
 use thiserror::Error;
 
 /// Errors that can occur in the route editing context.
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouteEditingError {
     /// The draft was not found.
     #[error("draft not found")]
@@ -89,13 +89,11 @@ pub enum RouteEditingError {
     ReplacementTooLarge { maximum: usize, actual: usize },
 
     /// The replacement endpoints do not match the geometry at the specified indices.
-    #[error("endpoint continuity violation at {position}: expected ({expected_lat}, {expected_lon}), got ({actual_lat}, {actual_lon})")]
+    #[error("endpoint continuity violation at {position}: expected ({expected}), got ({actual})")]
     EndpointContinuityViolation {
         position: String,
-        expected_lat: f64,
-        expected_lon: f64,
-        actual_lat: f64,
-        actual_lon: f64,
+        expected: Coordinate,
+        actual: Coordinate,
     },
 }
 

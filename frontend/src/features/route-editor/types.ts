@@ -136,7 +136,8 @@ export type EditorAction =
   | { type: "DRAWING_ADD_POINT"; point: { latitude: number; longitude: number; elevation?: number } }
   | { type: "DRAWING_REMOVE_LAST_POINT" }
   | { type: "DRAWING_CANCEL" }
-  | { type: "DRAWING_COMMIT" };
+  | { type: "DRAWING_COMMIT" }
+  | { type: "DRAWING_FINISH" };
 
 /** Pending operation stored in IndexedDB for autosave/recovery */
 export interface PendingOperation {
