@@ -5,6 +5,9 @@ use uuid::Uuid;
 
 use super::RouteEditingError;
 
+/// Maximum number of points allowed in a single ReplaceSection replacement.
+pub const MAX_REPLACEMENT_POINTS: usize = 500;
+
 /// A geographic coordinate with validated latitude and longitude.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Coordinate {
