@@ -11,6 +11,7 @@ pub mod clock;
 pub mod config;
 pub mod database;
 pub mod error;
+pub mod import_cleanup;
 pub mod import_commit;
 pub mod import_persistence;
 pub mod import_worker;

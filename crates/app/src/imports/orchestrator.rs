@@ -389,6 +389,13 @@ mod tests {
                 .insert(import.id, import.clone());
             Ok(())
         }
+
+        async fn find_abandoned(
+            &self,
+            _timeout: chrono::Duration,
+        ) -> Result<Vec<Import>, ImportError> {
+            Ok(vec![])
+        }
     }
 
     struct MockDuplicateChecker {

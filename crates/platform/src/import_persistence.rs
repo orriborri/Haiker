@@ -235,4 +235,27 @@ impl ImportRepository for PgImportRepository {
 
         Ok(())
     }
+
+    async fn find_abandoned(&self, timeout: chrono::Duration) -> Result<Vec<Import>, ImportError> {
+        let threshold = Utc::now() - timeout;
+
+        let rows = sqlx::query_as::<_, ImportRow>(
+            r#"
+            SELECT id, owner_id, source_artifact_id, format, status,
+                   checksum, failure_reason, failure_code, idempotency_key, payload_hash,
+                   activity_id, created_at, updated_at
+            FROM imports.imports
+            WHERE status IN ('validating', 'queued', 'parsing', 'committing')
+              AND updated_at < $1
+            "#,
+        )
+        .bind(threshold)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| ImportError::StorageError {
+            message: e.to_string(),
+        })?;
+
+        Ok(rows.into_iter().map(row_to_import).collect())
+    }
 }

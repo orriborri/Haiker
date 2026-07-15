@@ -43,4 +43,12 @@ pub trait ImportRepository: Send + Sync {
 
     /// Update an existing import (persists all fields).
     async fn update(&self, import: &Import) -> Result<(), ImportError>;
+
+    /// Find imports stuck in non-terminal processing states (Validating, Queued,
+    /// Parsing, Committing) where `updated_at` is older than the given timeout.
+    ///
+    /// These are considered "abandoned" because a worker should have progressed
+    /// them within the timeout period. Imports in Requested or Uploading are
+    /// excluded because the user may still be interacting.
+    async fn find_abandoned(&self, timeout: chrono::Duration) -> Result<Vec<Import>, ImportError>;
 }

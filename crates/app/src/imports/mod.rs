@@ -4,6 +4,7 @@
 //! and duplicate detection.
 
 pub mod checksum;
+pub mod cleanup;
 pub mod commands;
 pub mod commit;
 pub mod duplicate_detection;
@@ -28,6 +29,7 @@ use self::state_machine::ImportStatus;
 
 // Re-export key types for consumers.
 pub use self::checksum::Checksum as ImportChecksum;
+pub use self::cleanup::{fail_abandoned_imports, CleanupResult};
 pub use self::commit::{CommitImport, ImportCommitData};
 pub use self::duplicate_detection::{CheckDuplicate, DuplicateCheckResult};
 pub use self::failure_code::FailureCode;

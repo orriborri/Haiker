@@ -435,6 +435,10 @@ impl ImportRepository for InMemoryImportRepository {
             .insert(import.id, import.clone());
         Ok(())
     }
+
+    async fn find_abandoned(&self, _timeout: chrono::Duration) -> Result<Vec<Import>, ImportError> {
+        Ok(vec![])
+    }
 }
 
 /// Stub URL generator for testing (not used in production).
