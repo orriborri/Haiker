@@ -491,3 +491,90 @@
           application/json:
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/route-drafts/{draftId}/publication:
+  post:
+    operationId: publishRouteDraft
+    summary: Publish a route draft
+    description: |
+      Publishes a route draft, creating a new immutable route version (N+1).
+      The draft transitions to the Published state and can no longer be edited.
+
+      This operation is atomic: it creates the route version, updates the activity's
+      current version pointer, marks the draft as published, and writes audit/outbox
+      events in a single transaction.
+
+      Requires an Idempotency-Key header to ensure safe retries. Replaying the same
+      idempotency key with the same payload returns the original 201 response.
+      Replaying with a different payload returns 409 IDEMPOTENCY_CONFLICT.
+    tags:
+      - Route Editing
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: draftId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Unique key to ensure idempotent request handling
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/route-editing.yaml#/PublishRouteDraftRequest"
+    responses:
+      "201":
+        description: Route version created successfully
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-editing.yaml#/PublicationResponse"
+      "400":
+        description: Missing Idempotency-Key header
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "401":
+        description: Missing or invalid authentication
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "403":
+        description: Not authorized to publish this draft
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Draft or activity not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: |
+          Conflict. Possible error codes:
+          - ROUTE_DRAFT_REVISION_CONFLICT: the expectedRevision does not match
+          - DRAFT_NOT_ACTIVE: the draft is not in active state (already published or discarded)
+          - IDEMPOTENCY_CONFLICT: same idempotency key used with different parameters
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Validation failed (geometry errors)
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

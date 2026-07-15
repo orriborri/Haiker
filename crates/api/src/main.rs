@@ -7,6 +7,7 @@ use haiker_platform::config::AppConfig;
 use haiker_platform::database;
 use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::object_storage::ObjectStorageClient;
+use haiker_platform::publication_commit::PgPublicationCommitter;
 use haiker_platform::recorded_route_persistence::PgRecordedRouteRepository;
 use haiker_platform::request_id::request_id_middleware;
 use haiker_platform::route_editing_gateways::{PgActivityGateway, PgRouteVersionGateway};
@@ -121,6 +122,7 @@ async fn main() {
         repo: Arc::new(PgRouteDraftRepository::new(pool.clone())),
         activity_gateway: Arc::new(PgActivityGateway::new()),
         route_version_gateway: Arc::new(PgRouteVersionGateway::new()),
+        publication_committer: Some(Arc::new(PgPublicationCommitter::new(pool.clone()))),
     };
 
     let route_editing_routes = Router::new()
@@ -151,6 +153,10 @@ async fn main() {
         .route(
             "/v1/route-drafts/{draftId}/validation",
             post(route_editing::post_validate_draft),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/publication",
+            post(route_editing::post_publish_draft),
         )
         .with_state(route_editing_state);
 

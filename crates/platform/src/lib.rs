@@ -20,6 +20,7 @@ pub mod metrics;
 pub mod object_storage;
 pub mod outbox;
 pub mod ownership;
+pub mod publication_commit;
 pub mod recorded_route_persistence;
 pub mod request_id;
 pub mod route_editing_gateways;

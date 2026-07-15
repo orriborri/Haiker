@@ -41,6 +41,10 @@ paths:
     $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1redo"
   /v1/route-drafts/{draftId}/reset:
     $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1reset"
+  /v1/route-drafts/{draftId}/validation:
+    $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1validation"
+  /v1/route-drafts/{draftId}/publication:
+    $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1publication"
 components:
   securitySchemes:
     $ref: "components/security.yaml"
@@ -63,3 +67,7 @@ components:
       $ref: "components/route-editing.yaml#/OperationResultResponse"
     UndoRedoRequest:
       $ref: "components/route-editing.yaml#/UndoRedoRequest"
+    PublishRouteDraftRequest:
+      $ref: "components/route-editing.yaml#/PublishRouteDraftRequest"
+    PublicationResponse:
+      $ref: "components/route-editing.yaml#/PublicationResponse"

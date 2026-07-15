@@ -5,6 +5,7 @@
 //! or deleted - this invariant is enforced both in the domain model and at
 //! the database level via immutability triggers.
 
+pub mod commit;
 pub mod gateway;
 pub mod publish_command;
 pub mod repository;
