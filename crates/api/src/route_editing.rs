@@ -162,6 +162,31 @@ fn route_editing_error_to_api_error(err: RouteEditingError) -> ApiError {
             request_id: None,
             details: None,
         },
+        RouteEditingError::ReplacementTooLarge { maximum, actual } => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "REPLACEMENT_TOO_LARGE".to_string(),
+            message: format!("replacement too large: maximum {maximum}, actual {actual}"),
+            problem_type: Some("/problems/replacement-too-large".to_string()),
+            title: Some("Replacement Too Large".to_string()),
+            request_id: None,
+            details: None,
+        },
+        RouteEditingError::EndpointContinuityViolation {
+            position,
+            expected,
+            actual,
+        } => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "ENDPOINT_CONTINUITY_VIOLATION".to_string(),
+            message: format!(
+                "endpoint continuity violation at {position}: expected ({}, {}), got ({}, {})",
+                expected.latitude, expected.longitude, actual.latitude, actual.longitude
+            ),
+            problem_type: Some("/problems/endpoint-continuity-violation".to_string()),
+            title: Some("Endpoint Continuity Violation".to_string()),
+            request_id: None,
+            details: None,
+        },
     }
 }
 

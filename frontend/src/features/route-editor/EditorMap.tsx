@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { Selection, EditorTool, DragState } from "./types";
+import type { Selection, EditorTool, DragState, DrawingState } from "./types";
 import type { RoutePointDto } from "@/api/client";
 import { computeSelection } from "./SelectionModel";
 import { haversineDistance, formatDistance } from "./geo-utils";
@@ -12,6 +12,7 @@ interface EditorMapProps {
   selection: Selection;
   currentTool: EditorTool;
   drag: DragState | null;
+  drawing: DrawingState | null;
   onSelectionChange: (selection: Selection) => void;
   onMovePoint: (
     segmentIndex: number,
@@ -25,6 +26,7 @@ interface EditorMapProps {
     lng: number,
     lat: number,
   ) => void;
+  onDrawingClick: (latitude: number, longitude: number) => void;
   onDragStart: (
     segmentIndex: number,
     pointIndex: number,
@@ -49,9 +51,11 @@ export function EditorMap({
   selection,
   currentTool,
   drag,
+  drawing,
   onSelectionChange,
   onMovePoint,
   onAddPoint,
+  onDrawingClick,
   onDragStart,
   onDragPreview,
   onDragEnd,
@@ -85,6 +89,10 @@ export function EditorMap({
   onDragEndRef.current = onDragEnd;
   const onDragCancelRef = useRef(onDragCancel);
   onDragCancelRef.current = onDragCancel;
+  const drawingRef = useRef(drawing);
+  drawingRef.current = drawing;
+  const onDrawingClickRef = useRef(onDrawingClick);
+  onDrawingClickRef.current = onDrawingClick;
 
   // Initialize map
   useEffect(() => {
@@ -236,9 +244,47 @@ export function EditorMap({
         },
       });
 
+      // Drawing line source and layer (replacement section being drawn)
+      map.addSource("drawing-line", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: "drawing-line-layer",
+        type: "line",
+        source: "drawing-line",
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": "#16a34a",
+          "line-width": 4,
+          "line-opacity": 0.9,
+        },
+      });
+
+      // Drawing points source and layer
+      map.addSource("drawing-points", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: "drawing-points-layer",
+        type: "circle",
+        source: "drawing-points",
+        paint: {
+          "circle-radius": 8,
+          "circle-color": "#16a34a",
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
+        },
+      });
+
       // Click handler for point selection (on hitarea for better touch targets)
       map.on("click", "route-points-hitarea", (e) => {
         if (isDraggingRef.current) return;
+        // Skip point selection during drawing mode
+        if (currentToolRef.current === "draw-section" && drawingRef.current?.isActive) return;
         const feature = e.features?.[0];
         if (!feature || !feature.properties) return;
 
@@ -273,6 +319,15 @@ export function EditorMap({
           lngLat.lng,
           lngLat.lat,
         );
+      });
+
+      // Generic map click handler for drawing mode
+      map.on("click", (e) => {
+        if (currentToolRef.current !== "draw-section") return;
+        if (!drawingRef.current?.isActive) return;
+        if (isDraggingRef.current) return;
+        const lngLat = e.lngLat;
+        onDrawingClickRef.current(lngLat.lat, lngLat.lng);
       });
 
       // Drag handling for move tool
@@ -320,6 +375,9 @@ export function EditorMap({
 
       // Cursor management
       map.on("mouseenter", "route-points-hitarea", () => {
+        if (currentToolRef.current === "draw-section" && drawingRef.current?.isActive) {
+          return; // Keep crosshair during drawing
+        }
         if (currentToolRef.current === "move") {
           map.getCanvas().style.cursor = "grab";
         } else {
@@ -329,7 +387,11 @@ export function EditorMap({
 
       map.on("mouseleave", "route-points-hitarea", () => {
         if (!isDraggingRef.current) {
-          map.getCanvas().style.cursor = "";
+          if (currentToolRef.current === "draw-section" && drawingRef.current?.isActive) {
+            map.getCanvas().style.cursor = "crosshair";
+          } else {
+            map.getCanvas().style.cursor = "";
+          }
         }
       });
     });
@@ -390,7 +452,28 @@ export function EditorMap({
     if (selectionSource) {
       selectionSource.setData(createSelectionGeoJSON(coords, selection));
     }
-  }, [geometry, baseGeometry, selection]);
+
+    // Update drawing layers
+    const drawingLineSource = map.getSource("drawing-line") as maplibregl.GeoJSONSource | undefined;
+    const drawingPointsSource = map.getSource("drawing-points") as maplibregl.GeoJSONSource | undefined;
+
+    if (drawingLineSource && drawingPointsSource) {
+      if (drawing?.isActive && drawing.points.length > 0) {
+        drawingLineSource.setData(createDrawingLineGeoJSON(drawing.points));
+        drawingPointsSource.setData(createDrawingPointsGeoJSON(drawing.points));
+      } else {
+        drawingLineSource.setData({ type: "FeatureCollection", features: [] });
+        drawingPointsSource.setData({ type: "FeatureCollection", features: [] });
+      }
+    }
+
+    // Update cursor for drawing mode
+    if (currentTool === "draw-section" && drawing?.isActive) {
+      map.getCanvas().style.cursor = "crosshair";
+    } else if (!isDraggingRef.current) {
+      map.getCanvas().style.cursor = "";
+    }
+  }, [geometry, baseGeometry, selection, drawing, currentTool]);
 
   useEffect(() => {
     updateMap();
@@ -602,4 +685,45 @@ function isPointSelected(
     );
   }
   return false;
+}
+
+/** Create a GeoJSON FeatureCollection for the drawing line */
+function createDrawingLineGeoJSON(
+  points: Array<{ latitude: number; longitude: number; elevation?: number }>,
+): GeoJSON.FeatureCollection {
+  if (points.length < 2) {
+    return { type: "FeatureCollection", features: [] };
+  }
+
+  const coordinates = points.map((pt) => [pt.longitude, pt.latitude]);
+
+  return {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "LineString",
+          coordinates,
+        },
+      },
+    ],
+  };
+}
+
+/** Create a GeoJSON FeatureCollection for drawn points */
+function createDrawingPointsGeoJSON(
+  points: Array<{ latitude: number; longitude: number; elevation?: number }>,
+): GeoJSON.FeatureCollection {
+  const features: GeoJSON.Feature[] = points.map((pt, idx) => ({
+    type: "Feature",
+    properties: { pointIndex: idx },
+    geometry: {
+      type: "Point",
+      coordinates: [pt.longitude, pt.latitude],
+    },
+  }));
+
+  return { type: "FeatureCollection", features };
 }

@@ -307,7 +307,8 @@ fn delete_section_enforces_minimum() {
 #[test]
 fn replace_section_success() {
     let mut d = draft();
-    let replacement = vec![pt(50.0, 15.0), pt(50.1, 15.1)];
+    // Endpoints must match geometry[0][1] and geometry[0][2] for continuity
+    let replacement = vec![pt(45.1, 10.1), pt(45.15, 10.15), pt(45.2, 10.2)];
     d.apply_operation(
         op_id(),
         RouteOperation::ReplaceSection {
@@ -319,9 +320,10 @@ fn replace_section_success() {
         0,
     )
     .unwrap();
-    assert_eq!(d.geometry[0].len(), 4);
+    assert_eq!(d.geometry[0].len(), 5); // removed 2, added 3
     assert_eq!(d.geometry[0][1], replacement[0]);
     assert_eq!(d.geometry[0][2], replacement[1]);
+    assert_eq!(d.geometry[0][3], replacement[2]);
 }
 
 // --- SplitSegment ---
@@ -919,13 +921,14 @@ fn undo_delete_section() {
 fn undo_replace_section() {
     let mut d = draft();
     let orig_geo = d.geometry.clone();
+    // Endpoints must match geometry[0][1] and geometry[0][2] for continuity
     d.apply_operation(
         op_id(),
         RouteOperation::ReplaceSection {
             segment_index: SegmentIndex::new(0),
             start_index: PointIndex::new(1),
             end_index: PointIndex::new(2),
-            replacement: vec![pt(50.0, 15.0), pt(50.1, 15.1), pt(50.2, 15.2)],
+            replacement: vec![pt(45.1, 10.1), pt(45.15, 10.15), pt(45.2, 10.2)],
         },
         0,
     )
@@ -1427,4 +1430,194 @@ fn delete_point_undo_redo_deterministic() {
     // Redo: geometry must match post-delete state exactly
     d.redo(2).unwrap();
     assert_eq!(d.geometry, post_delete_geo);
+}
+
+// --- ReplaceSection endpoint continuity and complexity limits ---
+
+#[test]
+fn replace_section_rejects_too_many_points() {
+    let mut d = draft();
+    // Build a replacement with 501 points - first and last match geometry endpoints
+    let mut replacement: Vec<RoutePoint> = (0..501)
+        .map(|i| pt(45.1 + (i as f64) * 0.0001, 10.1 + (i as f64) * 0.0001))
+        .collect();
+    // Fix first to match geometry[0][1]
+    replacement[0] = pt(45.1, 10.1);
+    // Fix last to match geometry[0][2]
+    replacement[500] = pt(45.2, 10.2);
+
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement,
+        },
+        0,
+    );
+    assert!(matches!(
+        r,
+        Err(RouteEditingError::ReplacementTooLarge {
+            maximum: 500,
+            actual: 501
+        })
+    ));
+    // Draft state unchanged
+    assert_eq!(d.revision, 0);
+    assert_eq!(d.geometry, sample_geo());
+}
+
+#[test]
+fn replace_section_rejects_mismatched_start_endpoint() {
+    let mut d = draft();
+    // geometry[0][1] = pt(45.1, 10.1), geometry[0][2] = pt(45.2, 10.2)
+    // First replacement point does NOT match geometry[0][1]
+    let replacement = vec![pt(50.0, 15.0), pt(45.15, 10.15), pt(45.2, 10.2)];
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement,
+        },
+        0,
+    );
+    match r {
+        Err(RouteEditingError::EndpointContinuityViolation {
+            position,
+            expected,
+            actual,
+        }) => {
+            assert_eq!(position, "start");
+            assert_eq!(expected.latitude, 45.1);
+            assert_eq!(expected.longitude, 10.1);
+            assert_eq!(actual.latitude, 50.0);
+            assert_eq!(actual.longitude, 15.0);
+        }
+        other => panic!("expected EndpointContinuityViolation, got: {:?}", other),
+    }
+    // Draft state unchanged
+    assert_eq!(d.revision, 0);
+    assert_eq!(d.geometry, sample_geo());
+}
+
+#[test]
+fn replace_section_rejects_mismatched_end_endpoint() {
+    let mut d = draft();
+    // geometry[0][1] = pt(45.1, 10.1), geometry[0][2] = pt(45.2, 10.2)
+    // Last replacement point does NOT match geometry[0][2]
+    let replacement = vec![pt(45.1, 10.1), pt(45.15, 10.15), pt(60.0, 20.0)];
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement,
+        },
+        0,
+    );
+    match r {
+        Err(RouteEditingError::EndpointContinuityViolation {
+            position,
+            expected,
+            actual,
+        }) => {
+            assert_eq!(position, "end");
+            assert_eq!(expected.latitude, 45.2);
+            assert_eq!(expected.longitude, 10.2);
+            assert_eq!(actual.latitude, 60.0);
+            assert_eq!(actual.longitude, 20.0);
+        }
+        other => panic!("expected EndpointContinuityViolation, got: {:?}", other),
+    }
+    // Draft state unchanged
+    assert_eq!(d.revision, 0);
+    assert_eq!(d.geometry, sample_geo());
+}
+
+#[test]
+fn replace_section_accepts_matching_endpoints() {
+    let mut d = draft();
+    // geometry[0][1] = pt(45.1, 10.1), geometry[0][2] = pt(45.2, 10.2)
+    // Replacement with matching endpoints and intermediate points
+    let replacement = vec![
+        pt(45.1, 10.1),
+        pt(45.12, 10.12),
+        pt(45.15, 10.15),
+        pt(45.18, 10.18),
+        pt(45.2, 10.2),
+    ];
+    d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement: replacement.clone(),
+        },
+        0,
+    )
+    .unwrap();
+    // Original had 4 points, removed 2 (indices 1..=2), added 5
+    assert_eq!(d.geometry[0].len(), 7);
+    assert_eq!(d.revision, 1);
+    assert_eq!(d.geometry[0][1], replacement[0]);
+    assert_eq!(d.geometry[0][5], replacement[4]);
+}
+
+#[test]
+fn replace_section_rejects_empty_replacement() {
+    let mut d = draft();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement: vec![],
+        },
+        0,
+    );
+    match r {
+        Err(RouteEditingError::InvalidOperation { message }) => {
+            assert_eq!(message, "replacement must contain at least 2 points");
+        }
+        other => panic!(
+            "expected InvalidOperation for empty replacement, got: {:?}",
+            other
+        ),
+    }
+    // Draft state unchanged
+    assert_eq!(d.revision, 0);
+    assert_eq!(d.geometry, sample_geo());
+}
+
+#[test]
+fn replace_section_rejects_single_point_replacement() {
+    let mut d = draft();
+    let r = d.apply_operation(
+        op_id(),
+        RouteOperation::ReplaceSection {
+            segment_index: SegmentIndex::new(0),
+            start_index: PointIndex::new(1),
+            end_index: PointIndex::new(2),
+            replacement: vec![pt(45.1, 10.1)],
+        },
+        0,
+    );
+    match r {
+        Err(RouteEditingError::InvalidOperation { message }) => {
+            assert_eq!(message, "replacement must contain at least 2 points");
+        }
+        other => panic!(
+            "expected InvalidOperation for single-point replacement, got: {:?}",
+            other
+        ),
+    }
+    // Draft state unchanged
+    assert_eq!(d.revision, 0);
+    assert_eq!(d.geometry, sample_geo());
 }

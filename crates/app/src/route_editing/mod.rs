@@ -15,6 +15,7 @@ pub use self::operations::RouteOperation;
 pub use self::repository::RouteDraftRepository;
 pub use self::value_objects::{
     Coordinate, Elevation, OperationId, PointIndex, RoutePoint, SegmentIndex,
+    MAX_REPLACEMENT_POINTS,
 };
 
 use thiserror::Error;
@@ -82,6 +83,18 @@ pub enum RouteEditingError {
     /// The provided base route version ID does not exist or does not belong to the activity.
     #[error("invalid base route version")]
     InvalidBaseRouteVersion,
+
+    /// The replacement exceeds the maximum allowed number of points.
+    #[error("replacement too large: maximum {maximum}, actual {actual}")]
+    ReplacementTooLarge { maximum: usize, actual: usize },
+
+    /// The replacement endpoints do not match the geometry at the specified indices.
+    #[error("endpoint continuity violation at {position}: expected ({expected}), got ({actual})")]
+    EndpointContinuityViolation {
+        position: String,
+        expected: Coordinate,
+        actual: Coordinate,
+    },
 }
 
 #[cfg(test)]

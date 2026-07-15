@@ -8,7 +8,9 @@ use crate::activity_catalog::ActivityId;
 use crate::identity::UserId;
 
 use super::operations::RouteOperation;
-use super::value_objects::{OperationId, PointIndex, RoutePoint, SegmentIndex};
+use super::value_objects::{
+    OperationId, PointIndex, RoutePoint, SegmentIndex, MAX_REPLACEMENT_POINTS,
+};
 use super::RouteEditingError;
 
 /// A strongly-typed route draft identifier wrapping a UUID.
@@ -356,6 +358,46 @@ impl RouteDraft {
                         count: segment.len(),
                     });
                 }
+
+                // Complexity limit: reject replacements exceeding the maximum point count
+                if replacement.len() > MAX_REPLACEMENT_POINTS {
+                    return Err(RouteEditingError::ReplacementTooLarge {
+                        maximum: MAX_REPLACEMENT_POINTS,
+                        actual: replacement.len(),
+                    });
+                }
+
+                // Minimum replacement size: must have at least 2 points
+                if replacement.len() < 2 {
+                    return Err(RouteEditingError::InvalidOperation {
+                        message: "replacement must contain at least 2 points".to_string(),
+                    });
+                }
+
+                // Endpoint continuity: first replacement point must match geometry at start_index
+                if let Some(first) = replacement.first() {
+                    let expected = &segment[start_index.value()].coordinate;
+                    if first.coordinate != *expected {
+                        return Err(RouteEditingError::EndpointContinuityViolation {
+                            position: "start".to_string(),
+                            expected: *expected,
+                            actual: first.coordinate,
+                        });
+                    }
+                }
+
+                // Endpoint continuity: last replacement point must match geometry at end_index
+                if let Some(last) = replacement.last() {
+                    let expected = &segment[end_index.value()].coordinate;
+                    if last.coordinate != *expected {
+                        return Err(RouteEditingError::EndpointContinuityViolation {
+                            position: "end".to_string(),
+                            expected: *expected,
+                            actual: last.coordinate,
+                        });
+                    }
+                }
+
                 let delete_count = end_index.value() - start_index.value() + 1;
                 let new_len = segment.len() - delete_count + replacement.len();
                 if new_len < 2 {
@@ -364,6 +406,15 @@ impl RouteDraft {
                         actual: new_len,
                     });
                 }
+
+                tracing::debug!(
+                    segment_index = segment_index.value(),
+                    start_index = start_index.value(),
+                    end_index = end_index.value(),
+                    replacement_point_count = replacement.len(),
+                    "Replacing section in route draft"
+                );
+
                 self.geometry[segment_index.value()].splice(
                     start_index.value()..=end_index.value(),
                     replacement.iter().cloned(),

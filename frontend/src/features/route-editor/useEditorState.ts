@@ -7,6 +7,7 @@ import type {
   Selection,
   PendingOperation,
   DragState,
+  DrawingState,
 } from "./types";
 
 const initialState: EditorState = {
@@ -24,12 +25,13 @@ const initialState: EditorState = {
   conflictServerDraft: null,
   conflictLocalOps: [],
   drag: null,
+  drawing: null,
 };
 
 function editorReducer(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
     case "SET_TOOL":
-      return { ...state, currentTool: action.tool, selection: null };
+      return { ...state, currentTool: action.tool, selection: null, drawing: null };
     case "SET_SELECTION":
       return { ...state, selection: action.selection };
     case "CLEAR_SELECTION":
@@ -147,6 +149,48 @@ function editorReducer(state: EditorState, action: EditorAction): EditorState {
         });
       });
       return { ...state, drag: null, optimisticGeometry: restored };
+    }
+    case "DRAWING_START": {
+      const drawing: DrawingState = {
+        segmentIndex: action.segmentIndex,
+        startIndex: action.startIndex,
+        endIndex: action.endIndex,
+        points: [action.firstPoint],
+        isActive: true,
+      };
+      return { ...state, drawing };
+    }
+    case "DRAWING_ADD_POINT": {
+      if (!state.drawing || !state.drawing.isActive) return state;
+      return {
+        ...state,
+        drawing: {
+          ...state.drawing,
+          points: [...state.drawing.points, action.point],
+        },
+      };
+    }
+    case "DRAWING_REMOVE_LAST_POINT": {
+      if (!state.drawing || !state.drawing.isActive) return state;
+      // Never remove the first point (endpoint continuity anchor)
+      if (state.drawing.points.length <= 1) return state;
+      return {
+        ...state,
+        drawing: {
+          ...state.drawing,
+          points: state.drawing.points.slice(0, -1),
+        },
+      };
+    }
+    case "DRAWING_CANCEL": {
+      return { ...state, drawing: null };
+    }
+    case "DRAWING_COMMIT": {
+      if (!state.drawing) return state;
+      return { ...state, drawing: { ...state.drawing, isActive: false } };
+    }
+    case "DRAWING_FINISH": {
+      return { ...state, drawing: null };
     }
   }
 }

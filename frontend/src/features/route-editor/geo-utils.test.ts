@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { haversineDistance, formatDistance } from "./geo-utils";
+import { haversineDistance, formatDistance, polylineDistance, MAX_REPLACEMENT_POINTS } from "./geo-utils";
 
 describe("haversineDistance", () => {
   it("returns 0 for identical points", () => {
@@ -65,5 +65,64 @@ describe("formatDistance", () => {
     expect(formatDistance(1000)).toBe("1.0 km");
     expect(formatDistance(1234)).toBe("1.2 km");
     expect(formatDistance(15678)).toBe("15.7 km");
+  });
+});
+
+describe("polylineDistance", () => {
+  it("returns 0 for empty array", () => {
+    expect(polylineDistance([])).toBe(0);
+  });
+
+  it("returns 0 for a single point", () => {
+    expect(polylineDistance([{ latitude: 47.0, longitude: 11.0 }])).toBe(0);
+  });
+
+  it("returns haversine distance for two points", () => {
+    const points = [
+      { latitude: 47.0, longitude: 11.0 },
+      { latitude: 48.0, longitude: 12.0 },
+    ];
+    const expected = haversineDistance(47.0, 11.0, 48.0, 12.0);
+    expect(polylineDistance(points)).toBeCloseTo(expected, 6);
+  });
+
+  it("sums distances between consecutive points", () => {
+    const points = [
+      { latitude: 47.0, longitude: 11.0 },
+      { latitude: 47.5, longitude: 11.5 },
+      { latitude: 48.0, longitude: 12.0 },
+    ];
+    const d1 = haversineDistance(47.0, 11.0, 47.5, 11.5);
+    const d2 = haversineDistance(47.5, 11.5, 48.0, 12.0);
+    expect(polylineDistance(points)).toBeCloseTo(d1 + d2, 6);
+  });
+
+  it("handles three identical points (zero distance)", () => {
+    const points = [
+      { latitude: 47.0, longitude: 11.0 },
+      { latitude: 47.0, longitude: 11.0 },
+      { latitude: 47.0, longitude: 11.0 },
+    ];
+    expect(polylineDistance(points)).toBe(0);
+  });
+
+  it("calculates a realistic multi-point trail distance", () => {
+    // A short trail with 4 waypoints
+    const points = [
+      { latitude: 47.2692, longitude: 11.3927 },
+      { latitude: 47.2700, longitude: 11.3940 },
+      { latitude: 47.2710, longitude: 11.3960 },
+      { latitude: 47.2720, longitude: 11.3980 },
+    ];
+    const total = polylineDistance(points);
+    // Should be a few hundred meters
+    expect(total).toBeGreaterThan(100);
+    expect(total).toBeLessThan(1000);
+  });
+});
+
+describe("MAX_REPLACEMENT_POINTS", () => {
+  it("is set to 500", () => {
+    expect(MAX_REPLACEMENT_POINTS).toBe(500);
   });
 });
