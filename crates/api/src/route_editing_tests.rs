@@ -1459,6 +1459,201 @@ async fn idempotent_replay_returns_snapshot_revision_not_current() {
     assert_eq!(replay_json["draftId"], draft_id);
 }
 
+// --- DeleteSection operation validation tests ---
+
+#[tokio::test]
+async fn delete_section_returns_200_with_incremented_revision() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // sample_geometry() has 3 points (indices 0,1,2). Deleting index 1 to 1 leaves 2 points.
+    let body = serde_json::json!({
+        "operation": {
+            "type": "deleteSection",
+            "segmentIndex": 0,
+            "startIndex": 1,
+            "endIndex": 1
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["revision"], 1);
+    assert_eq!(json["draftId"], draft_id);
+}
+
+#[tokio::test]
+async fn delete_section_reversed_range_returns_422_invalid_operation() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // startIndex > endIndex is a reversed range
+    let body = serde_json::json!({
+        "operation": {
+            "type": "deleteSection",
+            "segmentIndex": 0,
+            "startIndex": 2,
+            "endIndex": 1
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "INVALID_OPERATION");
+}
+
+#[tokio::test]
+async fn delete_section_out_of_bounds_returns_422_invalid_point_index() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // sample_geometry() has 3 points (indices 0,1,2). endIndex=5 is out of bounds.
+    let body = serde_json::json!({
+        "operation": {
+            "type": "deleteSection",
+            "segmentIndex": 0,
+            "startIndex": 0,
+            "endIndex": 5
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "INVALID_POINT_INDEX");
+}
+
+#[tokio::test]
+async fn delete_section_topology_breaking_returns_422_insufficient_points() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // sample_geometry() has 3 points. Deleting indices 0..2 (all 3) would leave 0 points.
+    let body = serde_json::json!({
+        "operation": {
+            "type": "deleteSection",
+            "segmentIndex": 0,
+            "startIndex": 0,
+            "endIndex": 2
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "INSUFFICIENT_POINTS");
+}
+
 #[tokio::test]
 async fn stale_revision_returns_409_with_problem_details() {
     let state = RouteEditingAppState {

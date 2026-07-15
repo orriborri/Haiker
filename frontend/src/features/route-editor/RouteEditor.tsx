@@ -1,8 +1,9 @@
-import { useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { EditorMap } from "./EditorMap";
 import { EditorToolbar } from "./EditorToolbar";
 import { ConflictDialog } from "./ConflictDialog";
+import { DeleteSectionConfirmDialog } from "./DeleteSectionConfirmDialog";
 import { RecoveryDialog } from "./RecoveryDialog";
 import { useEditorState } from "./useEditorState";
 import { useAutosave } from "./useAutosave";
@@ -20,7 +21,7 @@ import { useRecordedRoute } from "@/features/activity-detail/useRecordedRoute";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { ApiError } from "@/api/client";
 import type { RoutePointDto } from "@/api/client";
-import type { Selection, RouteOperation, PendingOperation } from "./types";
+import type { Selection, RouteOperation, PendingOperation, SectionSelection } from "./types";
 
 interface RouteEditorProps {
   activityId: string;
@@ -85,6 +86,9 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
   // Track base geometry for reset operations
   const baseGeometryRef = useRef<RoutePointDto[][] | null>(null);
+
+  // Pending section deletion awaiting confirmation
+  const [pendingDeleteSection, setPendingDeleteSection] = useState<SectionSelection | null>(null);
 
   // Sync online status to reducer state
   const prevOnlineRef = useRef(isOnline);
@@ -449,16 +453,27 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         segmentIndex: state.selection.segmentIndex,
         pointIndex: state.selection.pointIndex,
       });
+      clearSelection();
     } else if (state.selection.type === "section") {
-      void dispatchOperation({
-        type: "deleteSection",
-        segmentIndex: state.selection.segmentIndex,
-        startIndex: state.selection.startIndex,
-        endIndex: state.selection.endIndex,
-      });
+      setPendingDeleteSection(state.selection);
     }
-    clearSelection();
   }, [state.selection, dispatchOperation, clearSelection]);
+
+  const handleConfirmDeleteSection = useCallback(() => {
+    if (!pendingDeleteSection) return;
+    void dispatchOperation({
+      type: "deleteSection",
+      segmentIndex: pendingDeleteSection.segmentIndex,
+      startIndex: pendingDeleteSection.startIndex,
+      endIndex: pendingDeleteSection.endIndex,
+    });
+    setPendingDeleteSection(null);
+    clearSelection();
+  }, [pendingDeleteSection, dispatchOperation, clearSelection]);
+
+  const handleCancelDeleteSection = useCallback(() => {
+    setPendingDeleteSection(null);
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -489,10 +504,14 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         return;
       }
 
-      // Escape clears selection
+      // Escape dismisses delete confirmation dialog if open, otherwise clears selection
       if (e.key === "Escape") {
         e.preventDefault();
-        clearSelection();
+        if (pendingDeleteSection) {
+          setPendingDeleteSection(null);
+        } else {
+          clearSelection();
+        }
         return;
       }
 
@@ -507,7 +526,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [state.canUndo, state.canRedo, state.isOperationPending, state.selection, handleUndo, handleRedo, handleDelete, clearSelection]);
+  }, [state.canUndo, state.canRedo, state.isOperationPending, state.selection, pendingDeleteSection, handleUndo, handleRedo, handleDelete, clearSelection]);
 
   const handleSplit = useCallback(() => {
     if (!state.selection || state.selection.type !== "point") return;
@@ -711,6 +730,15 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
           onReloadServerState={() => void handleAcceptServerState()}
           onRetryOperations={() => void handleRetryOperations()}
           onDismiss={handleDismissConflict}
+        />
+      )}
+
+      {/* Delete section confirmation dialog */}
+      {pendingDeleteSection && (
+        <DeleteSectionConfirmDialog
+          selection={pendingDeleteSection}
+          onConfirm={handleConfirmDeleteSection}
+          onCancel={handleCancelDeleteSection}
         />
       )}
 
