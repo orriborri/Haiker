@@ -837,6 +837,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "haiker-test-support",
  "proptest",
  "quick-xml 0.37.5",
  "serde",

@@ -18,5 +18,6 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+haiker-test-support = { path = "../test_support" }
 proptest = "1"
 tokio = { workspace = true, features = ["macros", "rt"] }
