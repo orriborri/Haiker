@@ -7,12 +7,14 @@ mod draft;
 pub mod gateway;
 mod operations;
 pub mod repository;
+pub mod validation;
 mod value_objects;
 
 pub use self::draft::{DraftState, OperationEntry, RouteDraft, RouteDraftId};
 pub use self::gateway::{ActivityGateway, RouteVersionGateway};
 pub use self::operations::RouteOperation;
 pub use self::repository::RouteDraftRepository;
+pub use self::validation::{validate_for_publication, PublicationValidationError};
 pub use self::value_objects::{
     Coordinate, Elevation, OperationId, PointIndex, RoutePoint, SegmentIndex,
     MAX_REPLACEMENT_POINTS,
@@ -94,6 +96,12 @@ pub enum RouteEditingError {
         position: String,
         expected: Coordinate,
         actual: Coordinate,
+    },
+
+    /// Publication validation failed with one or more geometry errors.
+    #[error("publication validation failed")]
+    PublicationValidationFailed {
+        errors: Vec<validation::PublicationValidationError>,
     },
 }
 

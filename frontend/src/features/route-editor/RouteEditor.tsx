@@ -17,6 +17,7 @@ import {
   useUndoOperation,
   useRedoOperation,
   useResetDraft,
+  useValidateDraft,
 } from "./useRouteDraft";
 import { getRouteDraft } from "@/api/client";
 import { useRecordedRoute } from "@/features/activity-detail/useRecordedRoute";
@@ -90,6 +91,9 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   // Pending section deletion awaiting confirmation
   const [pendingDeleteSection, setPendingDeleteSection] = useState<SectionSelection | null>(null);
 
+  // Validation state
+  const [validationResult, setValidationResult] = useState<{ valid: boolean; errors: Array<{ code: string; detail: string }> } | null>(null);
+
   // Sync online status to reducer state
   const prevOnlineRef = useRef(isOnline);
   useEffect(() => {
@@ -132,6 +136,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   const undoOp = useUndoOperation(handleConflict);
   const redoOp = useRedoOperation(handleConflict);
   const resetOp = useResetDraft(handleConflict);
+  const validateOp = useValidateDraft();
 
   // Autosave
   const { saveOperation, confirmSaved, hasRecovery, recoveryOps, dismissRecovery, getUnconfirmedOps, clearRecovery, saveBaseRevision, getBaseRevision } =
@@ -420,6 +425,27 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     clearSelection,
     clearRecovery,
   ]);
+
+  const handleValidate = useCallback(() => {
+    if (!state.draftId || state.isOffline) return;
+
+    setValidationResult(null);
+    validateOp.mutate(
+      { draftId: state.draftId, expectedRevision: state.revision },
+      {
+        onSuccess: (result) => {
+          setValidationResult(result);
+        },
+        onError: (error) => {
+          if (error instanceof ApiError && error.status === 409) {
+            operationFailure(error.message);
+          } else {
+            operationFailure(error.message);
+          }
+        },
+      },
+    );
+  }, [state.draftId, state.revision, state.isOffline, validateOp, operationFailure]);
 
   // Compute a human-readable description of the current selection for accessibility
   const selectionDescription = useMemo((): string | null => {
@@ -921,10 +947,13 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         onDelete={handleDelete}
         onSplit={handleSplit}
         onJoin={handleJoin}
+        onValidate={handleValidate}
         hasSelection={state.selection !== null}
         isOperationPending={state.isOperationPending}
         isOffline={state.isOffline}
         selectionDescription={selectionDescription}
+        validationResult={validationResult}
+        isValidating={validateOp.isPending}
       />
 
       {/* Drawing section panel */}

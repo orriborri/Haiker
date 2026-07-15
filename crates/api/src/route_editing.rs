@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use haiker_app::activity_catalog::ActivityId;
 use haiker_app::route_editing::{
-    ActivityGateway, RouteDraft, RouteDraftId, RouteDraftRepository, RouteEditingError,
-    RouteVersionGateway,
+    ActivityGateway, PublicationValidationError, RouteDraft, RouteDraftId, RouteDraftRepository,
+    RouteEditingError, RouteVersionGateway,
 };
 
 use crate::auth::AuthenticatedActor;
@@ -23,6 +23,7 @@ use crate::error::ApiError;
 use crate::route_editing_dto::{
     draft_to_response, geometry_to_domain, parse_idempotency_key, ApplyOperationRequest,
     CreateRouteDraftRequest, OperationResultResponse, UndoRedoRequest,
+    ValidateForPublicationRequest, ValidationErrorDto, ValidationResultResponse,
 };
 
 /// Shared application state for route editing handlers.
@@ -184,6 +185,15 @@ fn route_editing_error_to_api_error(err: RouteEditingError) -> ApiError {
             ),
             problem_type: Some("/problems/endpoint-continuity-violation".to_string()),
             title: Some("Endpoint Continuity Violation".to_string()),
+            request_id: None,
+            details: None,
+        },
+        RouteEditingError::PublicationValidationFailed { .. } => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "PUBLICATION_VALIDATION_FAILED".to_string(),
+            message: "publication validation failed".to_string(),
+            problem_type: Some("/problems/publication-validation-failed".to_string()),
+            title: Some("Publication Validation Failed".to_string()),
             request_id: None,
             details: None,
         },
@@ -717,6 +727,155 @@ pub async fn delete_draft(
         .map_err(route_editing_error_to_api_error)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST /v1/route-drafts/{draftId}/validation
+///
+/// Validate a draft for publication. This is a read-only endpoint that does NOT
+/// modify any state and does NOT require an Idempotency-Key header.
+///
+/// Returns 200 with `{valid: true/false, errors: [...]}` for validation results.
+/// Returns 404 if the draft is not found.
+/// Returns 403 if the caller is not the owner.
+/// Returns 409 if the draft is not active or revision mismatch.
+pub async fn post_validate_draft(
+    State(state): State<RouteEditingAppState>,
+    actor: AuthenticatedActor,
+    Path(draft_id): Path<Uuid>,
+    Json(body): Json<ValidateForPublicationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let draft = state
+        .repo
+        .find_by_id(RouteDraftId::new(draft_id))
+        .await
+        .map_err(route_editing_error_to_api_error)?
+        .ok_or_else(|| route_editing_error_to_api_error(RouteEditingError::DraftNotFound))?;
+
+    // Check ownership - return 403 if wrong owner
+    if draft.owner_id != actor.0.user_id {
+        return Err(ApiError {
+            status: StatusCode::FORBIDDEN,
+            code: "FORBIDDEN".to_string(),
+            message: "not authorized to access this draft".to_string(),
+            problem_type: Some("/problems/forbidden".to_string()),
+            title: Some("Forbidden".to_string()),
+            request_id: None,
+            details: None,
+        });
+    }
+
+    // Run publication validation
+    let result = haiker_app::route_editing::validate_for_publication(
+        &draft,
+        body.expected_revision,
+        actor.0.user_id,
+    );
+
+    match result {
+        Ok(()) => {
+            // Valid - no errors
+            Ok((
+                StatusCode::OK,
+                Json(ValidationResultResponse {
+                    valid: true,
+                    errors: vec![],
+                }),
+            ))
+        }
+        Err(errors) => {
+            // Check if any errors are precondition failures that should be 409
+            for err in &errors {
+                match err {
+                    PublicationValidationError::DraftNotActive => {
+                        return Err(ApiError {
+                            status: StatusCode::CONFLICT,
+                            code: "DRAFT_NOT_ACTIVE".to_string(),
+                            message: "draft is not in active state".to_string(),
+                            problem_type: Some("/problems/draft-not-active".to_string()),
+                            title: Some("Draft Not Active".to_string()),
+                            request_id: None,
+                            details: None,
+                        });
+                    }
+                    PublicationValidationError::RevisionMismatch { expected, actual } => {
+                        return Err(ApiError {
+                            status: StatusCode::CONFLICT,
+                            code: "ROUTE_DRAFT_REVISION_CONFLICT".to_string(),
+                            message: format!(
+                                "revision conflict: expected {expected}, got {actual}"
+                            ),
+                            problem_type: Some("/problems/stale-route-draft".to_string()),
+                            title: Some("Route draft revision is stale".to_string()),
+                            request_id: None,
+                            details: None,
+                        });
+                    }
+                    PublicationValidationError::NotOwner => {
+                        // This should not happen since we checked ownership above,
+                        // but handle defensively
+                        return Err(ApiError {
+                            status: StatusCode::FORBIDDEN,
+                            code: "FORBIDDEN".to_string(),
+                            message: "not authorized to access this draft".to_string(),
+                            problem_type: Some("/problems/forbidden".to_string()),
+                            title: Some("Forbidden".to_string()),
+                            request_id: None,
+                            details: None,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+
+            // All remaining errors are geometry/validation errors - return 200 with valid=false
+            let error_dtos: Vec<ValidationErrorDto> = errors
+                .into_iter()
+                .map(|e| match e {
+                    PublicationValidationError::NoSegments => ValidationErrorDto {
+                        code: "NO_SEGMENTS".to_string(),
+                        detail: "geometry must contain at least 1 segment".to_string(),
+                    },
+                    PublicationValidationError::InsufficientPointsInSegment {
+                        segment_index,
+                        minimum,
+                        actual,
+                    } => ValidationErrorDto {
+                        code: "INSUFFICIENT_POINTS_IN_SEGMENT".to_string(),
+                        detail: format!(
+                            "segment {segment_index} has {actual} points, minimum is {minimum}"
+                        ),
+                    },
+                    PublicationValidationError::InvalidCoordinateInSegment {
+                        segment_index,
+                        point_index,
+                        message,
+                    } => ValidationErrorDto {
+                        code: "INVALID_COORDINATE_IN_SEGMENT".to_string(),
+                        detail: format!("segment {segment_index}, point {point_index}: {message}"),
+                    },
+                    PublicationValidationError::NoBaseVersion => ValidationErrorDto {
+                        code: "NO_BASE_VERSION".to_string(),
+                        detail: "draft has no base route version".to_string(),
+                    },
+                    // These should not reach here due to short-circuit above
+                    PublicationValidationError::NotOwner
+                    | PublicationValidationError::DraftNotActive
+                    | PublicationValidationError::RevisionMismatch { .. } => ValidationErrorDto {
+                        code: "PRECONDITION_FAILED".to_string(),
+                        detail: "unexpected precondition error".to_string(),
+                    },
+                })
+                .collect();
+
+            Ok((
+                StatusCode::OK,
+                Json(ValidationResultResponse {
+                    valid: false,
+                    errors: error_dtos,
+                }),
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
