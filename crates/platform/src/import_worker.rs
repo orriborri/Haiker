@@ -16,6 +16,7 @@ use crate::audit::AuditLog;
 use crate::import_commit::PgImportCommitter;
 use crate::import_persistence::PgImportRepository;
 use crate::job_queue::{Job, JobHandler};
+use crate::metrics;
 use crate::object_storage::ObjectStorageClient;
 
 /// Adapter implementing the domain ObjectStore trait for the platform ObjectStorageClient.
@@ -185,6 +186,19 @@ impl JobHandler for ParseGpxJobHandler {
             .await
         {
             Ok(result) => {
+                // Emit success attempt metric
+                metrics::record_import_attempt(PARSE_GPX_JOB_TYPE, job.retry_count + 1, true);
+
+                // Emit file metrics for completed imports
+                if let ImportProcessingResult::Completed {
+                    file_size_bytes,
+                    point_count,
+                    ..
+                } = &result
+                {
+                    metrics::record_import_file_metrics(*file_size_bytes, *point_count);
+                }
+
                 // Write audit event for duplicate detections.
                 // This is an infrastructure concern handled here in the worker
                 // because the domain orchestrator must remain free of infra deps.
@@ -226,6 +240,17 @@ impl JobHandler for ParseGpxJobHandler {
                 Ok(())
             }
             Err(e) => {
+                // Emit failure attempt metric
+                metrics::record_import_attempt(PARSE_GPX_JOB_TYPE, job.retry_count + 1, false);
+
+                // Emit failure code metric if available
+                // Try to reload the import to get the failure code set by the orchestrator
+                if let Ok(Some(failed_import)) = repo.find_by_id(import_id).await {
+                    if let Some(failure_code) = &failed_import.failure_code {
+                        metrics::record_import_failure(failure_code.as_str());
+                    }
+                }
+
                 tracing::warn!(
                     import_id = %payload.import_id,
                     error = %e,

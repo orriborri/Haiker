@@ -80,6 +80,62 @@ pub fn record_queue_depth(depth: u64) {
     );
 }
 
+/// Record an import state transition with the time spent in the previous state.
+///
+/// Fields: import_status (the state being exited), duration_in_state_ms.
+/// No private labels (no user_id, owner_id, filename, or file path).
+pub fn record_import_state_transition(import_status: &str, duration_in_state_ms: u64) {
+    tracing::info!(
+        target: "metrics",
+        metric = "import_state_transition",
+        import_status = %import_status,
+        duration_in_state_ms = duration_in_state_ms,
+        "import state transition"
+    );
+}
+
+/// Record an import processing attempt.
+///
+/// Fields: job_type, attempt_number, success.
+/// No private labels (no user_id, owner_id, filename, or file path).
+pub fn record_import_attempt(job_type: &str, attempt_number: i32, success: bool) {
+    tracing::info!(
+        target: "metrics",
+        metric = "import_attempt",
+        job_type = %job_type,
+        attempt_number = attempt_number,
+        success = success,
+        "import attempt"
+    );
+}
+
+/// Record an import failure with its failure code.
+///
+/// Fields: failure_code.
+/// No private labels (no user_id, owner_id, filename, or file path).
+pub fn record_import_failure(failure_code: &str) {
+    tracing::info!(
+        target: "metrics",
+        metric = "import_failure",
+        failure_code = %failure_code,
+        "import failure"
+    );
+}
+
+/// Record file-level metrics for a completed import.
+///
+/// Fields: file_size_bytes, point_count.
+/// No private labels (no user_id, owner_id, filename, or file path).
+pub fn record_import_file_metrics(file_size_bytes: u64, point_count: u64) {
+    tracing::info!(
+        target: "metrics",
+        metric = "import_file_metrics",
+        file_size_bytes = file_size_bytes,
+        point_count = point_count,
+        "import file metrics"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +163,31 @@ mod tests {
     #[test]
     fn record_queue_depth_does_not_panic() {
         record_queue_depth(42);
+    }
+
+    #[test]
+    fn record_import_state_transition_does_not_panic() {
+        record_import_state_transition("queued", 1500);
+        record_import_state_transition("parsing", 3200);
+        record_import_state_transition("committing", 450);
+    }
+
+    #[test]
+    fn record_import_attempt_does_not_panic() {
+        record_import_attempt("parse_gpx", 1, true);
+        record_import_attempt("parse_gpx", 3, false);
+    }
+
+    #[test]
+    fn record_import_failure_does_not_panic() {
+        record_import_failure("PARSE_ERROR");
+        record_import_failure("CHECKSUM_MISMATCH");
+        record_import_failure("INTERNAL_ERROR");
+    }
+
+    #[test]
+    fn record_import_file_metrics_does_not_panic() {
+        record_import_file_metrics(1_048_576, 2500);
+        record_import_file_metrics(0, 0);
     }
 }

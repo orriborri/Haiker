@@ -7,6 +7,7 @@
 //! module free of infrastructure concerns and fully testable with mocks.
 
 use async_trait::async_trait;
+use chrono::Utc;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -41,7 +42,11 @@ pub trait ObjectStore: Send + Sync {
 #[derive(Debug, Clone)]
 pub enum ImportProcessingResult {
     /// Import completed successfully with a new activity.
-    Completed { activity_id: ActivityId },
+    Completed {
+        activity_id: ActivityId,
+        file_size_bytes: u64,
+        point_count: u64,
+    },
     /// Import completed as a duplicate of an existing activity.
     Duplicate {
         existing_import_id: ImportId,
@@ -93,9 +98,25 @@ impl<'a> ImportOrchestrator<'a> {
             });
         }
 
+        // Capture the time spent in Queued state before transitioning
+        let queued_duration_ms = {
+            let now = Utc::now();
+            let duration = now.signed_duration_since(import.updated_at);
+            duration.num_milliseconds().max(0) as u64
+        };
+
         // Transition to Parsing
         import.start_parsing()?;
         self.repo.update(&import).await?;
+
+        // Emit state duration metric for time spent in Queued state
+        tracing::info!(
+            target: "metrics",
+            metric = "import_state_transition",
+            import_status = "queued",
+            duration_in_state_ms = queued_duration_ms,
+            "import state transition"
+        );
 
         // 2. Download the GPX file
         let file_bytes = match self.object_store.download(object_storage_key).await {
@@ -109,6 +130,8 @@ impl<'a> ImportOrchestrator<'a> {
                 return Err(e);
             }
         };
+
+        let file_size_bytes = file_bytes.len() as u64;
 
         // 3. Compute and verify checksum
         let computed_hash = {
@@ -192,9 +215,27 @@ impl<'a> ImportOrchestrator<'a> {
             }
         };
 
+        let point_count = normalized.recorded_track.statistics.point_count as u64;
+
+        // Capture time spent in Parsing state before transitioning
+        let parsing_duration_ms = {
+            let now = Utc::now();
+            let duration = now.signed_duration_since(import.updated_at);
+            duration.num_milliseconds().max(0) as u64
+        };
+
         // 8. Transition to Committing
         import.start_committing()?;
         self.repo.update(&import).await?;
+
+        // Emit state duration metric for time spent in Parsing state
+        tracing::info!(
+            target: "metrics",
+            metric = "import_state_transition",
+            import_status = "parsing",
+            duration_in_state_ms = parsing_duration_ms,
+            "import state transition"
+        );
 
         // 9. Build commit data and commit
         let activity_id = ActivityId::generate();
@@ -232,8 +273,30 @@ impl<'a> ImportOrchestrator<'a> {
             ended_at: normalized.ended_at,
         };
 
+        // Capture time spent in Committing state (before commit completes)
+        let committing_start = Utc::now();
+
         match self.committer.commit(&commit_data).await {
-            Ok(_) => Ok(ImportProcessingResult::Completed { activity_id }),
+            Ok(_) => {
+                let committing_duration_ms = {
+                    let now = Utc::now();
+                    let duration = now.signed_duration_since(committing_start);
+                    duration.num_milliseconds().max(0) as u64
+                };
+                // Emit state duration metric for time spent in Committing state
+                tracing::info!(
+                    target: "metrics",
+                    metric = "import_state_transition",
+                    import_status = "committing",
+                    duration_in_state_ms = committing_duration_ms,
+                    "import state transition"
+                );
+                Ok(ImportProcessingResult::Completed {
+                    activity_id,
+                    file_size_bytes,
+                    point_count,
+                })
+            }
             Err(e) => {
                 // Try to transition import to failed
                 let _ = import
@@ -435,8 +498,14 @@ mod tests {
             .unwrap();
 
         match result {
-            ImportProcessingResult::Completed { activity_id } => {
+            ImportProcessingResult::Completed {
+                activity_id,
+                file_size_bytes,
+                point_count,
+            } => {
                 assert_ne!(activity_id.0, Uuid::nil());
+                assert!(file_size_bytes > 0);
+                assert!(point_count > 0);
             }
             _ => panic!("Expected Completed result"),
         }
