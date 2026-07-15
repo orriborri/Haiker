@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use haiker_app::activity_catalog::ActivityId;
 use haiker_app::identity::UserId;
 use haiker_app::imports::checksum::Checksum;
 use haiker_app::imports::repository::ImportRepository;
@@ -191,6 +192,29 @@ impl ImportRepository for PgImportRepository {
         })?;
 
         Ok(row.map(row_to_import))
+    }
+
+    async fn find_completed_by_checksum(
+        &self,
+        owner_id: UserId,
+        checksum: &Checksum,
+    ) -> Result<Option<(ImportId, Option<ActivityId>)>, ImportError> {
+        let row = sqlx::query_as::<_, (Uuid, Option<Uuid>)>(
+            r#"
+            SELECT id, activity_id
+            FROM imports.imports
+            WHERE owner_id = $1 AND checksum = $2 AND status = 'completed'
+            "#,
+        )
+        .bind(owner_id.0)
+        .bind(checksum.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| ImportError::StorageError {
+            message: e.to_string(),
+        })?;
+
+        Ok(row.map(|(id, activity_id)| (ImportId::new(id), activity_id.map(ActivityId::new))))
     }
 
     async fn update(&self, import: &Import) -> Result<(), ImportError> {

@@ -302,6 +302,14 @@ mod tests {
             Ok(None)
         }
 
+        async fn find_completed_by_checksum(
+            &self,
+            _owner_id: UserId,
+            _checksum: &Checksum,
+        ) -> Result<Option<(ImportId, Option<ActivityId>)>, ImportError> {
+            Ok(None)
+        }
+
         async fn update(&self, import: &Import) -> Result<(), ImportError> {
             self.imports
                 .lock()
@@ -773,5 +781,114 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("commit failed"));
+    }
+
+    #[tokio::test]
+    async fn orchestrator_duplicate_emits_correct_result_with_activity_id() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let (gpx_bytes, checksum) = valid_gpx_and_checksum();
+        let import = queued_import(owner_id, &checksum);
+        let import_id = import.id;
+        let storage_key = "imports/test/file.gpx";
+
+        let existing_import_id = ImportId::generate();
+        let existing_activity_id = ActivityId::generate();
+
+        let repo = MockRepo::new();
+        repo.insert(import);
+
+        let mut files = HashMap::new();
+        files.insert(storage_key.to_string(), gpx_bytes);
+        let object_store = MockObjectStore { files };
+
+        let duplicate_checker = MockDuplicateChecker {
+            result: DuplicateCheckResult::ExactDuplicate {
+                existing_import_id,
+                existing_activity_id: Some(existing_activity_id),
+            },
+        };
+        let committer = MockCommitter;
+
+        let orchestrator = ImportOrchestrator {
+            repo: &repo,
+            object_store: &object_store,
+            duplicate_checker: &duplicate_checker,
+            committer: &committer,
+        };
+
+        let result = orchestrator
+            .process_import(import_id, owner_id, storage_key, Uuid::new_v4())
+            .await
+            .unwrap();
+
+        // Verify that the duplicate result includes the correct activity_id
+        // from the checker (which is backed by the repository in production).
+        match result {
+            ImportProcessingResult::Duplicate {
+                existing_import_id: eid,
+                existing_activity_id: eaid,
+            } => {
+                assert_eq!(eid, existing_import_id);
+                assert_eq!(
+                    eaid,
+                    Some(existing_activity_id),
+                    "Duplicate result must carry the existing activity_id from the database"
+                );
+            }
+            _ => panic!("Expected Duplicate result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn orchestrator_duplicate_without_activity_id_returns_none() {
+        let owner_id = UserId::new(Uuid::new_v4());
+        let (gpx_bytes, checksum) = valid_gpx_and_checksum();
+        let import = queued_import(owner_id, &checksum);
+        let import_id = import.id;
+        let storage_key = "imports/test/file.gpx";
+
+        let existing_import_id = ImportId::generate();
+
+        let repo = MockRepo::new();
+        repo.insert(import);
+
+        let mut files = HashMap::new();
+        files.insert(storage_key.to_string(), gpx_bytes);
+        let object_store = MockObjectStore { files };
+
+        // Simulate a completed import that does not yet have an activity_id
+        let duplicate_checker = MockDuplicateChecker {
+            result: DuplicateCheckResult::ExactDuplicate {
+                existing_import_id,
+                existing_activity_id: None,
+            },
+        };
+        let committer = MockCommitter;
+
+        let orchestrator = ImportOrchestrator {
+            repo: &repo,
+            object_store: &object_store,
+            duplicate_checker: &duplicate_checker,
+            committer: &committer,
+        };
+
+        let result = orchestrator
+            .process_import(import_id, owner_id, storage_key, Uuid::new_v4())
+            .await
+            .unwrap();
+
+        match result {
+            ImportProcessingResult::Duplicate {
+                existing_import_id: eid,
+                existing_activity_id: eaid,
+            } => {
+                assert_eq!(eid, existing_import_id);
+                assert_eq!(
+                    eaid, None,
+                    "Duplicate result must propagate None when no activity_id exists"
+                );
+            }
+            _ => panic!("Expected Duplicate result"),
+        }
     }
 }

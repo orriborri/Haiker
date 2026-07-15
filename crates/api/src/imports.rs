@@ -415,6 +415,15 @@ impl ImportRepository for InMemoryImportRepository {
         Ok(None)
     }
 
+    async fn find_completed_by_checksum(
+        &self,
+        _owner_id: UserId,
+        _checksum: &haiker_app::imports::checksum::Checksum,
+    ) -> Result<Option<(ImportId, Option<haiker_app::activity_catalog::ActivityId>)>, ImportError>
+    {
+        Ok(None)
+    }
+
     async fn update(&self, import: &Import) -> Result<(), ImportError> {
         self.imports
             .lock()

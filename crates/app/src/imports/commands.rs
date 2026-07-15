@@ -347,6 +347,15 @@ mod tests {
                 .cloned())
         }
 
+        async fn find_completed_by_checksum(
+            &self,
+            _owner_id: UserId,
+            _checksum: &Checksum,
+        ) -> Result<Option<(ImportId, Option<crate::activity_catalog::ActivityId>)>, ImportError>
+        {
+            Ok(None)
+        }
+
         async fn update(&self, import: &Import) -> Result<(), ImportError> {
             self.imports
                 .lock()
