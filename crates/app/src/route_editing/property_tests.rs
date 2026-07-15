@@ -43,34 +43,32 @@ proptest! {
     /// The union of first_part and second_part (with the shared split point counted once)
     /// must contain every point from the original segment in order.
     #[test]
-    fn split_preserves_all_points(segment in arb_segment()) {
+    fn split_preserves_all_points(
+        segment in arb_segment(),
+        split_offset in 1usize..19,
+    ) {
         let seg_len = segment.len();
-        // Valid interior split indices: 1..seg_len-1
-        let split_idx = 1; // We'll test the first valid interior point as a baseline
-        // Use a parameterized split point below
-        for split_at in 1..seg_len - 1 {
-            let geo = vec![segment.clone()];
-            let mut draft = make_draft(geo);
-            draft.apply_operation(
-                OperationId::generate(),
-                RouteOperation::SplitSegment {
-                    segment_index: SegmentIndex::new(0),
-                    at_point_index: PointIndex::new(split_at),
-                },
-                0,
-            ).unwrap();
+        let split_at = split_offset % (seg_len - 2) + 1;
 
-            let first = &draft.geometry[0];
-            let second = &draft.geometry[1];
+        let geo = vec![segment.clone()];
+        let mut draft = make_draft(geo);
+        draft.apply_operation(
+            OperationId::generate(),
+            RouteOperation::SplitSegment {
+                segment_index: SegmentIndex::new(0),
+                at_point_index: PointIndex::new(split_at),
+            },
+            0,
+        ).unwrap();
 
-            // Union without duplication of split point
-            let mut combined: Vec<RoutePoint> = first.clone();
-            combined.extend(second.iter().skip(1).cloned());
+        let first = &draft.geometry[0];
+        let second = &draft.geometry[1];
 
-            prop_assert_eq!(&combined, &segment);
-        }
-        // Suppress unused variable warning
-        let _ = split_idx;
+        // Union without duplication of split point
+        let mut combined: Vec<RoutePoint> = first.clone();
+        combined.extend(second.iter().skip(1).cloned());
+
+        prop_assert_eq!(&combined, &segment);
     }
 
     /// Splitting at any valid interior point and then joining the resulting segments
