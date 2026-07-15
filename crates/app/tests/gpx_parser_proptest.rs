@@ -57,8 +57,9 @@ proptest! {
     }
 
     /// Arbitrary byte slices should never cause a panic.
+    /// Uses up to 64 KiB to exercise parser paths beyond the initial UTF-8 gate.
     #[test]
-    fn arbitrary_bytes_never_panic(data in proptest::collection::vec(any::<u8>(), 0..4096)) {
+    fn arbitrary_bytes_never_panic(data in proptest::collection::vec(any::<u8>(), 0..65536)) {
         let result = parse_gpx(&data);
         // Must be Ok or Err, never panic
         prop_assert!(result.is_ok() || result.is_err());

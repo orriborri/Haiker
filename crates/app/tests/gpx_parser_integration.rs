@@ -225,11 +225,30 @@ fn one_over_max_segments_fails() {
 
 #[test]
 fn input_too_large_is_rejected() {
-    // Create an input just over 100 MiB
+    // NOTE: This test allocates ~100 MiB of heap memory. It requires at least
+    // 512 MiB of available RAM to run safely alongside parallel tests.
     let size = 100 * 1024 * 1024 + 1;
     let input = vec![b' '; size];
     let err = parse_gpx(&input).unwrap_err();
     assert_eq!(err.code, GpxParseErrorCode::InputTooLarge);
+}
+
+// ---------------------------------------------------------------------------
+// Unclosed element detection at EOF
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unclosed_elements_at_eof_returns_invalid_xml() {
+    // Valid UTF-8, no DOCTYPE, but has unclosed elements that trigger the
+    // depth > 0 check at EOF.
+    let input = r#"<?xml version="1.0"?><gpx version="1.1"><trk>"#;
+    let err = parse_gpx(input.as_bytes()).unwrap_err();
+    assert_eq!(err.code, GpxParseErrorCode::InvalidXml);
+    assert!(
+        err.message.contains("unclosed XML elements"),
+        "expected 'unclosed XML elements' in error message, got: {}",
+        err.message
+    );
 }
 
 // ---------------------------------------------------------------------------
