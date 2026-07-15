@@ -1,5 +1,5 @@
 # Stage 1: Builder
-FROM rust:1.92-bookworm AS builder
+FROM rust:1.94-bookworm AS builder
 WORKDIR /app
 # Copy manifests first for caching
 COPY Cargo.toml Cargo.lock ./
