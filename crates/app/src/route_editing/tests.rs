@@ -1111,6 +1111,251 @@ fn add_point_undo_redo_deterministic() {
     assert_eq!(d.geometry, post_add_geo);
 }
 
+// --- Deterministic split/join topology tests ---
+
+#[test]
+fn split_preserves_point_count() {
+    // After split, first.len() + second.len() - 1 == original.len()
+    // because the split point is duplicated (appears in both segments).
+    let mut d = draft();
+    let original_len = d.geometry[0].len(); // 4
+    d.apply_operation(
+        op_id(),
+        RouteOperation::SplitSegment {
+            segment_index: SegmentIndex::new(0),
+            at_point_index: PointIndex::new(2),
+        },
+        0,
+    )
+    .unwrap();
+    let first_len = d.geometry[0].len();
+    let second_len = d.geometry[1].len();
+    assert_eq!(first_len + second_len - 1, original_len);
+}
+
+#[test]
+fn split_preserves_point_order() {
+    // All points in first and second segments appear in the same relative order
+    // as in the original segment.
+    let geo = vec![vec![
+        pt(1.0, 1.0),
+        pt(2.0, 2.0),
+        pt(3.0, 3.0),
+        pt(4.0, 4.0),
+        pt(5.0, 5.0),
+        pt(6.0, 6.0),
+    ]];
+    let original = geo[0].clone();
+    let mut d = RouteDraft::create_from_geometry(
+        UserId::new(Uuid::new_v4()),
+        ActivityId::generate(),
+        None,
+        geo,
+    )
+    .unwrap();
+
+    d.apply_operation(
+        op_id(),
+        RouteOperation::SplitSegment {
+            segment_index: SegmentIndex::new(0),
+            at_point_index: PointIndex::new(3),
+        },
+        0,
+    )
+    .unwrap();
+
+    // First segment should be original[0..=3]
+    assert_eq!(d.geometry[0], original[0..=3]);
+    // Second segment should be original[3..=5]
+    assert_eq!(d.geometry[1], original[3..=5]);
+}
+
+#[test]
+fn join_compatible_endpoints_deduplicates() {
+    // Split then join gives back exact original geometry (shared endpoint is deduplicated).
+    let original_geo = sample_geo();
+    let mut d = draft();
+
+    d.apply_operation(
+        op_id(),
+        RouteOperation::SplitSegment {
+            segment_index: SegmentIndex::new(0),
+            at_point_index: PointIndex::new(2),
+        },
+        0,
+    )
+    .unwrap();
+
+    d.apply_operation(
+        op_id(),
+        RouteOperation::JoinSegments {
+            first_segment_index: SegmentIndex::new(0),
+            second_segment_index: SegmentIndex::new(1),
+        },
+        1,
+    )
+    .unwrap();
+
+    assert_eq!(d.geometry, original_geo);
+}
+
+#[test]
+fn join_incompatible_endpoints_concatenates() {
+    // Joining two segments that do NOT share an endpoint concatenates them without dedup.
+    let geo = vec![
+        vec![pt(1.0, 1.0), pt(2.0, 2.0), pt(3.0, 3.0)],
+        vec![pt(10.0, 10.0), pt(11.0, 11.0), pt(12.0, 12.0)],
+    ];
+    let mut d = RouteDraft::create_from_geometry(
+        UserId::new(Uuid::new_v4()),
+        ActivityId::generate(),
+        None,
+        geo,
+    )
+    .unwrap();
+
+    d.apply_operation(
+        op_id(),
+        RouteOperation::JoinSegments {
+            first_segment_index: SegmentIndex::new(0),
+            second_segment_index: SegmentIndex::new(1),
+        },
+        0,
+    )
+    .unwrap();
+
+    // No deduplication: all 6 points are preserved
+    assert_eq!(d.geometry.len(), 1);
+    assert_eq!(d.geometry[0].len(), 6);
+    assert_eq!(d.geometry[0][0], pt(1.0, 1.0));
+    assert_eq!(d.geometry[0][2], pt(3.0, 3.0));
+    assert_eq!(d.geometry[0][3], pt(10.0, 10.0));
+    assert_eq!(d.geometry[0][5], pt(12.0, 12.0));
+}
+
+#[test]
+fn split_at_every_valid_interior_point() {
+    // Loop through all valid split points on a 6-point segment and verify each produces
+    // valid results.
+    let geo = vec![vec![
+        pt(1.0, 1.0),
+        pt(2.0, 2.0),
+        pt(3.0, 3.0),
+        pt(4.0, 4.0),
+        pt(5.0, 5.0),
+        pt(6.0, 6.0),
+    ]];
+    let original = geo[0].clone();
+
+    for split_at in 1..5 {
+        let mut d = RouteDraft::create_from_geometry(
+            UserId::new(Uuid::new_v4()),
+            ActivityId::generate(),
+            None,
+            geo.clone(),
+        )
+        .unwrap();
+
+        d.apply_operation(
+            op_id(),
+            RouteOperation::SplitSegment {
+                segment_index: SegmentIndex::new(0),
+                at_point_index: PointIndex::new(split_at),
+            },
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            d.geometry.len(),
+            2,
+            "split_at={split_at} did not produce 2 segments"
+        );
+        // First segment: points 0..=split_at
+        assert_eq!(d.geometry[0].len(), split_at + 1);
+        // Second segment: points split_at..=5
+        assert_eq!(d.geometry[1].len(), 6 - split_at);
+        // Split point is shared
+        assert_eq!(d.geometry[0].last(), d.geometry[1].first());
+        // Combined (deduplicated) equals original
+        let mut combined = d.geometry[0].clone();
+        combined.extend(d.geometry[1].iter().skip(1).cloned());
+        assert_eq!(combined, original);
+    }
+}
+
+#[test]
+fn multiple_splits_then_joins_roundtrip() {
+    // Split a segment twice, then join back in order, verify original geometry is restored.
+    let geo = vec![vec![
+        pt(1.0, 1.0),
+        pt(2.0, 2.0),
+        pt(3.0, 3.0),
+        pt(4.0, 4.0),
+        pt(5.0, 5.0),
+        pt(6.0, 6.0),
+    ]];
+    let original = geo.clone();
+    let mut d = RouteDraft::create_from_geometry(
+        UserId::new(Uuid::new_v4()),
+        ActivityId::generate(),
+        None,
+        geo,
+    )
+    .unwrap();
+
+    // First split at index 2 (produces [0..=2] and [2..=5])
+    d.apply_operation(
+        op_id(),
+        RouteOperation::SplitSegment {
+            segment_index: SegmentIndex::new(0),
+            at_point_index: PointIndex::new(2),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(d.geometry.len(), 2);
+
+    // Second split: split the second segment (index 1, which is [2,3,4,5]) at its index 2
+    // That is point index 2 within that segment (which is the original point 4)
+    d.apply_operation(
+        op_id(),
+        RouteOperation::SplitSegment {
+            segment_index: SegmentIndex::new(1),
+            at_point_index: PointIndex::new(2),
+        },
+        1,
+    )
+    .unwrap();
+    assert_eq!(d.geometry.len(), 3);
+
+    // Join segments 1 and 2 first
+    d.apply_operation(
+        op_id(),
+        RouteOperation::JoinSegments {
+            first_segment_index: SegmentIndex::new(1),
+            second_segment_index: SegmentIndex::new(2),
+        },
+        2,
+    )
+    .unwrap();
+    assert_eq!(d.geometry.len(), 2);
+
+    // Join segments 0 and 1
+    d.apply_operation(
+        op_id(),
+        RouteOperation::JoinSegments {
+            first_segment_index: SegmentIndex::new(0),
+            second_segment_index: SegmentIndex::new(1),
+        },
+        3,
+    )
+    .unwrap();
+    assert_eq!(d.geometry.len(), 1);
+
+    assert_eq!(d.geometry, original);
+}
+
 // --- DeletePoint acceptance criteria tests ---
 
 #[test]
