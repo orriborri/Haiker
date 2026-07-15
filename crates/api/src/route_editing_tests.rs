@@ -4327,6 +4327,43 @@ async fn publish_draft_missing_idempotency_key_returns_400() {
 }
 
 #[tokio::test]
+async fn publish_draft_non_uuid_idempotency_key_returns_400() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::succeeding(2));
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0
+    });
+
+    // Send a non-UUID idempotency key
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", "not-a-valid-uuid-at-all")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "INVALID_IDEMPOTENCY_KEY");
+}
+
+#[tokio::test]
 async fn publish_draft_success_returns_201() {
     let (app, _repo) = publication_test_app(FakePublicationCommitter::succeeding(2));
     let user_id = Uuid::new_v4();
@@ -4484,7 +4521,9 @@ async fn publish_draft_not_active_returns_409() {
 
 #[tokio::test]
 async fn publish_draft_not_found_returns_404() {
-    let (app, _repo) = publication_test_app(FakePublicationCommitter::succeeding(2));
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::failing(
+        RouteVersioningError::DraftNotFound,
+    ));
     let user_id = Uuid::new_v4();
     let random_draft_id = Uuid::new_v4();
 

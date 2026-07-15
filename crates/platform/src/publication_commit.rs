@@ -3,12 +3,30 @@
 //! Implements the CommitPublication trait with a single database transaction
 //! that atomically persists the new route version, updates the activity pointer,
 //! marks the draft as published, writes audit and outbox events.
+//!
+//! # Relationship to publish_command.rs (domain orchestrator)
+//!
+//! The `execute_publish` function in `publish_command.rs` serves as the domain
+//! specification and test harness for the publication workflow. It defines the
+//! business rules and invariants using pure domain types and repository traits.
+//!
+//! This committer (`PgPublicationCommitter`) is the production implementation
+//! that must maintain behavioral equivalence with `execute_publish`. It
+//! reimplements the logic in SQL within a single transaction for atomicity
+//! across schemas (route_versioning, route_editing, activity_catalog, audit,
+//! outbox). This is the standard pattern in the codebase -- see
+//! `import_commit.rs` which similarly reimplements the domain import logic
+//! in SQL for transactional guarantees.
+//!
+//! When modifying publication rules, update both paths and ensure the domain
+//! tests in `publish_command.rs` still pass as a specification check.
 
 use async_trait::async_trait;
 use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use haiker_app::activity_catalog::ActivityId;
 use haiker_app::route_versioning::commit::{
     CommitPublication, PublicationCommitData, PublicationResult,
 };
@@ -30,6 +48,20 @@ impl PgPublicationCommitter {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+}
+
+/// Compute a deterministic fingerprint of the publication request payload.
+///
+/// Used to detect idempotency conflicts: same key but different parameters
+/// should return 409 IDEMPOTENCY_CONFLICT. The fingerprint captures the
+/// fields that define "same request": draft_id, expected_revision, and edit_summary.
+fn compute_payload_fingerprint(data: &PublicationCommitData) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    data.draft_id.0.hash(&mut hasher);
+    data.expected_revision.hash(&mut hasher);
+    data.edit_summary.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 #[async_trait]
@@ -59,9 +91,13 @@ impl CommitPublication for PgPublicationCommitter {
                     message: format!("failed to begin transaction: {e}"),
                 })?;
 
-        // 1. Check idempotency: look for an existing outbox event with this correlation_id
+        // 1. Check idempotency: look for an existing outbox event with this correlation_id.
+        // The idempotency key is validated as a UUID at the API layer
+        // (extract_uuid_idempotency_key), so parse_str should always succeed here.
+        // The unwrap_or fallback is retained as defense-in-depth only.
         let correlation_id = Uuid::parse_str(&data.idempotency_key).unwrap_or_else(|_| {
-            // If the key is not a valid UUID, derive one deterministically
+            // Defense-in-depth: API layer rejects non-UUID keys, but if one somehow
+            // reaches here, derive deterministically. This path should be unreachable.
             let bytes = data.idempotency_key.as_bytes();
             let mut hash = [0u8; 16];
             for (i, b) in bytes.iter().enumerate() {
@@ -70,9 +106,12 @@ impl CommitPublication for PgPublicationCommitter {
             Uuid::from_bytes(hash)
         });
 
-        let existing_event = sqlx::query_as::<_, (String,)>(
+        // Compute the payload fingerprint for idempotency conflict detection
+        let fingerprint = compute_payload_fingerprint(data);
+
+        let existing_event = sqlx::query_as::<_, (String, serde_json::Value)>(
             r#"
-            SELECT aggregate_id
+            SELECT aggregate_id, payload
             FROM platform.outbox
             WHERE aggregate_type = 'route_version' AND correlation_id = $1
             "#,
@@ -84,7 +123,15 @@ impl CommitPublication for PgPublicationCommitter {
             message: format!("failed to check idempotency: {e}"),
         })?;
 
-        if let Some((aggregate_id,)) = existing_event {
+        if let Some((aggregate_id, payload)) = existing_event {
+            // Check if the payload fingerprint matches. If different, this is
+            // a key reuse with different parameters -> 409 IDEMPOTENCY_CONFLICT.
+            if let Some(stored_fingerprint) = payload.get("_fingerprint").and_then(|v| v.as_str()) {
+                if stored_fingerprint != fingerprint {
+                    return Err(RouteVersioningError::IdempotencyConflict);
+                }
+            }
+
             // Idempotent replay: look up the existing route version
             let version_id = Uuid::parse_str(&aggregate_id).map_err(|e| {
                 RouteVersioningError::PersistenceError {
@@ -115,10 +162,12 @@ impl CommitPublication for PgPublicationCommitter {
             }
         }
 
-        // 2. Load and lock the draft
-        let draft_row = sqlx::query_as::<_, (Uuid, String, i64, serde_json::Value)>(
+        // 2. Load and lock the draft, resolving activity_id from the locked row.
+        // This eliminates the TOCTOU window: activity_id comes from the same row
+        // that is locked for the duration of the transaction.
+        let draft_row = sqlx::query_as::<_, (Uuid, Uuid, String, i64, serde_json::Value)>(
             r#"
-            SELECT owner_id, state, revision, geometry_json
+            SELECT owner_id, activity_id, state, revision, geometry_json
             FROM route_editing.route_drafts
             WHERE id = $1
             FOR UPDATE
@@ -132,7 +181,8 @@ impl CommitPublication for PgPublicationCommitter {
         })?
         .ok_or(RouteVersioningError::DraftNotFound)?;
 
-        let (owner_id, state, revision, geometry_json) = draft_row;
+        let (owner_id, activity_id_raw, state, revision, geometry_json) = draft_row;
+        let activity_id = ActivityId(activity_id_raw);
 
         // 3. Validate owner, state, and expected revision
         if owner_id != data.actor_id.0 {
@@ -150,8 +200,10 @@ impl CommitPublication for PgPublicationCommitter {
             });
         }
 
-        // 4. Compute geometry, bounding box, and statistics from draft geometry
-        // The geometry_json is stored as a JSON array of segments
+        // 4. Compute geometry, bounding box, and statistics from draft geometry.
+        // The geometry_json is stored as a JSON array of segments.
+        // GeometryPoint includes an optional elevation field so that elevation
+        // data from the draft is preserved in the stored version geometry_json.
         let segments: Vec<Vec<GeometryPoint>> = serde_json::from_value(geometry_json.clone())
             .map_err(|e| RouteVersioningError::ValidationFailed {
                 errors: vec![format!("failed to parse draft geometry: {e}")],
@@ -209,7 +261,7 @@ impl CommitPublication for PgPublicationCommitter {
             LIMIT 1
             "#,
         )
-        .bind(data.activity_id.0)
+        .bind(activity_id.0)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| RouteVersioningError::PersistenceError {
@@ -233,7 +285,7 @@ impl CommitPublication for PgPublicationCommitter {
             "#,
         )
         .bind(new_version_id)
-        .bind(data.activity_id.0)
+        .bind(activity_id.0)
         .bind(parent_version_id)
         .bind(new_version_number)
         .bind(&geometry_json)
@@ -256,7 +308,7 @@ impl CommitPublication for PgPublicationCommitter {
             WHERE id = $1
             "#,
         )
-        .bind(data.activity_id.0)
+        .bind(activity_id.0)
         .bind(new_version_id)
         .execute(&mut *tx)
         .await
@@ -282,7 +334,7 @@ impl CommitPublication for PgPublicationCommitter {
         // 9. Write audit event
         let audit_metadata = json!({
             "draft_id": data.draft_id.0.to_string(),
-            "activity_id": data.activity_id.0.to_string(),
+            "activity_id": activity_id.0.to_string(),
             "version_number": new_version_number,
         });
 
@@ -299,13 +351,17 @@ impl CommitPublication for PgPublicationCommitter {
             message: format!("failed to write audit event: {e}"),
         })?;
 
-        // 10. Write outbox event (RouteVersionPublished)
+        // 10. Write outbox event (RouteVersionPublished).
+        // The payload includes a `_fingerprint` field used for idempotency conflict
+        // detection. On replay, if the stored fingerprint differs from the incoming
+        // request's fingerprint, we return IdempotencyConflict (409).
         let outbox_payload = json!({
             "route_version_id": new_version_id.to_string(),
-            "activity_id": data.activity_id.0.to_string(),
+            "activity_id": activity_id.0.to_string(),
             "draft_id": data.draft_id.0.to_string(),
             "version_number": new_version_number,
             "actor_id": data.actor_id.0.to_string(),
+            "_fingerprint": fingerprint,
         });
 
         Outbox::publish(
@@ -337,10 +393,19 @@ impl CommitPublication for PgPublicationCommitter {
 }
 
 /// A geometry point for deserialization from draft geometry JSON.
+///
+/// Includes an optional `elevation` field to preserve elevation data from the
+/// draft's RoutePoint in the stored geometry_json of the version. The elevation
+/// is carried through via the raw `geometry_json` column (which stores the
+/// original segments including all fields), so no data is lost even though
+/// the flat_coords tuple used for distance/bbox computation only uses lat/lon.
 #[derive(Debug, serde::Deserialize)]
 struct GeometryPoint {
     latitude: f64,
     longitude: f64,
+    /// Elevation in meters, preserved in the stored geometry_json when present.
+    #[allow(dead_code)]
+    elevation: Option<f64>,
 }
 
 /// Compute total distance in meters using haversine formula.

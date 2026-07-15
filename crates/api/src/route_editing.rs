@@ -226,6 +226,32 @@ fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(key.to_string())
 }
 
+/// Extract the Idempotency-Key header value and validate it is a valid UUID.
+///
+/// The OpenAPI spec mandates UUID format for the Idempotency-Key header on the
+/// publication endpoint. Rejecting non-UUID keys at the API layer avoids the
+/// lossy XOR-based hash fallback in the committer that could produce collisions
+/// for keys longer than 16 bytes.
+#[allow(clippy::result_large_err)]
+fn extract_uuid_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
+    let key = extract_idempotency_key(headers)?;
+
+    // Validate UUID format per OpenAPI spec
+    if Uuid::parse_str(&key).is_err() {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_IDEMPOTENCY_KEY".to_string(),
+            message: "Idempotency-Key must be a valid UUID".to_string(),
+            problem_type: Some("/problems/invalid-idempotency-key".to_string()),
+            title: Some("Invalid Idempotency Key".to_string()),
+            request_id: None,
+            details: None,
+        });
+    }
+
+    Ok(key)
+}
+
 /// POST /v1/activities/{activityId}/route-drafts
 ///
 /// Create a new route draft for the given activity.
@@ -948,8 +974,13 @@ fn route_versioning_error_to_api_error(err: RouteVersioningError) -> ApiError {
 /// POST /v1/route-drafts/{draftId}/publication
 ///
 /// Publish a route draft, creating a new immutable route version.
-/// Requires an Idempotency-Key header. Returns 201 on success with the
-/// new route version details.
+/// Requires an Idempotency-Key header (must be a valid UUID per OpenAPI spec).
+/// Returns 201 on success with the new route version details.
+///
+/// The handler delegates entirely to the transactional committer without
+/// pre-loading the draft. The committer locks the draft row (SELECT FOR UPDATE)
+/// and resolves activity_id from the locked row, eliminating the TOCTOU window
+/// that would exist if we read the draft here first.
 pub async fn post_publish_draft(
     State(state): State<RouteEditingAppState>,
     actor: AuthenticatedActor,
@@ -957,7 +988,7 @@ pub async fn post_publish_draft(
     headers: HeaderMap,
     Json(body): Json<PublishRouteDraftRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let idempotency_key = extract_idempotency_key(&headers)?;
+    let idempotency_key = extract_uuid_idempotency_key(&headers)?;
 
     let committer = state
         .publication_committer
@@ -972,21 +1003,12 @@ pub async fn post_publish_draft(
             details: None,
         })?;
 
-    // Load the draft to get the activity_id
-    let draft = state
-        .repo
-        .find_by_id(RouteDraftId::new(draft_id))
-        .await
-        .map_err(route_editing_error_to_api_error)?
-        .ok_or_else(|| route_versioning_error_to_api_error(RouteVersioningError::DraftNotFound))?;
-
     let commit_data = PublicationCommitData {
         draft_id: RouteDraftId::new(draft_id),
         expected_revision: body.expected_revision,
         actor_id: actor.0.user_id,
         idempotency_key,
         edit_summary: body.edit_summary,
-        activity_id: draft.activity_id,
     };
 
     let result = committer

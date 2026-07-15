@@ -7,13 +7,16 @@
 
 use async_trait::async_trait;
 
-use crate::activity_catalog::ActivityId;
 use crate::identity::UserId;
 use crate::route_editing::RouteDraftId;
 
 use super::{RouteVersionId, RouteVersioningError};
 
 /// All data needed to commit a route version publication in a single transaction.
+///
+/// Note: `activity_id` is intentionally not included here. The committer resolves
+/// it from the locked draft row inside the transaction, eliminating the TOCTOU
+/// window that would exist if the handler pre-loaded the draft to extract it.
 #[derive(Debug, Clone)]
 pub struct PublicationCommitData {
     /// The draft being published.
@@ -26,8 +29,6 @@ pub struct PublicationCommitData {
     pub idempotency_key: String,
     /// Optional human-readable summary of edits.
     pub edit_summary: Option<String>,
-    /// The activity this draft belongs to.
-    pub activity_id: ActivityId,
 }
 
 /// The result of a successful publication commit.
@@ -81,7 +82,6 @@ mod tests {
             actor_id: UserId::new(Uuid::new_v4()),
             idempotency_key: "test-key-123".to_string(),
             edit_summary: Some("Fixed trail section".to_string()),
-            activity_id: ActivityId::new(Uuid::new_v4()),
         };
 
         assert_eq!(data.expected_revision, 3);
