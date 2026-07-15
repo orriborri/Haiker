@@ -2975,3 +2975,742 @@ async fn redo_on_discarded_draft_returns_409() {
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
     assert_eq!(json["code"], "DRAFT_NOT_ACTIVE");
 }
+
+// --- OpenAPI contract tests: response shape validation ---
+
+/// Validates that a JSON value conforms to the RouteDraftResponse schema.
+fn assert_route_draft_response_schema(json: &serde_json::Value) {
+    assert!(json["id"].is_string(), "id must be a string (uuid)");
+    assert!(
+        Uuid::parse_str(json["id"].as_str().unwrap()).is_ok(),
+        "id must be a valid UUID"
+    );
+    assert!(
+        json["activityId"].is_string(),
+        "activityId must be a string (uuid)"
+    );
+    assert!(
+        Uuid::parse_str(json["activityId"].as_str().unwrap()).is_ok(),
+        "activityId must be a valid UUID"
+    );
+    assert!(
+        json["revision"].is_i64() || json["revision"].is_u64(),
+        "revision must be an integer"
+    );
+    assert!(json["state"].is_string(), "state must be a string");
+    let state = json["state"].as_str().unwrap();
+    assert!(
+        ["active", "published", "discarded"].contains(&state),
+        "state must be one of: active, published, discarded"
+    );
+    assert!(json["geometry"].is_array(), "geometry must be an array");
+    let segments = json["geometry"].as_array().unwrap();
+    assert!(
+        !segments.is_empty(),
+        "geometry must have at least 1 segment"
+    );
+    for segment in segments {
+        assert!(segment.is_array(), "each segment must be an array");
+        let points = segment.as_array().unwrap();
+        assert!(
+            points.len() >= 2,
+            "each segment must have at least 2 points"
+        );
+        for point in points {
+            assert_route_point_schema(point);
+        }
+    }
+    assert!(json["canUndo"].is_boolean(), "canUndo must be a boolean");
+    assert!(json["canRedo"].is_boolean(), "canRedo must be a boolean");
+    assert!(
+        json["createdAt"].is_string(),
+        "createdAt must be a datetime string"
+    );
+    assert!(
+        json["updatedAt"].is_string(),
+        "updatedAt must be a datetime string"
+    );
+    if json.get("baseRouteVersionId").is_some() && !json["baseRouteVersionId"].is_null() {
+        assert!(
+            json["baseRouteVersionId"].is_string(),
+            "baseRouteVersionId must be a string if present"
+        );
+    }
+}
+
+/// Validates that a JSON value conforms to the OperationResultResponse schema.
+fn assert_operation_result_response_schema(json: &serde_json::Value) {
+    assert!(
+        json["draftId"].is_string(),
+        "draftId must be a string (uuid)"
+    );
+    assert!(
+        Uuid::parse_str(json["draftId"].as_str().unwrap()).is_ok(),
+        "draftId must be a valid UUID"
+    );
+    assert!(
+        json["revision"].is_i64() || json["revision"].is_u64(),
+        "revision must be an integer"
+    );
+    assert!(json["canUndo"].is_boolean(), "canUndo must be a boolean");
+    assert!(json["canRedo"].is_boolean(), "canRedo must be a boolean");
+}
+
+/// Validates that a JSON value conforms to the ProblemDetail schema.
+fn assert_problem_detail_schema(json: &serde_json::Value) {
+    assert!(
+        json["type"].is_string(),
+        "ProblemDetail: type must be a string"
+    );
+    assert!(
+        json["title"].is_string(),
+        "ProblemDetail: title must be a string"
+    );
+    assert!(
+        json["status"].is_number(),
+        "ProblemDetail: status must be a number"
+    );
+    assert!(
+        json["code"].is_string(),
+        "ProblemDetail: code must be a string"
+    );
+    assert!(
+        json["detail"].is_string(),
+        "ProblemDetail: detail must be a string"
+    );
+    assert!(
+        json.get("requestId").is_some(),
+        "ProblemDetail: requestId field must be present"
+    );
+}
+
+/// Validates a single RoutePoint conforms to the OpenAPI schema.
+fn assert_route_point_schema(json: &serde_json::Value) {
+    assert!(
+        json["latitude"].is_f64() || json["latitude"].is_i64(),
+        "RoutePoint: latitude must be a number"
+    );
+    assert!(
+        json["longitude"].is_f64() || json["longitude"].is_i64(),
+        "RoutePoint: longitude must be a number"
+    );
+    let lat = json["latitude"].as_f64().unwrap();
+    let lon = json["longitude"].as_f64().unwrap();
+    assert!(
+        (-90.0..=90.0).contains(&lat),
+        "RoutePoint: latitude must be in [-90, 90]"
+    );
+    assert!(
+        (-180.0..=180.0).contains(&lon),
+        "RoutePoint: longitude must be in [-180, 180]"
+    );
+    if json.get("elevation").is_some() && !json["elevation"].is_null() {
+        assert!(
+            json["elevation"].is_f64() || json["elevation"].is_i64(),
+            "RoutePoint: elevation must be a number if present"
+        );
+    }
+}
+
+#[tokio::test]
+async fn contract_create_draft_response_matches_route_draft_response_schema() {
+    let app = test_app();
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let json = create_draft_for_user(&app, user_id, activity_id).await;
+    assert_route_draft_response_schema(&json);
+    assert_eq!(json["revision"], 0);
+    assert_eq!(json["state"], "active");
+    assert_eq!(json["canUndo"], false);
+    assert_eq!(json["canRedo"], false);
+}
+
+#[tokio::test]
+async fn contract_get_draft_response_matches_route_draft_response_schema() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/route-drafts/{draft_id}"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_route_draft_response_schema(&json);
+}
+
+#[tokio::test]
+async fn contract_apply_operation_response_matches_operation_result_schema() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_operation_result_response_schema(&json);
+}
+
+#[tokio::test]
+async fn contract_undo_response_matches_operation_result_schema() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let apply_body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&apply_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let undo_body = serde_json::json!({"expectedRevision": 1});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/undo"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&undo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_operation_result_response_schema(&json);
+}
+
+#[tokio::test]
+async fn contract_redo_response_matches_operation_result_schema() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let apply_body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&apply_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let undo_body = serde_json::json!({"expectedRevision": 1});
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/undo"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&undo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let redo_body = serde_json::json!({"expectedRevision": 2});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/redo"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&redo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_operation_result_response_schema(&json);
+}
+
+#[tokio::test]
+async fn contract_all_error_codes_have_correct_problem_detail_structure() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Test INVALID_SEGMENT_INDEX (422)
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 99,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_problem_detail_schema(&json);
+    assert_eq!(json["code"], "INVALID_SEGMENT_INDEX");
+    assert_eq!(json["status"], 422);
+
+    // Test INVALID_POINT_INDEX (422)
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 99,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_problem_detail_schema(&json);
+    assert_eq!(json["code"], "INVALID_POINT_INDEX");
+    assert_eq!(json["status"], 422);
+}
+
+#[tokio::test]
+async fn contract_insufficient_points_error_matches_problem_detail_schema() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // sample_geometry has 3 points; deleting 0..2 removes all
+    let body = serde_json::json!({
+        "operation": {
+            "type": "deleteSection",
+            "segmentIndex": 0,
+            "startIndex": 0,
+            "endIndex": 2
+        },
+        "expectedRevision": 0
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_problem_detail_schema(&json);
+    assert_eq!(json["code"], "INSUFFICIENT_POINTS");
+    assert_eq!(json["status"], 422);
+}
+
+#[tokio::test]
+async fn contract_invalid_operation_error_matches_problem_detail_schema() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Reversed range: startIndex > endIndex
+    let body = serde_json::json!({
+        "operation": {
+            "type": "deleteSection",
+            "segmentIndex": 0,
+            "startIndex": 2,
+            "endIndex": 0
+        },
+        "expectedRevision": 0
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_problem_detail_schema(&json);
+    assert_eq!(json["code"], "INVALID_OPERATION");
+    assert_eq!(json["status"], 422);
+}
+
+#[tokio::test]
+async fn contract_revision_conflict_error_matches_problem_detail_schema() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Bump revision
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Use stale revision
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.5, "longitude": 12.5}
+        },
+        "expectedRevision": 0
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_problem_detail_schema(&json);
+    assert_eq!(json["code"], "ROUTE_DRAFT_REVISION_CONFLICT");
+    assert_eq!(json["status"], 409);
+}
+
+#[tokio::test]
+async fn contract_not_found_error_matches_problem_detail_schema() {
+    let app = test_app();
+    let (auth_key, auth_val) = auth_header();
+    let random_id = Uuid::new_v4();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/route-drafts/{random_id}"))
+                .header(&auth_key, &auth_val)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_problem_detail_schema(&json);
+    assert_eq!(json["code"], "NOT_FOUND");
+    assert_eq!(json["status"], 404);
+}
+
+#[tokio::test]
+async fn contract_forbidden_error_matches_problem_detail_schema() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user1 = Uuid::new_v4();
+    let user2 = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user1, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/route-drafts/{draft_id}"))
+                .header("Authorization", format!("Bearer {user2}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_problem_detail_schema(&json);
+    assert_eq!(json["status"], 403);
+}
+
+#[tokio::test]
+async fn contract_draft_not_active_error_matches_problem_detail_schema() {
+    let repo = Arc::new(InMemoryRouteDraftRepository::new());
+    let state = RouteEditingAppState {
+        repo: repo.clone(),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    publish_draft_in_repo(&repo, draft_id).await;
+
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_problem_detail_schema(&json);
+    assert_eq!(json["code"], "DRAFT_NOT_ACTIVE");
+    assert_eq!(json["status"], 409);
+}
