@@ -1017,4 +1017,398 @@ mod tests {
             _ => panic!("Expected Duplicate result"),
         }
     }
+
+    // -- Additional mock implementations for new tests --
+
+    /// An object store that always fails with a storage error.
+    /// Used to simulate storage outages.
+    struct FailingObjectStore;
+
+    #[async_trait]
+    impl ObjectStore for FailingObjectStore {
+        async fn download(&self, key: &str) -> Result<Vec<u8>, ImportError> {
+            Err(ImportError::StorageError {
+                message: format!("storage unavailable for key: {key}"),
+            })
+        }
+    }
+
+    /// A committer that records whether `commit` was called and how many times.
+    /// Used to verify that the committer is NOT invoked in certain paths (e.g., duplicates).
+    struct RecordingCommitter {
+        call_count: Mutex<u32>,
+    }
+
+    impl RecordingCommitter {
+        fn new() -> Self {
+            Self {
+                call_count: Mutex::new(0),
+            }
+        }
+
+        fn was_called(&self) -> bool {
+            *self.call_count.lock().unwrap() > 0
+        }
+    }
+
+    #[async_trait]
+    impl CommitImport for RecordingCommitter {
+        async fn commit(&self, data: &ImportCommitData) -> Result<ActivityId, ImportError> {
+            *self.call_count.lock().unwrap() += 1;
+            Ok(data.activity_id)
+        }
+    }
+
+    #[tokio::test]
+    async fn source_file_bytes_not_mutated_by_processing() {
+        // Prove that the bytes downloaded from the object store are not
+        // altered by orchestrator processing. After a successful import,
+        // the stored bytes must be bit-for-bit identical to the original.
+        let owner_id = UserId::new(Uuid::new_v4());
+        let (gpx_bytes, checksum) = valid_gpx_and_checksum();
+        let original_bytes = gpx_bytes.clone();
+
+        let import = queued_import(owner_id, &checksum);
+        let import_id = import.id;
+        let storage_key = "imports/test/immutable.gpx";
+
+        let repo = MockRepo::new();
+        repo.insert(import);
+
+        let mut files = HashMap::new();
+        files.insert(storage_key.to_string(), gpx_bytes);
+        let object_store = MockObjectStore { files };
+
+        let duplicate_checker = MockDuplicateChecker {
+            result: DuplicateCheckResult::NotDuplicate,
+        };
+        let committer = MockCommitter;
+
+        let orchestrator = ImportOrchestrator {
+            repo: &repo,
+            object_store: &object_store,
+            duplicate_checker: &duplicate_checker,
+            committer: &committer,
+        };
+
+        let result = orchestrator
+            .process_import(import_id, owner_id, storage_key, Uuid::new_v4())
+            .await;
+
+        assert!(result.is_ok(), "Import should succeed");
+
+        // Verify: the bytes still stored in the object store are identical
+        // to the original input (no mutation occurred during processing).
+        let stored_bytes = object_store.download(storage_key).await.unwrap();
+        assert_eq!(
+            stored_bytes, original_bytes,
+            "Source file bytes must not be mutated by orchestrator processing"
+        );
+    }
+
+    #[tokio::test]
+    async fn orchestrator_redelivery_from_parsing_state_returns_invalid_transition() {
+        // Simulates a worker restart scenario: the import is already in
+        // Parsing state (not Queued), so a second call to process_import
+        // must return InvalidTransition rather than re-processing.
+        let owner_id = UserId::new(Uuid::new_v4());
+        let (gpx_bytes, checksum) = valid_gpx_and_checksum();
+
+        // Create an import and advance it to Parsing state
+        let mut import = queued_import(owner_id, &checksum);
+        import.start_parsing().unwrap();
+        assert_eq!(import.status, ImportStatus::Parsing);
+        let import_id = import.id;
+        let storage_key = "imports/test/redelivery.gpx";
+
+        let repo = MockRepo::new();
+        repo.insert(import);
+
+        let mut files = HashMap::new();
+        files.insert(storage_key.to_string(), gpx_bytes);
+        let object_store = MockObjectStore { files };
+
+        let duplicate_checker = MockDuplicateChecker {
+            result: DuplicateCheckResult::NotDuplicate,
+        };
+        let committer = MockCommitter;
+
+        let orchestrator = ImportOrchestrator {
+            repo: &repo,
+            object_store: &object_store,
+            duplicate_checker: &duplicate_checker,
+            committer: &committer,
+        };
+
+        let result = orchestrator
+            .process_import(import_id, owner_id, storage_key, Uuid::new_v4())
+            .await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ImportError::InvalidTransition { from, to } => {
+                assert_eq!(from, "parsing");
+                assert_eq!(to, "parsing");
+            }
+            other => panic!("Expected InvalidTransition, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn storage_outage_leaves_import_failed_with_storage_unavailable_code() {
+        // When object storage is unreachable, the import must transition to
+        // Failed with failure_code StorageUnavailable and the committer
+        // must never be invoked.
+        let owner_id = UserId::new(Uuid::new_v4());
+        let checksum = "a".repeat(64);
+        let import = queued_import(owner_id, &checksum);
+        let import_id = import.id;
+        let storage_key = "imports/test/outage.gpx";
+
+        let repo = MockRepo::new();
+        repo.insert(import);
+
+        let object_store = FailingObjectStore;
+
+        let duplicate_checker = MockDuplicateChecker {
+            result: DuplicateCheckResult::NotDuplicate,
+        };
+        let committer = RecordingCommitter::new();
+
+        let orchestrator = ImportOrchestrator {
+            repo: &repo,
+            object_store: &object_store,
+            duplicate_checker: &duplicate_checker,
+            committer: &committer,
+        };
+
+        let result = orchestrator
+            .process_import(import_id, owner_id, storage_key, Uuid::new_v4())
+            .await;
+
+        assert!(result.is_err());
+
+        // Import must be in Failed state with StorageUnavailable code
+        let final_import = repo
+            .imports
+            .lock()
+            .unwrap()
+            .get(&import_id)
+            .unwrap()
+            .clone();
+        assert_eq!(final_import.status, ImportStatus::Failed);
+        assert_eq!(
+            final_import.failure_code,
+            Some(FailureCode::StorageUnavailable),
+            "Storage outage must produce StorageUnavailable failure code"
+        );
+
+        // Committer must not have been called
+        assert!(
+            !committer.was_called(),
+            "Committer must not be invoked when storage is unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_failure_transitions_import_to_failed_not_stuck_in_committing() {
+        // Extends the existing commit failure test: verifies that the import
+        // transitions to Failed (not stuck in Committing) AND that the
+        // failure_code is InternalError.
+        let owner_id = UserId::new(Uuid::new_v4());
+        let (gpx_bytes, checksum) = valid_gpx_and_checksum();
+        let import = queued_import(owner_id, &checksum);
+        let import_id = import.id;
+        let storage_key = "imports/test/commit-fail.gpx";
+
+        let repo = MockRepo::new();
+        repo.insert(import);
+
+        let mut files = HashMap::new();
+        files.insert(storage_key.to_string(), gpx_bytes);
+        let object_store = MockObjectStore { files };
+
+        let duplicate_checker = MockDuplicateChecker {
+            result: DuplicateCheckResult::NotDuplicate,
+        };
+        let committer = FailingCommitter;
+
+        let orchestrator = ImportOrchestrator {
+            repo: &repo,
+            object_store: &object_store,
+            duplicate_checker: &duplicate_checker,
+            committer: &committer,
+        };
+
+        let result = orchestrator
+            .process_import(import_id, owner_id, storage_key, Uuid::new_v4())
+            .await;
+
+        assert!(result.is_err());
+
+        let final_import = repo
+            .imports
+            .lock()
+            .unwrap()
+            .get(&import_id)
+            .unwrap()
+            .clone();
+
+        // Must NOT be stuck in Committing
+        assert_ne!(
+            final_import.status,
+            ImportStatus::Committing,
+            "Import must not remain stuck in Committing after commit failure"
+        );
+        assert_eq!(final_import.status, ImportStatus::Failed);
+
+        // Must have InternalError failure code
+        assert_eq!(
+            final_import.failure_code,
+            Some(FailureCode::InternalError),
+            "Commit failure must produce InternalError failure code"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_import_does_not_invoke_committer() {
+        // When duplicate detection returns ExactDuplicate, the committer
+        // must never be called. This verifies that no write path is executed
+        // for duplicates.
+        let owner_id = UserId::new(Uuid::new_v4());
+        let (gpx_bytes, checksum) = valid_gpx_and_checksum();
+        let import = queued_import(owner_id, &checksum);
+        let import_id = import.id;
+        let storage_key = "imports/test/dup-no-commit.gpx";
+
+        let existing_import_id = ImportId::generate();
+        let existing_activity_id = ActivityId::generate();
+
+        let repo = MockRepo::new();
+        repo.insert(import);
+
+        let mut files = HashMap::new();
+        files.insert(storage_key.to_string(), gpx_bytes);
+        let object_store = MockObjectStore { files };
+
+        let duplicate_checker = MockDuplicateChecker {
+            result: DuplicateCheckResult::ExactDuplicate {
+                existing_import_id,
+                existing_activity_id: Some(existing_activity_id),
+            },
+        };
+        let committer = RecordingCommitter::new();
+
+        let orchestrator = ImportOrchestrator {
+            repo: &repo,
+            object_store: &object_store,
+            duplicate_checker: &duplicate_checker,
+            committer: &committer,
+        };
+
+        let result = orchestrator
+            .process_import(import_id, owner_id, storage_key, Uuid::new_v4())
+            .await;
+
+        assert!(result.is_ok());
+        assert!(matches!(
+            result.unwrap(),
+            ImportProcessingResult::Duplicate { .. }
+        ));
+
+        // The committer must NOT have been invoked
+        assert!(
+            !committer.was_called(),
+            "CommitImport::commit must never be called for duplicate imports"
+        );
+    }
+
+    #[tokio::test]
+    async fn normalization_failure_from_single_point_segment_fails_with_parse_error() {
+        // A GPX file that is valid XML and passes the GPX parser but contains
+        // only 1 trackpoint per segment. The normalization step skips segments
+        // with < 2 points, leaving zero valid segments, which triggers a
+        // NoSegments error that the orchestrator maps to ParseError failure code.
+        let owner_id = UserId::new(Uuid::new_v4());
+
+        // Valid GPX with only 1 trackpoint in a single segment
+        let single_point_gpx = br#"<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="test">
+  <trk>
+    <name>Single Point Track</name>
+    <trkseg>
+      <trkpt lat="47.0" lon="11.0">
+        <ele>500.0</ele>
+        <time>2024-01-15T08:00:00Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>"#;
+
+        let mut hasher = Sha256::new();
+        hasher.update(single_point_gpx);
+        let checksum = format!("{:x}", hasher.finalize());
+
+        let import = queued_import(owner_id, &checksum);
+        let import_id = import.id;
+        let storage_key = "imports/test/single-point.gpx";
+
+        let repo = MockRepo::new();
+        repo.insert(import);
+
+        let mut files = HashMap::new();
+        files.insert(storage_key.to_string(), single_point_gpx.to_vec());
+        let object_store = MockObjectStore { files };
+
+        let duplicate_checker = MockDuplicateChecker {
+            result: DuplicateCheckResult::NotDuplicate,
+        };
+        let committer = RecordingCommitter::new();
+
+        let orchestrator = ImportOrchestrator {
+            repo: &repo,
+            object_store: &object_store,
+            duplicate_checker: &duplicate_checker,
+            committer: &committer,
+        };
+
+        let result = orchestrator
+            .process_import(import_id, owner_id, storage_key, Uuid::new_v4())
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ImportError::ParsingFailed { .. }
+        ));
+
+        // Import must be in Failed state with ParseError code
+        let final_import = repo
+            .imports
+            .lock()
+            .unwrap()
+            .get(&import_id)
+            .unwrap()
+            .clone();
+        assert_eq!(final_import.status, ImportStatus::Failed);
+        assert_eq!(
+            final_import.failure_code,
+            Some(FailureCode::ParseError),
+            "Normalization failure from single-point segment must produce ParseError failure code"
+        );
+        assert!(
+            final_import
+                .failure_reason
+                .as_ref()
+                .unwrap()
+                .contains("normalization failed"),
+            "Failure reason must mention normalization"
+        );
+
+        // Committer must not have been called
+        assert!(
+            !committer.was_called(),
+            "Committer must not be invoked when normalization fails"
+        );
+    }
 }
