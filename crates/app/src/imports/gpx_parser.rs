@@ -223,10 +223,8 @@ pub fn parse_gpx(input: &[u8]) -> Result<GpxParseResult, GpxParseError> {
                             current_text_target = Some(TextTarget::MetadataName);
                         }
                     }
-                    "desc" => {
-                        if in_metadata || (!in_trk && depth == 2) {
-                            current_text_target = Some(TextTarget::MetadataDesc);
-                        }
+                    "desc" if in_metadata || (!in_trk && depth == 2) => {
+                        current_text_target = Some(TextTarget::MetadataDesc);
                     }
                     "time" => {
                         if in_trkpt {
@@ -322,10 +320,8 @@ pub fn parse_gpx(input: &[u8]) -> Result<GpxParseResult, GpxParseError> {
                             time: None,
                         });
                     }
-                    "ele" => {
-                        if in_trkpt {
-                            current_text_target = Some(TextTarget::PointEle);
-                        }
+                    "ele" if in_trkpt => {
+                        current_text_target = Some(TextTarget::PointEle);
                     }
                     _ => {}
                 }

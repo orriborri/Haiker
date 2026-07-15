@@ -8,5 +8,6 @@ pkgs.mkShell {
     cargo
     rustfmt
     clippy
+    sqlx-cli
   ];
 }
