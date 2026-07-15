@@ -4055,3 +4055,88 @@ async fn validate_does_not_modify_draft_state() {
     assert_eq!(draft_json["state"], "active");
     assert_eq!(draft_json["revision"], 0);
 }
+
+#[tokio::test]
+async fn validate_multiple_geometry_errors_returned_together_in_200() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+
+    let repo = Arc::new(InMemoryRouteDraftRepository::new());
+    let state = RouteEditingAppState {
+        repo: repo.clone(),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+
+    // Create a valid draft first (needs >= 2 points per segment to pass creation)
+    let created = create_draft_for_user(&app, user_id, activity_id.0).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Directly manipulate the draft in the repo to introduce multiple geometry errors:
+    // - Set a segment with only 1 point (insufficient)
+    // - Remove the base_route_version_id
+    let id = RouteDraftId::new(Uuid::parse_str(draft_id).unwrap());
+    let mut draft = repo.find_by_id(id).await.unwrap().unwrap();
+    draft.geometry = vec![vec![RoutePoint::new(
+        haiker_app::route_editing::Coordinate::new(47.0, 11.0).unwrap(),
+        None,
+    )]];
+    draft.base_route_version_id = None;
+    repo.update(&draft).await.unwrap();
+
+    // Validate - should return 200 with multiple errors
+    let validate_body = serde_json::json!({"expectedRevision": 0});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/validation"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&validate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["valid"], false);
+
+    let errors = json["errors"].as_array().unwrap();
+    // Must have at least 2 errors: insufficient points in segment AND no base version
+    assert!(
+        errors.len() >= 2,
+        "expected at least 2 errors, got {}",
+        errors.len()
+    );
+
+    // Verify INSUFFICIENT_POINTS_IN_SEGMENT is present
+    assert!(
+        errors
+            .iter()
+            .any(|e| e["code"] == "INSUFFICIENT_POINTS_IN_SEGMENT"),
+        "expected INSUFFICIENT_POINTS_IN_SEGMENT error"
+    );
+
+    // Verify NO_BASE_VERSION is present
+    assert!(
+        errors.iter().any(|e| e["code"] == "NO_BASE_VERSION"),
+        "expected NO_BASE_VERSION error"
+    );
+
+    // Verify each error has the correct structure
+    for error in errors {
+        assert!(error["code"].is_string(), "error code must be a string");
+        assert!(error["detail"].is_string(), "error detail must be a string");
+    }
+}

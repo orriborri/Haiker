@@ -438,9 +438,9 @@
       Performs a read-only validation check on the draft to determine if it is
       ready for publication. Does NOT modify any state or require an Idempotency-Key.
 
-      Checks ownership, draft state, revision, coordinate ranges, segment topology,
-      point counts, and base version presence. Collects all geometry errors so the
-      user sees all problems at once.
+      Checks ownership, draft state, revision, coordinate ranges, point counts,
+      and base version presence. Collects all geometry errors so the user sees
+      all problems at once.
 
       Returns 200 with `{valid: true/false, errors: [...]}` for geometry validation results.
       Returns 409 for precondition failures (draft not active, revision mismatch).

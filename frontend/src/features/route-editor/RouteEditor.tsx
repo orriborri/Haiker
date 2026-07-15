@@ -235,6 +235,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
     async (operation: RouteOperation) => {
       if (!state.draftId || state.isOffline) return;
 
+      setValidationResult(null);
       operationStart();
       const opId = await saveOperation(operation, state.revision);
 
@@ -315,6 +316,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
   const handleUndo = useCallback(() => {
     if (!state.draftId || state.isOffline) return;
+    setValidationResult(null);
     operationStart();
     undoOp.mutate(
       { draftId: state.draftId, expectedRevision: state.revision },
@@ -351,6 +353,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
 
   const handleRedo = useCallback(() => {
     if (!state.draftId || state.isOffline) return;
+    setValidationResult(null);
     operationStart();
     redoOp.mutate(
       { draftId: state.draftId, expectedRevision: state.revision },
@@ -388,6 +391,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
   const handleReset = useCallback(() => {
     if (!state.draftId || state.isOffline) return;
 
+    setValidationResult(null);
     operationStart();
     resetOp.mutate(
       { draftId: state.draftId, expectedRevision: state.revision },
@@ -437,11 +441,7 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
           setValidationResult(result);
         },
         onError: (error) => {
-          if (error instanceof ApiError && error.status === 409) {
-            operationFailure(error.message);
-          } else {
-            operationFailure(error.message);
-          }
+          operationFailure(error.message);
         },
       },
     );

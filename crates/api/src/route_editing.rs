@@ -188,15 +188,6 @@ fn route_editing_error_to_api_error(err: RouteEditingError) -> ApiError {
             request_id: None,
             details: None,
         },
-        RouteEditingError::PublicationValidationFailed { .. } => ApiError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "PUBLICATION_VALIDATION_FAILED".to_string(),
-            message: "publication validation failed".to_string(),
-            problem_type: Some("/problems/publication-validation-failed".to_string()),
-            title: Some("Publication Validation Failed".to_string()),
-            request_id: None,
-            details: None,
-        },
     }
 }
 
@@ -751,20 +742,7 @@ pub async fn post_validate_draft(
         .map_err(route_editing_error_to_api_error)?
         .ok_or_else(|| route_editing_error_to_api_error(RouteEditingError::DraftNotFound))?;
 
-    // Check ownership - return 403 if wrong owner
-    if draft.owner_id != actor.0.user_id {
-        return Err(ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
-            request_id: None,
-            details: None,
-        });
-    }
-
-    // Run publication validation
+    // Run publication validation (the domain function checks ownership, state, and revision)
     let result = haiker_app::route_editing::validate_for_publication(
         &draft,
         body.expected_revision,
@@ -783,9 +761,20 @@ pub async fn post_validate_draft(
             ))
         }
         Err(errors) => {
-            // Check if any errors are precondition failures that should be 409
+            // Check if any errors are precondition failures that should map to 4xx
             for err in &errors {
                 match err {
+                    PublicationValidationError::NotOwner => {
+                        return Err(ApiError {
+                            status: StatusCode::FORBIDDEN,
+                            code: "FORBIDDEN".to_string(),
+                            message: "not authorized to access this draft".to_string(),
+                            problem_type: Some("/problems/forbidden".to_string()),
+                            title: Some("Forbidden".to_string()),
+                            request_id: None,
+                            details: None,
+                        });
+                    }
                     PublicationValidationError::DraftNotActive => {
                         return Err(ApiError {
                             status: StatusCode::CONFLICT,
@@ -806,19 +795,6 @@ pub async fn post_validate_draft(
                             ),
                             problem_type: Some("/problems/stale-route-draft".to_string()),
                             title: Some("Route draft revision is stale".to_string()),
-                            request_id: None,
-                            details: None,
-                        });
-                    }
-                    PublicationValidationError::NotOwner => {
-                        // This should not happen since we checked ownership above,
-                        // but handle defensively
-                        return Err(ApiError {
-                            status: StatusCode::FORBIDDEN,
-                            code: "FORBIDDEN".to_string(),
-                            message: "not authorized to access this draft".to_string(),
-                            problem_type: Some("/problems/forbidden".to_string()),
-                            title: Some("Forbidden".to_string()),
                             request_id: None,
                             details: None,
                         });

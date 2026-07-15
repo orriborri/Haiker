@@ -97,12 +97,6 @@ pub enum RouteEditingError {
         expected: Coordinate,
         actual: Coordinate,
     },
-
-    /// Publication validation failed with one or more geometry errors.
-    #[error("publication validation failed")]
-    PublicationValidationFailed {
-        errors: Vec<validation::PublicationValidationError>,
-    },
 }
 
 #[cfg(test)]

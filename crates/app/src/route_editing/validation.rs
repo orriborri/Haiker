@@ -1,9 +1,9 @@
 //! Publication validation for route drafts.
 //!
 //! Validates that a draft is ready for publication by checking ownership,
-//! draft state, revision, coordinate ranges, segment topology, point counts,
-//! and base version existence. Collects ALL geometry errors rather than
-//! short-circuiting, so the user sees all problems at once.
+//! draft state, revision, coordinate ranges, point counts, and base version
+//! existence. Collects ALL geometry errors rather than short-circuiting, so
+//! the user sees all problems at once.
 
 use crate::identity::UserId;
 
