@@ -429,3 +429,65 @@
           application/json:
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/route-drafts/{draftId}/validation:
+  post:
+    operationId: validateDraftForPublication
+    summary: Validate a draft for publication
+    description: |
+      Performs a read-only validation check on the draft to determine if it is
+      ready for publication. Does NOT modify any state or require an Idempotency-Key.
+
+      Checks ownership, draft state, revision, coordinate ranges, point counts,
+      and base version presence. Collects all geometry errors so the user sees
+      all problems at once.
+
+      Returns 200 with `{valid: true/false, errors: [...]}` for geometry validation results.
+      Returns 409 for precondition failures (draft not active, revision mismatch).
+      Returns 403 if the caller is not the owner.
+      Returns 404 if the draft is not found.
+    tags:
+      - Route Editing
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: draftId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/route-editing.yaml#/ValidateForPublicationRequest"
+    responses:
+      "200":
+        description: Validation completed (check `valid` field for result)
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-editing.yaml#/ValidationResultResponse"
+      "403":
+        description: Not authorized to access this draft
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Draft not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: |
+          Precondition failed. Possible error codes:
+          - DRAFT_NOT_ACTIVE: the draft is not in active state
+          - ROUTE_DRAFT_REVISION_CONFLICT: the expectedRevision does not match
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

@@ -273,3 +273,27 @@ pub fn parse_idempotency_key(key: &str) -> Result<OperationId, String> {
     let uuid = Uuid::parse_str(key).map_err(|e| format!("invalid idempotency key: {e}"))?;
     Ok(OperationId::new(uuid))
 }
+
+/// Request body for POST /v1/route-drafts/{draftId}/validation.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateForPublicationRequest {
+    pub expected_revision: u64,
+}
+
+/// Response body for POST /v1/route-drafts/{draftId}/validation.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationResultResponse {
+    pub valid: bool,
+    pub errors: Vec<ValidationErrorDto>,
+}
+
+/// A single validation error in the response.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationErrorDto {
+    pub code: String,
+    pub detail: String,
+}

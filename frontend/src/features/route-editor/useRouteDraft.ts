@@ -7,9 +7,11 @@ import {
   redoOperation,
   resetDraft,
   discardDraft,
+  validateDraftForPublication,
   type RouteDraftResponse,
   type RouteGeometryPayload,
   type OperationResultResponse,
+  type ValidationResultResponse,
   ApiError,
 } from "@/api/client";
 
@@ -146,5 +148,16 @@ export function useDiscardDraft() {
         queryKey: ["routeDraft", variables.draftId],
       });
     },
+  });
+}
+
+export function useValidateDraft() {
+  return useMutation<
+    ValidationResultResponse,
+    Error,
+    { draftId: string; expectedRevision: number }
+  >({
+    mutationFn: ({ draftId, expectedRevision }) =>
+      validateDraftForPublication(draftId, expectedRevision),
   });
 }

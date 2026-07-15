@@ -12,10 +12,13 @@ interface EditorToolbarProps {
   onDelete: () => void;
   onSplit: () => void;
   onJoin: () => void;
+  onValidate: () => void;
   hasSelection: boolean;
   isOperationPending: boolean;
   isOffline?: boolean;
   selectionDescription: string | null;
+  validationResult: { valid: boolean; errors: Array<{ code: string; detail: string }> } | null;
+  isValidating?: boolean;
 }
 
 const TOOLS: Array<{
@@ -45,10 +48,13 @@ export function EditorToolbar({
   onDelete,
   onSplit,
   onJoin,
+  onValidate,
   hasSelection,
   isOperationPending,
   isOffline = false,
   selectionDescription,
+  validationResult,
+  isValidating = false,
 }: EditorToolbarProps) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const toolbarRef = useRef<HTMLElement>(null);
@@ -267,6 +273,46 @@ export function EditorToolbar({
             />
           </svg>
           <span>Offline</span>
+        </div>
+      )}
+
+      {/* Separator before Validate */}
+      <div className="mx-1 hidden h-6 w-px bg-gray-200 sm:mx-2 sm:block" aria-hidden="true" />
+
+      {/* Validate */}
+      <button
+        type="button"
+        aria-label="Validate draft for publication"
+        className="min-w-[44px] min-h-[44px] rounded px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1"
+        onClick={onValidate}
+        disabled={isDisabled || isValidating}
+      >
+        {isValidating ? "Validating..." : "Validate"}
+      </button>
+
+      {/* Validation result feedback */}
+      {validationResult && (
+        <div
+          className={`ml-2 flex items-center gap-2 rounded px-3 py-1 text-sm ${
+            validationResult.valid
+              ? "bg-green-50 text-green-800"
+              : "bg-red-50 text-red-800"
+          }`}
+          role="alert"
+          aria-live="polite"
+        >
+          {validationResult.valid ? (
+            <span>Valid for publication</span>
+          ) : (
+            <div>
+              <span className="font-medium">Validation failed:</span>
+              <ul className="mt-1 list-inside list-disc">
+                {validationResult.errors.map((err, idx) => (
+                  <li key={idx}>{err.detail}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </nav>

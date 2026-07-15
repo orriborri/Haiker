@@ -308,3 +308,41 @@ Position:
       format: double
       minimum: -180
       maximum: 180
+
+ValidateForPublicationRequest:
+  type: object
+  required:
+    - expectedRevision
+  properties:
+    expectedRevision:
+      type: integer
+      format: int64
+      minimum: 0
+
+ValidationResultResponse:
+  type: object
+  required:
+    - valid
+    - errors
+  properties:
+    valid:
+      type: boolean
+      description: Whether the draft passes all publication validation checks
+    errors:
+      type: array
+      description: List of validation errors (empty when valid is true)
+      items:
+        $ref: "#/ValidationErrorDto"
+
+ValidationErrorDto:
+  type: object
+  required:
+    - code
+    - detail
+  properties:
+    code:
+      type: string
+      description: Machine-readable error code (e.g., NO_SEGMENTS, INSUFFICIENT_POINTS_IN_SEGMENT, INVALID_COORDINATE_IN_SEGMENT, NO_BASE_VERSION)
+    detail:
+      type: string
+      description: Human-readable description of the validation error

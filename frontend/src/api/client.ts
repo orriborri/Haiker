@@ -298,6 +298,37 @@ export function discardDraft(draftId: string): Promise<undefined> {
   });
 }
 
+// Validation Schemas
+
+const ValidationErrorDtoSchema = z.object({
+  code: z.string(),
+  detail: z.string(),
+});
+
+const ValidationResultResponseSchema = z.object({
+  valid: z.boolean(),
+  errors: z.array(ValidationErrorDtoSchema),
+});
+
+export type ValidationErrorDto = z.infer<typeof ValidationErrorDtoSchema>;
+export type ValidationResultResponse = z.infer<typeof ValidationResultResponseSchema>;
+
+// Validation API Functions
+
+export function validateDraftForPublication(
+  draftId: string,
+  expectedRevision: number,
+): Promise<ValidationResultResponse> {
+  return apiFetch(
+    `/route-drafts/${draftId}/validation`,
+    ValidationResultResponseSchema,
+    {
+      method: "POST",
+      body: JSON.stringify({ expectedRevision }),
+    },
+  );
+}
+
 // Import Schemas
 
 const StartImportResponseSchema = z.object({

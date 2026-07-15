@@ -148,6 +148,10 @@ async fn main() {
             "/v1/route-drafts/{draftId}/reset",
             post(route_editing::post_reset),
         )
+        .route(
+            "/v1/route-drafts/{draftId}/validation",
+            post(route_editing::post_validate_draft),
+        )
         .with_state(route_editing_state);
 
     let app = Router::new()

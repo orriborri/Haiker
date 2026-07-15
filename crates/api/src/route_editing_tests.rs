@@ -282,6 +282,10 @@ fn test_app_with_state(state: RouteEditingAppState) -> Router {
         .route("/v1/route-drafts/{draftId}/undo", post(post_undo))
         .route("/v1/route-drafts/{draftId}/redo", post(post_redo))
         .route("/v1/route-drafts/{draftId}/reset", post(post_reset))
+        .route(
+            "/v1/route-drafts/{draftId}/validation",
+            post(post_validate_draft),
+        )
         .with_state(state)
 }
 
@@ -3713,4 +3717,426 @@ async fn contract_draft_not_active_error_matches_problem_detail_schema() {
     assert_problem_detail_schema(&json);
     assert_eq!(json["code"], "DRAFT_NOT_ACTIVE");
     assert_eq!(json["status"], 409);
+}
+
+// --- Validation endpoint tests ---
+
+#[tokio::test]
+async fn validate_valid_draft_returns_200_with_valid_true() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![(
+            version_id,
+            activity_id,
+        )])),
+    };
+    let app = test_app_with_state(state);
+
+    // Create draft with base version
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Validate
+    let validate_body = serde_json::json!({"expectedRevision": 0});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/validation"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&validate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["valid"], true);
+    assert_eq!(json["errors"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn validate_draft_not_found_returns_404() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let random_id = Uuid::new_v4();
+
+    let validate_body = serde_json::json!({"expectedRevision": 0});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{random_id}/validation"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&validate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn validate_wrong_owner_returns_403() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user1 = Uuid::new_v4();
+    let user2 = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user1, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let validate_body = serde_json::json!({"expectedRevision": 0});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/validation"))
+                .header("Authorization", format!("Bearer {user2}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&validate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn validate_published_draft_returns_409() {
+    let repo = Arc::new(InMemoryRouteDraftRepository::new());
+    let state = RouteEditingAppState {
+        repo: repo.clone(),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    publish_draft_in_repo(&repo, draft_id).await;
+
+    let validate_body = serde_json::json!({"expectedRevision": 0});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/validation"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&validate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "DRAFT_NOT_ACTIVE");
+}
+
+#[tokio::test]
+async fn validate_revision_mismatch_returns_409() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Use wrong revision
+    let validate_body = serde_json::json!({"expectedRevision": 99});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/validation"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&validate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "ROUTE_DRAFT_REVISION_CONFLICT");
+}
+
+#[tokio::test]
+async fn validate_no_base_version_returns_200_with_valid_false() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    // Create draft WITHOUT base version
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let validate_body = serde_json::json!({"expectedRevision": 0});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/validation"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&validate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["valid"], false);
+    let errors = json["errors"].as_array().unwrap();
+    assert!(errors.iter().any(|e| e["code"] == "NO_BASE_VERSION"));
+}
+
+#[tokio::test]
+async fn validate_does_not_modify_draft_state() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+    let version_id = Uuid::new_v4();
+
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![(
+            version_id,
+            activity_id,
+        )])),
+    };
+    let app = test_app_with_state(state);
+
+    let body = serde_json::json!({
+        "geometry": sample_geometry(),
+        "baseRouteVersionId": version_id
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/activities/{}/route-drafts", activity_id.0))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Validate
+    let validate_body = serde_json::json!({"expectedRevision": 0});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/validation"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&validate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify draft state is unchanged
+    let get_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/route-drafts/{draft_id}"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(get_response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let draft_json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(draft_json["state"], "active");
+    assert_eq!(draft_json["revision"], 0);
+}
+
+#[tokio::test]
+async fn validate_multiple_geometry_errors_returned_together_in_200() {
+    let user_id = Uuid::new_v4();
+    let activity_id = ActivityId::new(Uuid::new_v4());
+
+    let repo = Arc::new(InMemoryRouteDraftRepository::new());
+    let state = RouteEditingAppState {
+        repo: repo.clone(),
+        activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![(
+            activity_id,
+            UserId::new(user_id),
+            LifecycleState::Active,
+        )])),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+    };
+    let app = test_app_with_state(state);
+
+    // Create a valid draft first (needs >= 2 points per segment to pass creation)
+    let created = create_draft_for_user(&app, user_id, activity_id.0).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Directly manipulate the draft in the repo to introduce multiple geometry errors:
+    // - Set a segment with only 1 point (insufficient)
+    // - Remove the base_route_version_id
+    let id = RouteDraftId::new(Uuid::parse_str(draft_id).unwrap());
+    let mut draft = repo.find_by_id(id).await.unwrap().unwrap();
+    draft.geometry = vec![vec![RoutePoint::new(
+        haiker_app::route_editing::Coordinate::new(47.0, 11.0).unwrap(),
+        None,
+    )]];
+    draft.base_route_version_id = None;
+    repo.update(&draft).await.unwrap();
+
+    // Validate - should return 200 with multiple errors
+    let validate_body = serde_json::json!({"expectedRevision": 0});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/validation"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&validate_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["valid"], false);
+
+    let errors = json["errors"].as_array().unwrap();
+    // Must have at least 2 errors: insufficient points in segment AND no base version
+    assert!(
+        errors.len() >= 2,
+        "expected at least 2 errors, got {}",
+        errors.len()
+    );
+
+    // Verify INSUFFICIENT_POINTS_IN_SEGMENT is present
+    assert!(
+        errors
+            .iter()
+            .any(|e| e["code"] == "INSUFFICIENT_POINTS_IN_SEGMENT"),
+        "expected INSUFFICIENT_POINTS_IN_SEGMENT error"
+    );
+
+    // Verify NO_BASE_VERSION is present
+    assert!(
+        errors.iter().any(|e| e["code"] == "NO_BASE_VERSION"),
+        "expected NO_BASE_VERSION error"
+    );
+
+    // Verify each error has the correct structure
+    for error in errors {
+        assert!(error["code"].is_string(), "error code must be a string");
+        assert!(error["detail"].is_string(), "error detail must be a string");
+    }
 }
