@@ -530,6 +530,14 @@ export function RouteEditor({ activityId }: RouteEditorProps) {
         }
         return;
       }
+      // Ctrl+Y or Cmd+Y for redo (Windows convention)
+      if ((e.ctrlKey || e.metaKey) && e.key === "y" && !e.shiftKey) {
+        e.preventDefault();
+        if (state.canRedo && !state.isOperationPending) {
+          handleRedo();
+        }
+        return;
+      }
 
       // Escape dismisses delete confirmation dialog if open, cancels drawing, or clears selection
       if (e.key === "Escape") {
