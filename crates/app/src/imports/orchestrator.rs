@@ -1033,21 +1033,28 @@ mod tests {
         }
     }
 
-    /// A committer that records whether `commit` was called and how many times.
-    /// Used to verify that the committer is NOT invoked in certain paths (e.g., duplicates).
+    /// A committer that records whether `commit` was called and captures commit data.
+    /// Used to verify that the committer is NOT invoked in certain paths (e.g., duplicates)
+    /// and to inspect the data passed at the commit boundary.
     struct RecordingCommitter {
         call_count: Mutex<u32>,
+        last_commit_data: Mutex<Option<ImportCommitData>>,
     }
 
     impl RecordingCommitter {
         fn new() -> Self {
             Self {
                 call_count: Mutex::new(0),
+                last_commit_data: Mutex::new(None),
             }
         }
 
         fn was_called(&self) -> bool {
             *self.call_count.lock().unwrap() > 0
+        }
+
+        fn last_commit_data(&self) -> Option<ImportCommitData> {
+            self.last_commit_data.lock().unwrap().clone()
         }
     }
 
@@ -1055,18 +1062,19 @@ mod tests {
     impl CommitImport for RecordingCommitter {
         async fn commit(&self, data: &ImportCommitData) -> Result<ActivityId, ImportError> {
             *self.call_count.lock().unwrap() += 1;
+            *self.last_commit_data.lock().unwrap() = Some(data.clone());
             Ok(data.activity_id)
         }
     }
 
     #[tokio::test]
     async fn source_file_bytes_not_mutated_by_processing() {
-        // Prove that the bytes downloaded from the object store are not
-        // altered by orchestrator processing. After a successful import,
-        // the stored bytes must be bit-for-bit identical to the original.
+        // Prove that the bytes flowing through the orchestrator are not
+        // altered before reaching the commit boundary. The checksum recorded
+        // in ImportCommitData must match the SHA-256 of the original input
+        // bytes, confirming no mutation occurred between download and commit.
         let owner_id = UserId::new(Uuid::new_v4());
         let (gpx_bytes, checksum) = valid_gpx_and_checksum();
-        let original_bytes = gpx_bytes.clone();
 
         let import = queued_import(owner_id, &checksum);
         let import_id = import.id;
@@ -1082,7 +1090,7 @@ mod tests {
         let duplicate_checker = MockDuplicateChecker {
             result: DuplicateCheckResult::NotDuplicate,
         };
-        let committer = MockCommitter;
+        let committer = RecordingCommitter::new();
 
         let orchestrator = ImportOrchestrator {
             repo: &repo,
@@ -1097,12 +1105,17 @@ mod tests {
 
         assert!(result.is_ok(), "Import should succeed");
 
-        // Verify: the bytes still stored in the object store are identical
-        // to the original input (no mutation occurred during processing).
-        let stored_bytes = object_store.download(storage_key).await.unwrap();
+        // Verify: the checksum recorded at the commit boundary matches the
+        // original file's SHA-256. This proves the bytes were not mutated
+        // between download and commit (the commit data checksum is computed
+        // from the actual downloaded bytes inside process_import).
+        let commit_data = committer
+            .last_commit_data()
+            .expect("Committer must have been called");
         assert_eq!(
-            stored_bytes, original_bytes,
-            "Source file bytes must not be mutated by orchestrator processing"
+            commit_data.checksum, checksum,
+            "Checksum in commit data must match the original file's SHA-256, \
+             proving no byte mutation occurred during orchestrator processing"
         );
     }
 

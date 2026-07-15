@@ -103,7 +103,9 @@ impl ImportRepository for InMemoryRepo {
 }
 
 struct InMemoryDuplicateChecker {
-    known_checksums: Mutex<HashMap<String, (ImportId, Option<ActivityId>)>>,
+    /// Stores (owner_id, checksum) -> (import_id, activity_id) to enforce
+    /// owner-scoped duplicate detection matching production behavior.
+    known_checksums: Mutex<HashMap<(UserId, String), (ImportId, Option<ActivityId>)>>,
 }
 
 impl InMemoryDuplicateChecker {
@@ -113,11 +115,17 @@ impl InMemoryDuplicateChecker {
         }
     }
 
-    fn register(&self, checksum: &str, import_id: ImportId, activity_id: Option<ActivityId>) {
+    fn register(
+        &self,
+        owner_id: UserId,
+        checksum: &str,
+        import_id: ImportId,
+        activity_id: Option<ActivityId>,
+    ) {
         self.known_checksums
             .lock()
             .unwrap()
-            .insert(checksum.to_string(), (import_id, activity_id));
+            .insert((owner_id, checksum.to_string()), (import_id, activity_id));
     }
 }
 
@@ -125,11 +133,11 @@ impl InMemoryDuplicateChecker {
 impl CheckDuplicate for InMemoryDuplicateChecker {
     async fn check(
         &self,
-        _owner_id: UserId,
+        owner_id: UserId,
         checksum: &Checksum,
     ) -> Result<DuplicateCheckResult, ImportError> {
         let guard = self.known_checksums.lock().unwrap();
-        match guard.get(checksum.as_str()) {
+        match guard.get(&(owner_id, checksum.as_str().to_string())) {
             Some((import_id, activity_id)) => Ok(DuplicateCheckResult::ExactDuplicate {
                 existing_import_id: *import_id,
                 existing_activity_id: *activity_id,
@@ -361,7 +369,7 @@ async fn duplicate_detection_on_second_import() {
     };
 
     // Now register the checksum as a known duplicate for the second import
-    duplicate_checker.register(&checksum, import1_id, Some(first_activity_id));
+    duplicate_checker.register(owner_id, &checksum, import1_id, Some(first_activity_id));
 
     // Second import of the same file triggers duplicate
     let import2 = create_queued_import(owner_id, &checksum);
@@ -1033,8 +1041,10 @@ async fn worker_restart_second_attempt_on_same_import_returns_error() {
 }
 
 /// Proves that two different owners can import identical file bytes and both
-/// succeed (duplicate detection is per-owner). Neither import is flagged as
-/// a duplicate because the InMemoryDuplicateChecker starts empty for both.
+/// succeed because duplicate detection is owner-scoped. Owner A's registered
+/// checksum does NOT cause owner B's import to be flagged as a duplicate.
+/// This test uses a shared InMemoryDuplicateChecker where owner A's checksum
+/// is registered before owner B's import runs, proving true owner isolation.
 #[tokio::test]
 async fn cross_owner_isolation_different_owners_same_checksum_both_succeed() {
     let gpx_bytes = fixtures::valid_simple().to_vec();
@@ -1043,6 +1053,10 @@ async fn cross_owner_isolation_different_owners_same_checksum_both_succeed() {
 
     let owner_a = UserId::new(Uuid::new_v4());
     let owner_b = UserId::new(Uuid::new_v4());
+
+    // Shared duplicate checker - both owners use the same instance to prove
+    // that owner-scoped lookups prevent cross-owner false duplicates.
+    let duplicate_checker = InMemoryDuplicateChecker::new();
 
     // --- Owner A import ---
     let import_a = create_queued_import(owner_a, &checksum);
@@ -1054,13 +1068,12 @@ async fn cross_owner_isolation_different_owners_same_checksum_both_succeed() {
     let mut files_a = HashMap::new();
     files_a.insert(storage_key.to_string(), gpx_bytes.clone());
     let object_store_a = InMemoryObjectStore { files: files_a };
-    let duplicate_checker_a = InMemoryDuplicateChecker::new();
     let committer_a = RecordingCommitter::new();
 
     let orchestrator_a = ImportOrchestrator {
         repo: &repo_a,
         object_store: &object_store_a,
-        duplicate_checker: &duplicate_checker_a,
+        duplicate_checker: &duplicate_checker,
         committer: &committer_a,
     };
 
@@ -1075,7 +1088,19 @@ async fn cross_owner_isolation_different_owners_same_checksum_both_succeed() {
     );
     assert_eq!(committer_a.committed_count(), 1);
 
+    // Register owner A's checksum to simulate production behavior where the
+    // completed import's checksum is stored scoped to owner A.
+    let commit_data_a = committer_a.last_commit().unwrap();
+    duplicate_checker.register(
+        owner_a,
+        &checksum,
+        import_a_id,
+        Some(commit_data_a.activity_id),
+    );
+
     // --- Owner B import (same file bytes, different owner) ---
+    // The shared duplicate_checker now has owner_a's checksum registered.
+    // Owner B must still get NotDuplicate because the lookup is owner-scoped.
     let import_b = create_queued_import(owner_b, &checksum);
     let import_b_id = import_b.id;
 
@@ -1085,14 +1110,12 @@ async fn cross_owner_isolation_different_owners_same_checksum_both_succeed() {
     let mut files_b = HashMap::new();
     files_b.insert(storage_key.to_string(), gpx_bytes);
     let object_store_b = InMemoryObjectStore { files: files_b };
-    // Fresh duplicate checker for owner B - simulates per-owner isolation
-    let duplicate_checker_b = InMemoryDuplicateChecker::new();
     let committer_b = RecordingCommitter::new();
 
     let orchestrator_b = ImportOrchestrator {
         repo: &repo_b,
         object_store: &object_store_b,
-        duplicate_checker: &duplicate_checker_b,
+        duplicate_checker: &duplicate_checker,
         committer: &committer_b,
     };
 
@@ -1106,11 +1129,53 @@ async fn cross_owner_isolation_different_owners_same_checksum_both_succeed() {
         "Owner B import must also complete successfully (not flagged as duplicate)"
     );
     assert_eq!(committer_b.committed_count(), 1);
+
+    // Verify that owner A would get a duplicate if they tried again
+    // (proves the checker is actually enforcing duplicates, just owner-scoped).
+    let import_a_retry = create_queued_import(owner_a, &checksum);
+    let import_a_retry_id = import_a_retry.id;
+
+    let repo_a_retry = InMemoryRepo::new();
+    repo_a_retry.insert(import_a_retry);
+
+    let mut files_a_retry = HashMap::new();
+    files_a_retry.insert(storage_key.to_string(), fixtures::valid_simple().to_vec());
+    let object_store_a_retry = InMemoryObjectStore {
+        files: files_a_retry,
+    };
+    let committer_a_retry = RecordingCommitter::new();
+
+    let orchestrator_a_retry = ImportOrchestrator {
+        repo: &repo_a_retry,
+        object_store: &object_store_a_retry,
+        duplicate_checker: &duplicate_checker,
+        committer: &committer_a_retry,
+    };
+
+    let result_a_retry = orchestrator_a_retry
+        .process_import(import_a_retry_id, owner_a, storage_key, Uuid::new_v4())
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(result_a_retry, ImportProcessingResult::Duplicate { .. }),
+        "Owner A re-importing same file must be flagged as duplicate"
+    );
+    assert_eq!(
+        committer_a_retry.committed_count(),
+        0,
+        "Committer must not be called for duplicates"
+    );
 }
 
 /// Proves that fixture file bytes are immutable by verifying their SHA-256
 /// checksums against known expected values. If any fixture changes, this test
 /// will fail, preventing accidental mutation of test data.
+///
+/// To regenerate expected hashes after an intentional fixture update:
+///   cargo test -p haiker-test-support fixture_bytes_are_immutable -- --nocapture
+/// The failure message prints the actual hash for each changed fixture.
+/// Copy the new hash into the expected_checksums array below.
 #[tokio::test]
 async fn fixture_bytes_are_immutable_with_known_checksums() {
     let expected_checksums: &[(&str, &[u8], &str)] = &[

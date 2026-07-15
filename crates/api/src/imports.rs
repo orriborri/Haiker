@@ -2301,6 +2301,12 @@ mod tests {
 
     #[tokio::test]
     async fn contract_get_import_status_transitions_visible_during_progress() {
+        // NOTE: This test constructs its own Router inline rather than using test_app()
+        // because it needs to call multiple routes sequentially on shared state (start,
+        // then complete, then get). The app.clone().oneshot() pattern requires owning
+        // the Router with its state, and test_app() returns a fresh state each call.
+        // This is consistent with full_flow tests that also build inline routers for
+        // the same reason. If routes or middleware change in test_app(), update here too.
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
