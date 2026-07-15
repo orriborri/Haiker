@@ -192,7 +192,7 @@ impl Import {
 }
 
 /// Errors that can occur in the imports context.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum ImportError {
     /// The file format is not supported for import.
     #[error("unsupported file format")]
@@ -233,6 +233,10 @@ pub enum ImportError {
     /// Parsing of the import file failed.
     #[error("parsing failed: {reason}")]
     ParsingFailed { reason: String },
+
+    /// The uploaded object was not found in storage during verification.
+    #[error("upload not found in storage")]
+    ObjectNotFound,
 
     /// An error occurred during object storage operations.
     #[error("storage error: {message}")]

@@ -13,7 +13,7 @@ use uuid::Uuid;
 use haiker_app::identity::UserId;
 use haiker_app::imports::commands::{
     handle_complete_upload, handle_get_import, handle_start_import, CompleteUploadCommand,
-    StartImportCommand, UploadUrlGenerator,
+    StartImportCommand, UploadUrlGenerator, UploadVerifier,
 };
 use haiker_app::imports::job_types::ParseGpxJob;
 use haiker_app::imports::repository::ImportRepository;
@@ -45,6 +45,7 @@ pub trait JobEnqueuer: Send + Sync {
 pub struct ImportAppState {
     pub repo: Arc<dyn ImportRepository>,
     pub url_generator: Arc<dyn UploadUrlGenerator>,
+    pub upload_verifier: Arc<dyn UploadVerifier>,
     pub job_queue: Option<Arc<dyn JobEnqueuer>>,
 }
 
@@ -72,6 +73,8 @@ const SAFE_FAILURE_REASONS: &[&str] = &[
     "checksum mismatch",
     "duplicate checksum",
     "upload too large",
+    "upload not found in storage",
+    "upload is empty",
     "validation failed",
 ];
 
@@ -127,6 +130,15 @@ fn import_error_to_api_error(err: ImportError) -> ApiError {
             message: "content type must be application/gpx+xml or application/xml".to_string(),
             problem_type: Some("/problems/invalid-media-type".to_string()),
             title: Some("Invalid Media Type".to_string()),
+            request_id: None,
+            details: None,
+        },
+        ImportError::ObjectNotFound => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "OBJECT_NOT_FOUND".to_string(),
+            message: "uploaded object not found in storage".to_string(),
+            problem_type: Some("/problems/object-not-found".to_string()),
+            title: Some("Object Not Found".to_string()),
             request_id: None,
             details: None,
         },
@@ -274,7 +286,7 @@ pub async fn post_complete_upload(
         checksum: body.checksum,
     };
 
-    let import = handle_complete_upload(cmd, state.repo.as_ref())
+    let import = handle_complete_upload(cmd, state.repo.as_ref(), state.upload_verifier.as_ref())
         .await
         .map_err(import_error_to_api_error)?;
 
@@ -426,6 +438,50 @@ impl UploadUrlGenerator for StubUrlGenerator {
     }
 }
 
+/// Stub upload verifier for testing that returns valid metadata by default.
+#[cfg(test)]
+pub struct StubUploadVerifier;
+
+#[cfg(test)]
+#[async_trait]
+impl UploadVerifier for StubUploadVerifier {
+    async fn verify_upload(
+        &self,
+        _key: &str,
+    ) -> Result<haiker_app::imports::commands::UploadMetadata, ImportError> {
+        Ok(haiker_app::imports::commands::UploadMetadata {
+            content_length: 1024,
+            content_type: Some("application/gpx+xml".to_string()),
+        })
+    }
+}
+
+/// Configurable stub upload verifier that can be set to return specific errors.
+#[cfg(test)]
+pub struct ConfigurableUploadVerifier {
+    result: std::sync::Mutex<Result<haiker_app::imports::commands::UploadMetadata, ImportError>>,
+}
+
+#[cfg(test)]
+impl ConfigurableUploadVerifier {
+    pub fn failing(err: ImportError) -> Self {
+        Self {
+            result: std::sync::Mutex::new(Err(err)),
+        }
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl UploadVerifier for ConfigurableUploadVerifier {
+    async fn verify_upload(
+        &self,
+        _key: &str,
+    ) -> Result<haiker_app::imports::commands::UploadMetadata, ImportError> {
+        self.result.lock().unwrap().clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,6 +495,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -722,6 +779,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -790,6 +848,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -887,6 +946,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1055,6 +1115,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1294,6 +1355,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1360,6 +1422,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1484,6 +1547,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1579,6 +1643,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1666,6 +1731,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1801,6 +1867,7 @@ mod tests {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 
@@ -1855,6 +1922,159 @@ mod tests {
         assert_eq!(json["code"], "NOT_FOUND");
     }
 
+    // ===== Contract Tests: Verification failure responses =====
+
+    #[tokio::test]
+    async fn contract_post_completion_422_object_not_found_returns_problem_detail() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(ConfigurableUploadVerifier::failing(
+                ImportError::ObjectNotFound,
+            )),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route(
+                "/v1/imports/{import_id}/completion",
+                post(post_complete_upload),
+            )
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        // Start import (uses StubUrlGenerator, does not call verifier)
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-verify-fail")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        // Complete upload - verifier returns ObjectNotFound
+        let complete_body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{import_id}/completion"))
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&complete_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 422);
+        assert_eq!(json["code"], "OBJECT_NOT_FOUND");
+        assert_eq!(json["type"], "/problems/object-not-found");
+        assert_eq!(json["title"], "Object Not Found");
+    }
+
+    #[tokio::test]
+    async fn contract_post_completion_500_storage_error_returns_problem_detail() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(ConfigurableUploadVerifier::failing(
+                ImportError::StorageError {
+                    message: "connection timeout".to_string(),
+                },
+            )),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route(
+                "/v1/imports/{import_id}/completion",
+                post(post_complete_upload),
+            )
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        // Start import
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "contract-storage-fail")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        // Complete upload - verifier returns StorageError
+        let complete_body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{import_id}/completion"))
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&complete_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 500);
+        assert_eq!(json["code"], "STORAGE_ERROR");
+        assert_eq!(json["type"], "/problems/storage-error");
+        // The detail should not leak the original error message
+        assert_eq!(json["detail"], "a storage error occurred");
+    }
+
     // ===== Contract Test: Failed import sanitized failureReason =====
 
     #[tokio::test]
@@ -1883,6 +2103,7 @@ mod tests {
         let state = ImportAppState {
             repo,
             url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
         };
 

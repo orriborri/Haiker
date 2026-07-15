@@ -82,6 +82,18 @@
           application/json:
             schema:
               $ref: "../components/imports.yaml#/ImportStatusResponse"
+      "401":
+        description: Missing or invalid authentication
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "403":
+        description: Not authorized to access this import
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
       "404":
         description: Import not found
         content:
@@ -90,6 +102,12 @@
               $ref: "../components/errors.yaml#/ProblemDetail"
       "409":
         description: Invalid state transition
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Upload verification failed (file too large or invalid content type detected server-side)
         content:
           application/json:
             schema:

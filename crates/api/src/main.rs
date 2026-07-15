@@ -67,8 +67,9 @@ async fn main() {
     let import_state = imports::ImportAppState {
         repo: Arc::new(PgImportRepository::new(pool.clone())),
         url_generator: Arc::new(PresignedUrlGenerator {
-            client: object_storage,
+            client: object_storage.clone(),
         }),
+        upload_verifier: Arc::new(object_storage),
         job_queue: None,
     };
 
