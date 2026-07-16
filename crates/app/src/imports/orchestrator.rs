@@ -254,9 +254,8 @@ impl<'a> ImportOrchestrator<'a> {
         // the geometry invariant (minimum 2 points).
         // Compute corrected statistics from the initial geometry (which is the
         // same as the recorded geometry before any edits are applied).
-        let corrected_statistics = CorrectedStatistics::calculate_from_geometry(
-            &normalized.preview_geometry,
-        );
+        let corrected_statistics =
+            CorrectedStatistics::calculate_from_geometry(&normalized.preview_geometry);
 
         let route_version = RouteVersion::new_initial(
             activity_id,

@@ -113,11 +113,7 @@ mod tests {
 
     #[test]
     fn calculate_from_geometry_is_deterministic() {
-        let coords = vec![
-            coord(47.0, 11.0),
-            coord(47.1, 11.1),
-            coord(47.2, 11.2),
-        ];
+        let coords = vec![coord(47.0, 11.0), coord(47.1, 11.1), coord(47.2, 11.2)];
 
         let stats1 = CorrectedStatistics::calculate_from_geometry(&coords);
         let stats2 = CorrectedStatistics::calculate_from_geometry(&coords);
@@ -129,11 +125,7 @@ mod tests {
 
     #[test]
     fn calculate_from_geometry_multi_point_sums_segments() {
-        let coords = vec![
-            coord(47.0, 11.0),
-            coord(47.1, 11.1),
-            coord(47.2, 11.2),
-        ];
+        let coords = vec![coord(47.0, 11.0), coord(47.1, 11.1), coord(47.2, 11.2)];
 
         let stats = CorrectedStatistics::calculate_from_geometry(&coords);
         assert_eq!(stats.point_count, 3);

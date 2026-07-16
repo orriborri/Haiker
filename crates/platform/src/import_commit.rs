@@ -177,9 +177,11 @@ impl CommitImport for PgImportCommitter {
                 message: format!("failed to serialize statistics: {e}"),
             })?;
 
-        let corrected_statistics_json = serde_json::to_value(&data.corrected_statistics)
-            .map_err(|e| ImportError::StorageError {
-                message: format!("failed to serialize corrected statistics: {e}"),
+        let corrected_statistics_json =
+            serde_json::to_value(&data.corrected_statistics).map_err(|e| {
+                ImportError::StorageError {
+                    message: format!("failed to serialize corrected statistics: {e}"),
+                }
             })?;
 
         sqlx::query(
