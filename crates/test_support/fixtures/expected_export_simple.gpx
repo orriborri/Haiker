@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx xmlns="http://www.topografix.com/GPX/1/1" version="1.1" creator="Haiker">
+<trk>
+<name>Morning Hike</name>
+<trkseg>
+<trkpt lat="47.2692124" lon="11.3933257"><ele>574.2</ele></trkpt>
+<trkpt lat="47.2695011" lon="11.39384"><ele>578.5</ele></trkpt>
+<trkpt lat="47.26985" lon="11.39421"><ele>582</ele></trkpt>
+</trkseg>
+</trk>
+</gpx>

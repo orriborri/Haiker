@@ -1,6 +1,7 @@
 use haiker_platform::audit::AuditLog;
 use haiker_platform::config::AppConfig;
 use haiker_platform::database;
+use haiker_platform::export_worker::GenerateExportJobHandler;
 use haiker_platform::import_cleanup::cleanup_abandoned_imports;
 use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::import_worker::ParseGpxJobHandler;
@@ -49,8 +50,12 @@ async fn main() -> anyhow::Result<()> {
     // Register job handlers
     let object_storage = ObjectStorageClient::new(&app_config.storage).await?;
     let audit_log = AuditLog::new(pool.clone());
-    let parse_gpx_handler = ParseGpxJobHandler::new(pool.clone(), object_storage, audit_log);
+    let parse_gpx_handler =
+        ParseGpxJobHandler::new(pool.clone(), object_storage.clone(), audit_log);
     runtime.register_handler(Box::new(parse_gpx_handler));
+
+    let export_handler = GenerateExportJobHandler::new(pool.clone(), object_storage.clone());
+    runtime.register_handler(Box::new(export_handler));
 
     // Run the worker runtime and outbox dispatcher concurrently
     let dispatcher_token = cancellation_token.clone();
