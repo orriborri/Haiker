@@ -33,8 +33,6 @@ pub struct ExportStatusResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub object_storage_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,

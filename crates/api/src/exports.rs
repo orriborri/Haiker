@@ -62,7 +62,6 @@ fn export_to_status_response(export: &ExportJob) -> ExportStatusResponse {
             .failure_reason
             .as_deref()
             .map(sanitize_failure_reason),
-        object_storage_key: export.object_storage_key.clone(),
         checksum: export.checksum.clone(),
         expires_at: export.expires_at,
         created_at: export.created_at,
@@ -757,7 +756,6 @@ mod tests {
         assert!(json["updatedAt"].is_string());
         // Optional fields should be absent for queued export
         assert!(json.get("failureReason").is_none() || json["failureReason"].is_null());
-        assert!(json.get("objectStorageKey").is_none() || json["objectStorageKey"].is_null());
         assert!(json.get("checksum").is_none() || json["checksum"].is_null());
         assert!(json.get("expiresAt").is_none() || json["expiresAt"].is_null());
     }
