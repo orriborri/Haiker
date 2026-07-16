@@ -1642,6 +1642,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_export_status_without_auth_returns_401() {
+        let app = test_app();
+        let random_id = Uuid::new_v4();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{random_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 401);
+        assert_eq!(json["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
     async fn download_export_not_found_returns_404() {
         let app = test_app();
         let (auth_key, auth_val) = auth_header();

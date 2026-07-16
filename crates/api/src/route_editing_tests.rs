@@ -4636,3 +4636,368 @@ async fn publish_draft_validation_failed_returns_422() {
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
     assert_eq!(json["code"], "VALIDATION_FAILED");
 }
+
+// =============================================================================
+// Security tests: unauthenticated access (401 UNAUTHORIZED)
+// =============================================================================
+
+#[tokio::test]
+async fn get_draft_without_auth_returns_401() {
+    let app = test_app();
+    let random_id = Uuid::new_v4();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/v1/route-drafts/{random_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn apply_operation_without_auth_returns_401() {
+    let app = test_app();
+    let random_id = Uuid::new_v4();
+
+    let body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{random_id}/operations"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn undo_without_auth_returns_401() {
+    let app = test_app();
+    let random_id = Uuid::new_v4();
+
+    let body = serde_json::json!({"expectedRevision": 0});
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{random_id}/undo"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn redo_without_auth_returns_401() {
+    let app = test_app();
+    let random_id = Uuid::new_v4();
+
+    let body = serde_json::json!({"expectedRevision": 0});
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{random_id}/redo"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn reset_without_auth_returns_401() {
+    let app = test_app();
+    let random_id = Uuid::new_v4();
+
+    let body = serde_json::json!({"expectedRevision": 0});
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{random_id}/reset"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn delete_draft_without_auth_returns_401() {
+    let app = test_app();
+    let random_id = Uuid::new_v4();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/v1/route-drafts/{random_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn validate_draft_without_auth_returns_401() {
+    let app = test_app();
+    let random_id = Uuid::new_v4();
+
+    let body = serde_json::json!({"expectedRevision": 0});
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{random_id}/validation"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn publish_draft_without_auth_returns_401() {
+    let app = test_app();
+    let random_id = Uuid::new_v4();
+
+    let body = serde_json::json!({"expectedRevision": 0});
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{random_id}/publication"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+// =============================================================================
+// Security tests: cross-owner access (403 FORBIDDEN)
+// =============================================================================
+
+#[tokio::test]
+async fn undo_cross_owner_returns_403() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
+    };
+    let app = test_app_with_state(state);
+    let user1 = Uuid::new_v4();
+    let user2 = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    // Create draft as user1
+    let created = create_draft_for_user(&app, user1, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Apply operation so undo is possible
+    let apply_body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user1}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&apply_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // user2 tries to undo user1's draft
+    let undo_body = serde_json::json!({"expectedRevision": 1});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/undo"))
+                .header("Authorization", format!("Bearer {user2}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&undo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn redo_cross_owner_returns_403() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
+    };
+    let app = test_app_with_state(state);
+    let user1 = Uuid::new_v4();
+    let user2 = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    // Create draft as user1
+    let created = create_draft_for_user(&app, user1, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // Apply operation, then undo so redo is possible
+    let apply_body = serde_json::json!({
+        "operation": {
+            "type": "movePoint",
+            "segmentIndex": 0,
+            "pointIndex": 0,
+            "newPosition": {"latitude": 48.0, "longitude": 12.0}
+        },
+        "expectedRevision": 0
+    });
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/operations"))
+                .header("Authorization", format!("Bearer {user1}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&apply_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let undo_body = serde_json::json!({"expectedRevision": 1});
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/undo"))
+                .header("Authorization", format!("Bearer {user1}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&undo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // user2 tries to redo user1's draft
+    let redo_body = serde_json::json!({"expectedRevision": 2});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/redo"))
+                .header("Authorization", format!("Bearer {user2}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&redo_body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn delete_draft_cross_owner_returns_403() {
+    let state = RouteEditingAppState {
+        repo: Arc::new(InMemoryRouteDraftRepository::new()),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
+    };
+    let app = test_app_with_state(state);
+    let user1 = Uuid::new_v4();
+    let user2 = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    // Create draft as user1
+    let created = create_draft_for_user(&app, user1, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    // user2 tries to delete user1's draft
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/v1/route-drafts/{draft_id}"))
+                .header("Authorization", format!("Bearer {user2}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
