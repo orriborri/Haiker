@@ -54,6 +54,12 @@ pub trait ExportAuditSink: Send + Sync {
     ) -> Result<(), ExportError>;
 }
 
+/// Presigned download URL time-to-live in seconds.
+///
+/// Controls how long the presigned URL remains valid after generation.
+/// Kept short to limit the exposure window if a URL is inadvertently leaked.
+const DOWNLOAD_URL_TTL_SECONDS: u64 = 300;
+
 /// Known client-safe failure reason prefixes for export errors.
 const SAFE_EXPORT_FAILURE_REASONS: &[&str] = &[
     "generation failed",
@@ -437,10 +443,12 @@ pub async fn get_export_download(
         ExportFormat::Gpx => ("application/gpx+xml", "gpx"),
     };
 
-    // Construct a safe filename (defaulting to "export" since we don't have activity title)
+    // TODO: The filename defaults to "export.gpx" because the ExportJob aggregate
+    // does not currently store the activity title. Once the domain model is extended
+    // to include the activity title, pass it here for a more descriptive filename.
     let filename = sanitize_filename("export", extension);
 
-    // Generate presigned download URL (300 seconds TTL)
+    // Generate presigned download URL
     let download_url_generator = state
         .download_url_generator
         .as_ref()
@@ -455,20 +463,33 @@ pub async fn get_export_download(
         })?;
 
     let download_info = download_url_generator
-        .generate_download_url(&storage_key, &filename, content_type, 300)
+        .generate_download_url(
+            &storage_key,
+            &filename,
+            content_type,
+            DOWNLOAD_URL_TTL_SECONDS,
+        )
         .await
         .map_err(export_error_to_api_error)?;
 
-    // Log audit event (do NOT log the URL)
+    // Log audit event (do NOT log the URL). Fail-open for availability but
+    // emit a warning so audit pipeline failures are observable.
     if let Some(ref audit) = state.audit_sink {
-        let _ = audit
+        if let Err(e) = audit
             .record(
                 actor.0.user_id.0,
                 "export.download",
                 "export_job",
                 &export_id.to_string(),
             )
-            .await;
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                export_id = %export_id,
+                "failed to record audit event for export download"
+            );
+        }
     }
 
     let response = ExportDownloadUrlResponse {

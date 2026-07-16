@@ -47,6 +47,33 @@ fn is_not_found_error(msg: &str) -> bool {
         || msg.contains("NotFound")
 }
 
+/// Build the custom query parameters for S3 presigned GET response-header overrides.
+///
+/// When provided, includes `response-content-disposition` (as attachment with the
+/// given filename) and `response-content-type` as query parameters that S3
+/// will use as response headers when the presigned URL is accessed.
+fn build_response_header_queries(
+    filename: Option<&str>,
+    content_type: Option<&str>,
+) -> Option<std::collections::HashMap<String, String>> {
+    let mut map = std::collections::HashMap::new();
+
+    if let Some(name) = filename {
+        let disposition = format!("attachment; filename=\"{}\"", name);
+        map.insert("response-content-disposition".to_string(), disposition);
+    }
+
+    if let Some(ct) = content_type {
+        map.insert("response-content-type".to_string(), ct.to_string());
+    }
+
+    if map.is_empty() {
+        None
+    } else {
+        Some(map)
+    }
+}
+
 impl ObjectStorageClient {
     /// Create a new object storage client from configuration.
     pub async fn new(config: &StorageConfig) -> Result<Self, ObjectStorageError> {
@@ -150,15 +177,24 @@ impl ObjectStorageClient {
     }
 
     /// Generate a presigned download URL valid for the specified duration.
+    ///
+    /// When `filename` and `content_type` are provided, the presigned URL includes
+    /// `response-content-disposition` and `response-content-type` query parameters
+    /// so the browser receives the correct headers when following the URL.
     pub async fn presigned_download_url(
         &self,
         key: &str,
         expires_in: Duration,
+        filename: Option<&str>,
+        content_type: Option<&str>,
     ) -> Result<String, ObjectStorageError> {
         let expiry_secs = expires_in.as_secs().try_into().unwrap_or(u32::MAX);
+
+        let custom_queries = build_response_header_queries(filename, content_type);
+
         let url = self
             .bucket
-            .presign_get(key, expiry_secs, None)
+            .presign_get(key, expiry_secs, custom_queries)
             .await
             .map_err(|e| ObjectStorageError::Storage(e.to_string()))?;
 
