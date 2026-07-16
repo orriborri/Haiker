@@ -45,6 +45,12 @@ paths:
     $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1validation"
   /v1/route-drafts/{draftId}/publication:
     $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1publication"
+  /v1/activities/{activityId}/exports:
+    $ref: "paths/exports.yaml#/~1v1~1activities~1{activityId}~1exports"
+  /v1/exports/{exportId}:
+    $ref: "paths/exports.yaml#/~1v1~1exports~1{exportId}"
+  /v1/exports/{exportId}/download:
+    $ref: "paths/exports.yaml#/~1v1~1exports~1{exportId}~1download"
 components:
   securitySchemes:
     $ref: "components/security.yaml"
@@ -71,3 +77,11 @@ components:
       $ref: "components/route-editing.yaml#/PublishRouteDraftRequest"
     PublicationResponse:
       $ref: "components/route-editing.yaml#/PublicationResponse"
+    RequestExportBody:
+      $ref: "components/exports.yaml#/RequestExportBody"
+    ExportJobResponse:
+      $ref: "components/exports.yaml#/ExportJobResponse"
+    ExportStatusResponse:
+      $ref: "components/exports.yaml#/ExportStatusResponse"
+    ExportDownloadResponse:
+      $ref: "components/exports.yaml#/ExportDownloadResponse"

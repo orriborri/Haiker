@@ -403,4 +403,71 @@ export function getImportStatus(
   return apiFetch(`/imports/${importId}`, ImportStatusResponseSchema);
 }
 
+// Export Schemas
+
+const ExportJobResponseSchema = z.object({
+  exportId: z.string(),
+  activityId: z.string(),
+  routeVersionId: z.string(),
+  format: z.enum(["gpx"]),
+  status: z.enum(["queued", "generating", "ready", "failed", "expired"]),
+  createdAt: z.string(),
+});
+
+const ExportStatusResponseSchema = z.object({
+  exportId: z.string(),
+  activityId: z.string(),
+  routeVersionId: z.string(),
+  format: z.enum(["gpx"]),
+  status: z.enum(["queued", "generating", "ready", "failed", "expired"]),
+  failureReason: z.string().nullable(),
+  downloadAvailableUntil: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const ExportDownloadResponseSchema = z.object({
+  downloadUrl: z.string(),
+  filename: z.string(),
+  expiresAt: z.string(),
+});
+
+// Export Types
+
+export type ExportJobResponse = z.infer<typeof ExportJobResponseSchema>;
+export type ExportStatusResponse = z.infer<typeof ExportStatusResponseSchema>;
+export type ExportDownloadResponse = z.infer<typeof ExportDownloadResponseSchema>;
+
+// Export API Functions
+
+export function requestExport(
+  activityId: string,
+  routeVersionId: string,
+  idempotencyKey: string,
+): Promise<ExportJobResponse> {
+  return apiFetch(
+    `/activities/${activityId}/exports`,
+    ExportJobResponseSchema,
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({ routeVersionId, format: "gpx" }),
+    },
+  );
+}
+
+export function getExportStatus(
+  exportId: string,
+): Promise<ExportStatusResponse> {
+  return apiFetch(`/exports/${exportId}`, ExportStatusResponseSchema);
+}
+
+export function getExportDownloadUrl(
+  exportId: string,
+): Promise<ExportDownloadResponse> {
+  return apiFetch(`/exports/${exportId}/download`, ExportDownloadResponseSchema);
+}
+
 export { ApiError };
