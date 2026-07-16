@@ -102,9 +102,18 @@ impl UploadQuota {
         self.check_and_increment_at(user_id, Instant::now())
     }
 
+    /// Maximum number of entries before triggering eviction of expired windows.
+    const EVICTION_THRESHOLD: usize = 10_000;
+
     /// Internal implementation with injectable "now" for testing.
     fn check_and_increment_at(&self, user_id: Uuid, now: Instant) -> Result<(), QuotaExceeded> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Evict expired entries when the map grows beyond the threshold.
+        if state.len() > Self::EVICTION_THRESHOLD {
+            let window = self.window_duration;
+            state.retain(|_, (_, window_start)| now.duration_since(*window_start) < window);
+        }
 
         let entry = state.entry(user_id).or_insert((0, now));
 
@@ -225,6 +234,30 @@ mod tests {
     fn config_from_env_uses_defaults() {
         let config = UploadQuotaConfig::default();
         assert_eq!(config.max_imports_per_day, 100);
+    }
+
+    #[test]
+    fn eviction_removes_expired_entries_when_threshold_exceeded() {
+        let window = Duration::from_secs(60);
+        let quota = UploadQuota::new_with_window(10, window);
+
+        // Manually insert entries that exceed the threshold with expired windows.
+        {
+            let mut state = quota.state.lock().unwrap();
+            let old_time = Instant::now() - Duration::from_secs(120); // well past the 60s window
+            for _ in 0..10_001 {
+                state.insert(Uuid::new_v4(), (1, old_time));
+            }
+        }
+
+        // Next check should trigger eviction of expired entries.
+        let fresh_user = Uuid::new_v4();
+        assert!(quota.check_and_increment(fresh_user).is_ok());
+
+        // All old entries should have been evicted (their windows expired).
+        let state = quota.state.lock().unwrap();
+        // Only the fresh entry should remain.
+        assert_eq!(state.len(), 1);
     }
 
     #[test]

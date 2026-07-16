@@ -365,42 +365,48 @@ pub async fn post_complete_upload(
             }
         })?;
 
-        job_queue
+        if let Err(e) = job_queue
             .enqueue(
                 haiker_app::imports::job_types::PARSE_GPX_JOB_TYPE,
                 payload_json,
                 correlation_id,
             )
             .await
-            .map_err(|e| {
-                if e.starts_with(BACKPRESSURE_ERROR_PREFIX) {
-                    tracing::warn!("queue backpressure triggered for import {}", import.id.0);
-                    ApiError {
-                        status: StatusCode::TOO_MANY_REQUESTS,
-                        code: "QUEUE_BACKPRESSURE".to_string(),
-                        message: "the processing queue is at capacity, please retry later"
-                            .to_string(),
-                        problem_type: Some("/problems/queue-backpressure".to_string()),
-                        title: Some("Service Temporarily Overloaded".to_string()),
-                        request_id: None,
-                        details: None,
-                    }
-                } else {
-                    tracing::error!("failed to enqueue parsing job: {e}");
-                    ApiError {
-                        status: StatusCode::INTERNAL_SERVER_ERROR,
-                        code: "JOB_ENQUEUE_FAILED".to_string(),
-                        message: "an unexpected error occurred".to_string(),
-                        problem_type: Some("/problems/internal-error".to_string()),
-                        title: Some("Internal Server Error".to_string()),
-                        request_id: None,
-                        details: None,
-                    }
+        {
+            if e.starts_with(BACKPRESSURE_ERROR_PREFIX) {
+                tracing::warn!("queue backpressure triggered for import {}", import.id.0);
+                let retry_after: u64 = 60;
+                let mut response = ApiError {
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    code: "QUEUE_BACKPRESSURE".to_string(),
+                    message: "the processing queue is at capacity, please retry later"
+                        .to_string(),
+                    problem_type: Some("/problems/queue-backpressure".to_string()),
+                    title: Some("Service Temporarily Overloaded".to_string()),
+                    request_id: None,
+                    details: None,
                 }
-            })?;
+                .into_response();
+                if let Ok(val) = HeaderValue::from_str(&retry_after.to_string()) {
+                    response.headers_mut().insert("retry-after", val);
+                }
+                return Ok(response);
+            } else {
+                tracing::error!("failed to enqueue parsing job: {e}");
+                return Err(ApiError {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    code: "JOB_ENQUEUE_FAILED".to_string(),
+                    message: "an unexpected error occurred".to_string(),
+                    problem_type: Some("/problems/internal-error".to_string()),
+                    title: Some("Internal Server Error".to_string()),
+                    request_id: None,
+                    details: None,
+                });
+            }
+        }
     }
 
-    Ok((StatusCode::OK, Json(import_to_status_response(&import))))
+    Ok((StatusCode::OK, Json(import_to_status_response(&import))).into_response())
 }
 
 /// GET /v1/imports/:import_id
@@ -2856,6 +2862,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            response.headers().contains_key("retry-after"),
+            "backpressure 429 must include retry-after header"
+        );
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(retry_after, "60", "retry-after should be 60 seconds");
 
         let json = response_json(response).await;
         assert_eq!(json["type"], "/problems/queue-backpressure");

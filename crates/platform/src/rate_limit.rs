@@ -251,11 +251,23 @@ impl RateLimiter {
         }
     }
 
+    /// Maximum number of entries before triggering eviction of stale buckets.
+    const EVICTION_THRESHOLD: usize = 10_000;
+
+    /// Buckets whose `last_refill` is older than this duration are considered
+    /// stale and eligible for eviction (they would be fully replenished anyway).
+    const EVICTION_AGE: std::time::Duration = std::time::Duration::from_secs(120);
+
     /// Check if a request is allowed. Returns Ok(()) if allowed, or Err(seconds)
     /// with the retry-after duration if rate limited.
     pub fn check(&self, key: RateLimitKey, category: RouteCategory) -> Result<(), u64> {
         let now = Instant::now();
         let mut buckets = self.buckets.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Evict stale entries when the map grows beyond the threshold.
+        if buckets.len() > Self::EVICTION_THRESHOLD {
+            buckets.retain(|_, bucket| now.duration_since(bucket.last_refill) < Self::EVICTION_AGE);
+        }
 
         let bucket = buckets.entry((key, category)).or_insert_with(|| {
             let rpm = self.config.rpm_for_category(&category);
@@ -707,6 +719,36 @@ mod tests {
         assert_eq!(config.mutations_rpm, 30);
         assert_eq!(config.reads_rpm, 120);
         assert_eq!(config.exports_rpm, 10);
+    }
+
+    #[test]
+    fn eviction_removes_stale_entries_when_threshold_exceeded() {
+        let config = RateLimitConfig {
+            reads_rpm: 10,
+            ..Default::default()
+        };
+        let limiter = RateLimiter::new(config);
+
+        // Manually insert entries that exceed the threshold with old timestamps.
+        {
+            let mut buckets = limiter.buckets.lock().unwrap();
+            let old_time = Instant::now() - std::time::Duration::from_secs(300);
+            for i in 0..10_001 {
+                let key = RateLimitKey::IpAddr(format!("10.0.0.{}", i));
+                let mut bucket = TokenBucket::new(10, 10.0 / 60.0);
+                bucket.last_refill = old_time;
+                buckets.insert((key, RouteCategory::Read), bucket);
+            }
+        }
+
+        // Next check should trigger eviction of stale entries.
+        let fresh_key = RateLimitKey::IpAddr("fresh.ip".to_string());
+        assert!(limiter.check(fresh_key, RouteCategory::Read).is_ok());
+
+        // All old entries should have been evicted (they are > 120s old).
+        let buckets = limiter.buckets.lock().unwrap();
+        // Only the fresh entry should remain.
+        assert_eq!(buckets.len(), 1);
     }
 
     #[test]
