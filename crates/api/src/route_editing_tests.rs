@@ -261,6 +261,7 @@ fn test_app() -> Router {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     test_app_with_state(state)
 }
@@ -285,6 +286,10 @@ fn test_app_with_state(state: RouteEditingAppState) -> Router {
         .route(
             "/v1/route-drafts/{draftId}/validation",
             post(post_validate_draft),
+        )
+        .route(
+            "/v1/route-drafts/{draftId}/publication",
+            post(post_publish_draft),
         )
         .with_state(state)
 }
@@ -376,6 +381,7 @@ async fn get_draft_returns_200() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -412,6 +418,7 @@ async fn apply_operation_returns_200_with_new_revision() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -461,6 +468,7 @@ async fn apply_with_stale_revision_returns_409() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -530,6 +538,7 @@ async fn apply_with_duplicate_idempotency_key_replays_response() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -630,6 +639,7 @@ async fn undo_redo_reset_work() {
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions_and_geometry(
             vec![(version_id, activity_id, base_geometry)],
         )),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -813,6 +823,7 @@ async fn wrong_owner_returns_403() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -846,6 +857,7 @@ async fn idempotency_key_required_for_apply() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -888,6 +900,7 @@ async fn idempotency_key_required_for_undo() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -922,6 +935,7 @@ async fn delete_draft_returns_204() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -984,6 +998,7 @@ async fn create_draft_activity_not_found_returns_404() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -1026,6 +1041,7 @@ async fn create_draft_deleted_activity_returns_422() {
             LifecycleState::Deleted,
         )])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -1070,6 +1086,7 @@ async fn create_draft_cross_owner_activity_returns_404() {
             LifecycleState::Active,
         )])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -1116,6 +1133,7 @@ async fn create_draft_invalid_base_route_version_returns_422() {
             LifecycleState::Active,
         )])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![])),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -1163,6 +1181,7 @@ async fn create_draft_valid_base_route_version_succeeds() {
             version_id,
             activity_id,
         )])),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -1212,6 +1231,7 @@ async fn create_draft_idempotent_return_with_different_base_version_returns_409(
             (version_id_1, activity_id),
             (version_id_2, activity_id),
         ])),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -1284,6 +1304,7 @@ async fn get_draft_returns_base_route_version_id() {
             version_id,
             activity_id,
         )])),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -1346,6 +1367,7 @@ async fn apply_with_same_key_different_payload_returns_409() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1466,6 +1488,7 @@ async fn idempotent_replay_returns_snapshot_revision_not_current() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1576,6 +1599,7 @@ async fn delete_section_returns_200_with_incremented_revision() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1625,6 +1649,7 @@ async fn delete_section_reversed_range_returns_422_invalid_operation() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1673,6 +1698,7 @@ async fn delete_section_out_of_bounds_returns_422_invalid_point_index() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1721,6 +1747,7 @@ async fn delete_section_topology_breaking_returns_422_insufficient_points() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1769,6 +1796,7 @@ async fn stale_revision_returns_409_with_problem_details() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1846,6 +1874,7 @@ async fn apply_move_point_invalid_coordinates_returns_422() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1890,6 +1919,7 @@ async fn apply_add_point_returns_200_with_new_revision() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1938,6 +1968,7 @@ async fn apply_add_point_with_elevation_returns_200() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1986,6 +2017,7 @@ async fn apply_delete_point_returns_200_with_new_revision() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2034,6 +2066,7 @@ async fn apply_delete_point_minimum_violation_returns_422() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2108,6 +2141,7 @@ async fn apply_add_point_invalid_segment_returns_422() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2156,6 +2190,7 @@ async fn apply_delete_point_invalid_index_returns_422() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2203,6 +2238,7 @@ async fn apply_move_point_another_owner_returns_403() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -2276,6 +2312,7 @@ async fn reset_fetches_base_geometry_from_gateway() {
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions_and_geometry(
             vec![(version_id, activity_id, base_geometry.clone())],
         )),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -2393,6 +2430,7 @@ async fn reset_without_base_version_returns_422() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2456,6 +2494,7 @@ async fn reset_with_stale_revision_returns_409() {
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions_and_geometry(
             vec![(version_id, activity_id, base_geometry)],
         )),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -2560,6 +2599,7 @@ async fn reset_cross_owner_returns_403() {
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions_and_geometry(
             vec![(version_id, activity_id, base_geometry)],
         )),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -2631,6 +2671,7 @@ async fn reset_gateway_rejects_geometry_returns_422() {
             version_id,
             activity_id,
         )])),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -2708,6 +2749,7 @@ async fn apply_operation_to_published_draft_returns_409() {
         repo: repo.clone(),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2759,6 +2801,7 @@ async fn apply_operation_to_discarded_draft_returns_409() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2823,6 +2866,7 @@ async fn undo_on_published_draft_returns_409() {
         repo: repo.clone(),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2890,6 +2934,7 @@ async fn redo_on_discarded_draft_returns_409() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3136,6 +3181,7 @@ async fn contract_get_draft_response_matches_route_draft_response_schema() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3171,6 +3217,7 @@ async fn contract_apply_operation_response_matches_operation_result_schema() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3218,6 +3265,7 @@ async fn contract_undo_response_matches_operation_result_schema() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3280,6 +3328,7 @@ async fn contract_redo_response_matches_operation_result_schema() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3358,6 +3407,7 @@ async fn contract_all_error_codes_have_correct_problem_detail_structure() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3439,6 +3489,7 @@ async fn contract_insufficient_points_error_matches_problem_detail_schema() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3487,6 +3538,7 @@ async fn contract_invalid_operation_error_matches_problem_detail_schema() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3535,6 +3587,7 @@ async fn contract_revision_conflict_error_matches_problem_detail_schema() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3636,6 +3689,7 @@ async fn contract_forbidden_error_matches_problem_detail_schema() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -3674,6 +3728,7 @@ async fn contract_draft_not_active_error_matches_problem_detail_schema() {
         repo: repo.clone(),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3738,6 +3793,7 @@ async fn validate_valid_draft_returns_200_with_valid_true() {
             version_id,
             activity_id,
         )])),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -3798,6 +3854,7 @@ async fn validate_draft_not_found_returns_404() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3827,6 +3884,7 @@ async fn validate_wrong_owner_returns_403() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -3861,6 +3919,7 @@ async fn validate_published_draft_returns_409() {
         repo: repo.clone(),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3900,6 +3959,7 @@ async fn validate_revision_mismatch_returns_409() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3938,6 +3998,7 @@ async fn validate_no_base_version_returns_200_with_valid_false() {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3989,6 +4050,7 @@ async fn validate_does_not_modify_draft_state() {
             version_id,
             activity_id,
         )])),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -4070,6 +4132,7 @@ async fn validate_multiple_geometry_errors_returned_together_in_200() {
             LifecycleState::Active,
         )])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: None,
     };
     let app = test_app_with_state(state);
 
@@ -4139,4 +4202,427 @@ async fn validate_multiple_geometry_errors_returned_together_in_200() {
         assert!(error["code"].is_string(), "error code must be a string");
         assert!(error["detail"].is_string(), "error detail must be a string");
     }
+}
+
+// --- Publication endpoint tests ---
+
+use haiker_app::route_versioning::commit::{
+    CommitPublication, PublicationCommitData, PublicationResult,
+};
+use haiker_app::route_versioning::{RouteVersionId, RouteVersioningError};
+
+/// A fake CommitPublication implementation for testing the API handler layer.
+struct FakePublicationCommitter {
+    /// Controls what the committer returns.
+    behavior: Mutex<FakeCommitBehavior>,
+}
+
+enum FakeCommitBehavior {
+    /// Return a successful result.
+    Success { version_number: i32 },
+    /// Return an error.
+    Error(RouteVersioningError),
+}
+
+impl FakePublicationCommitter {
+    fn succeeding(version_number: i32) -> Self {
+        Self {
+            behavior: Mutex::new(FakeCommitBehavior::Success { version_number }),
+        }
+    }
+
+    fn failing(error: RouteVersioningError) -> Self {
+        Self {
+            behavior: Mutex::new(FakeCommitBehavior::Error(error)),
+        }
+    }
+}
+
+#[async_trait]
+impl CommitPublication for FakePublicationCommitter {
+    async fn commit(
+        &self,
+        data: &PublicationCommitData,
+    ) -> Result<PublicationResult, RouteVersioningError> {
+        let behavior = self.behavior.lock().unwrap();
+        match &*behavior {
+            FakeCommitBehavior::Success { version_number } => Ok(PublicationResult {
+                route_version_id: RouteVersionId::generate(),
+                version_number: *version_number,
+                draft_id: data.draft_id,
+            }),
+            FakeCommitBehavior::Error(err) => {
+                // Clone the error for returning
+                Err(match err {
+                    RouteVersioningError::DraftNotFound => RouteVersioningError::DraftNotFound,
+                    RouteVersioningError::NotAuthorized => RouteVersioningError::NotAuthorized,
+                    RouteVersioningError::RevisionConflict { expected, actual } => {
+                        RouteVersioningError::RevisionConflict {
+                            expected: *expected,
+                            actual: *actual,
+                        }
+                    }
+                    RouteVersioningError::DraftNotActive => RouteVersioningError::DraftNotActive,
+                    RouteVersioningError::IdempotencyConflict => {
+                        RouteVersioningError::IdempotencyConflict
+                    }
+                    RouteVersioningError::ActivityNotFound => {
+                        RouteVersioningError::ActivityNotFound
+                    }
+                    RouteVersioningError::ValidationFailed { errors } => {
+                        RouteVersioningError::ValidationFailed {
+                            errors: errors.clone(),
+                        }
+                    }
+                    other => RouteVersioningError::PersistenceError {
+                        message: other.to_string(),
+                    },
+                })
+            }
+        }
+    }
+}
+
+fn publication_test_app(
+    committer: FakePublicationCommitter,
+) -> (Router, Arc<InMemoryRouteDraftRepository>) {
+    let repo = Arc::new(InMemoryRouteDraftRepository::new());
+    let state = RouteEditingAppState {
+        repo: repo.clone(),
+        activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
+        route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
+        publication_committer: Some(Arc::new(committer)),
+    };
+    (test_app_with_state(state), repo)
+}
+
+#[tokio::test]
+async fn publish_draft_missing_idempotency_key_returns_400() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::succeeding(2));
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn publish_draft_non_uuid_idempotency_key_returns_400() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::succeeding(2));
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0
+    });
+
+    // Send a non-UUID idempotency key
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", "not-a-valid-uuid-at-all")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "INVALID_IDEMPOTENCY_KEY");
+}
+
+#[tokio::test]
+async fn publish_draft_success_returns_201() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::succeeding(2));
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0,
+        "editSummary": "Fixed trail section"
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert!(json["routeVersionId"].is_string());
+    assert_eq!(json["versionNumber"], 2);
+    assert_eq!(json["draftId"], draft_id);
+}
+
+#[tokio::test]
+async fn publish_draft_cross_owner_returns_403() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::failing(
+        RouteVersioningError::NotAuthorized,
+    ));
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "FORBIDDEN");
+}
+
+#[tokio::test]
+async fn publish_draft_revision_conflict_returns_409() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::failing(
+        RouteVersioningError::RevisionConflict {
+            expected: 0,
+            actual: 3,
+        },
+    ));
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "ROUTE_DRAFT_REVISION_CONFLICT");
+}
+
+#[tokio::test]
+async fn publish_draft_not_active_returns_409() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::failing(
+        RouteVersioningError::DraftNotActive,
+    ));
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "DRAFT_NOT_ACTIVE");
+}
+
+#[tokio::test]
+async fn publish_draft_not_found_returns_404() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::failing(
+        RouteVersioningError::DraftNotFound,
+    ));
+    let user_id = Uuid::new_v4();
+    let random_draft_id = Uuid::new_v4();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{random_draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn publish_draft_idempotency_conflict_returns_409() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::failing(
+        RouteVersioningError::IdempotencyConflict,
+    ));
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "IDEMPOTENCY_CONFLICT");
+}
+
+#[tokio::test]
+async fn publish_draft_validation_failed_returns_422() {
+    let (app, _repo) = publication_test_app(FakePublicationCommitter::failing(
+        RouteVersioningError::ValidationFailed {
+            errors: vec!["geometry has no segments".to_string()],
+        },
+    ));
+    let user_id = Uuid::new_v4();
+    let activity_id = Uuid::new_v4();
+
+    let created = create_draft_for_user(&app, user_id, activity_id).await;
+    let draft_id = created["id"].as_str().unwrap();
+
+    let body = serde_json::json!({
+        "expectedRevision": 0
+    });
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/route-drafts/{draft_id}/publication"))
+                .header("Authorization", format!("Bearer {user_id}"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", Uuid::new_v4().to_string())
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let b = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(json["code"], "VALIDATION_FAILED");
 }

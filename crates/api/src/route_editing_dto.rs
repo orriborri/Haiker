@@ -297,3 +297,22 @@ pub struct ValidationErrorDto {
     pub code: String,
     pub detail: String,
 }
+
+/// Request body for POST /v1/route-drafts/{draftId}/publication.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishRouteDraftRequest {
+    pub expected_revision: u64,
+    #[serde(default)]
+    pub edit_summary: Option<String>,
+}
+
+/// Response body for POST /v1/route-drafts/{draftId}/publication.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicationResponse {
+    pub route_version_id: Uuid,
+    pub version_number: i32,
+    pub draft_id: Uuid,
+}

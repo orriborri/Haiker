@@ -5,6 +5,11 @@
 //! or deleted - this invariant is enforced both in the domain model and at
 //! the database level via immutability triggers.
 
+pub mod commit;
+pub mod gateway;
+pub mod publish_command;
+pub mod repository;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -115,6 +120,63 @@ impl RouteVersion {
             created_at: Utc::now(),
         })
     }
+
+    /// Create a new route version from publication (version N+1).
+    ///
+    /// This is the factory method used when publishing a route draft. It creates
+    /// a new version that references its parent version.
+    ///
+    /// # Arguments
+    ///
+    /// * `parent_version_id` - The previous version this was derived from.
+    /// * `version_number` - The sequential version number (must be >= 2).
+    /// * `activity_id` - The activity this route version belongs to.
+    /// * `geometry` - The route geometry as an ordered list of coordinates (minimum 2).
+    /// * `bounding_box` - The geographic bounding box enclosing the geometry.
+    /// * `corrected_statistics` - Statistics computed from the geometry.
+    /// * `calculation_version` - Identifies the algorithm version used.
+    /// * `edit_summary` - Optional human-readable summary of edits.
+    /// * `created_by` - The user creating this version.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_from_publication(
+        parent_version_id: RouteVersionId,
+        version_number: i32,
+        activity_id: ActivityId,
+        geometry: Vec<Coordinate>,
+        bounding_box: BoundingBox,
+        corrected_statistics: serde_json::Value,
+        calculation_version: String,
+        edit_summary: Option<String>,
+        created_by: UserId,
+    ) -> Result<Self, RouteVersioningError> {
+        if version_number < 2 {
+            return Err(RouteVersioningError::InvalidVersionNumber {
+                minimum: 2,
+                actual: version_number,
+            });
+        }
+
+        if geometry.len() < 2 {
+            return Err(RouteVersioningError::InsufficientGeometry {
+                minimum: 2,
+                actual: geometry.len(),
+            });
+        }
+
+        Ok(Self {
+            id: RouteVersionId::generate(),
+            activity_id,
+            parent_version_id: Some(parent_version_id),
+            version_number,
+            geometry,
+            bounding_box,
+            corrected_statistics,
+            calculation_version,
+            edit_summary,
+            created_by,
+            created_at: Utc::now(),
+        })
+    }
 }
 
 /// Errors that can occur in the route versioning context.
@@ -131,6 +193,38 @@ pub enum RouteVersioningError {
     /// The geometry has fewer than the required minimum coordinates.
     #[error("insufficient geometry points: minimum {minimum}, got {actual}")]
     InsufficientGeometry { minimum: usize, actual: usize },
+
+    /// The version number is below the required minimum.
+    #[error("invalid version number: minimum {minimum}, got {actual}")]
+    InvalidVersionNumber { minimum: i32, actual: i32 },
+
+    /// The draft was not found.
+    #[error("draft not found")]
+    DraftNotFound,
+
+    /// The user is not authorized to perform this action.
+    #[error("not authorized")]
+    NotAuthorized,
+
+    /// The expected revision does not match the actual revision of the draft.
+    #[error("revision conflict: expected {expected}, actual {actual}")]
+    RevisionConflict { expected: u64, actual: u64 },
+
+    /// The draft is not in an active state.
+    #[error("draft is not active")]
+    DraftNotActive,
+
+    /// Validation of the draft geometry failed with one or more errors.
+    #[error("validation failed: {errors:?}")]
+    ValidationFailed { errors: Vec<String> },
+
+    /// An idempotency conflict occurred (same key, different parameters).
+    #[error("idempotency conflict")]
+    IdempotencyConflict,
+
+    /// The referenced activity was not found.
+    #[error("activity not found")]
+    ActivityNotFound,
 
     /// A persistence error occurred.
     #[error("persistence error: {message}")]

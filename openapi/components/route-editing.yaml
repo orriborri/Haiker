@@ -346,3 +346,36 @@ ValidationErrorDto:
     detail:
       type: string
       description: Human-readable description of the validation error
+
+PublishRouteDraftRequest:
+  type: object
+  required:
+    - expectedRevision
+  properties:
+    expectedRevision:
+      type: integer
+      format: int64
+      minimum: 0
+    editSummary:
+      type: string
+      description: Optional human-readable summary of edits made in this version
+
+PublicationResponse:
+  type: object
+  required:
+    - routeVersionId
+    - versionNumber
+    - draftId
+  properties:
+    routeVersionId:
+      type: string
+      format: uuid
+      description: The ID of the newly created route version
+    versionNumber:
+      type: integer
+      format: int32
+      description: The version number assigned (N+1)
+    draftId:
+      type: string
+      format: uuid
+      description: The ID of the draft that was published

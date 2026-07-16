@@ -17,13 +17,16 @@ use haiker_app::route_editing::{
     ActivityGateway, PublicationValidationError, RouteDraft, RouteDraftId, RouteDraftRepository,
     RouteEditingError, RouteVersionGateway,
 };
+use haiker_app::route_versioning::commit::{CommitPublication, PublicationCommitData};
+use haiker_app::route_versioning::RouteVersioningError;
 
 use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
 use crate::route_editing_dto::{
     draft_to_response, geometry_to_domain, parse_idempotency_key, ApplyOperationRequest,
-    CreateRouteDraftRequest, OperationResultResponse, UndoRedoRequest,
-    ValidateForPublicationRequest, ValidationErrorDto, ValidationResultResponse,
+    CreateRouteDraftRequest, OperationResultResponse, PublicationResponse,
+    PublishRouteDraftRequest, UndoRedoRequest, ValidateForPublicationRequest, ValidationErrorDto,
+    ValidationResultResponse,
 };
 
 /// Shared application state for route editing handlers.
@@ -32,6 +35,7 @@ pub struct RouteEditingAppState {
     pub repo: Arc<dyn RouteDraftRepository>,
     pub activity_gateway: Arc<dyn ActivityGateway>,
     pub route_version_gateway: Arc<dyn RouteVersionGateway>,
+    pub publication_committer: Option<Arc<dyn CommitPublication>>,
 }
 
 /// Convert a RouteEditingError to an ApiError with Problem Details fields.
@@ -220,6 +224,32 @@ fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
     }
 
     Ok(key.to_string())
+}
+
+/// Extract the Idempotency-Key header value and validate it is a valid UUID.
+///
+/// The OpenAPI spec mandates UUID format for the Idempotency-Key header on the
+/// publication endpoint. Rejecting non-UUID keys at the API layer avoids the
+/// lossy XOR-based hash fallback in the committer that could produce collisions
+/// for keys longer than 16 bytes.
+#[allow(clippy::result_large_err)]
+fn extract_uuid_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
+    let key = extract_idempotency_key(headers)?;
+
+    // Validate UUID format per OpenAPI spec
+    if Uuid::parse_str(&key).is_err() {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "INVALID_IDEMPOTENCY_KEY".to_string(),
+            message: "Idempotency-Key must be a valid UUID".to_string(),
+            problem_type: Some("/problems/invalid-idempotency-key".to_string()),
+            title: Some("Invalid Idempotency Key".to_string()),
+            request_id: None,
+            details: None,
+        });
+    }
+
+    Ok(key)
 }
 
 /// POST /v1/activities/{activityId}/route-drafts
@@ -852,6 +882,148 @@ pub async fn post_validate_draft(
             ))
         }
     }
+}
+
+/// Convert a RouteVersioningError to an ApiError with Problem Details fields.
+fn route_versioning_error_to_api_error(err: RouteVersioningError) -> ApiError {
+    match err {
+        RouteVersioningError::DraftNotFound => ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "route draft not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
+            request_id: None,
+            details: None,
+        },
+        RouteVersioningError::NotAuthorized => ApiError {
+            status: StatusCode::FORBIDDEN,
+            code: "FORBIDDEN".to_string(),
+            message: "not authorized to publish this draft".to_string(),
+            problem_type: Some("/problems/forbidden".to_string()),
+            title: Some("Forbidden".to_string()),
+            request_id: None,
+            details: None,
+        },
+        RouteVersioningError::RevisionConflict { expected, actual } => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "ROUTE_DRAFT_REVISION_CONFLICT".to_string(),
+            message: format!("revision conflict: expected {expected}, got {actual}"),
+            problem_type: Some("/problems/stale-route-draft".to_string()),
+            title: Some("Route draft revision is stale".to_string()),
+            request_id: None,
+            details: None,
+        },
+        RouteVersioningError::DraftNotActive => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "DRAFT_NOT_ACTIVE".to_string(),
+            message: "draft is not in active state".to_string(),
+            problem_type: Some("/problems/draft-not-active".to_string()),
+            title: Some("Draft Not Active".to_string()),
+            request_id: None,
+            details: None,
+        },
+        RouteVersioningError::ValidationFailed { errors } => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "VALIDATION_FAILED".to_string(),
+            message: errors.join("; "),
+            problem_type: Some("/problems/validation-failed".to_string()),
+            title: Some("Validation Failed".to_string()),
+            request_id: None,
+            details: None,
+        },
+        RouteVersioningError::IdempotencyConflict => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "IDEMPOTENCY_CONFLICT".to_string(),
+            message: "idempotency key reused with different parameters".to_string(),
+            problem_type: Some("/problems/idempotency-conflict".to_string()),
+            title: Some("Idempotency Conflict".to_string()),
+            request_id: None,
+            details: None,
+        },
+        RouteVersioningError::ActivityNotFound => ApiError {
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "activity not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
+            request_id: None,
+            details: None,
+        },
+        RouteVersioningError::PersistenceError { message } => ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "INTERNAL_ERROR".to_string(),
+            message: format!("internal error: {message}"),
+            problem_type: Some("/problems/internal-error".to_string()),
+            title: Some("Internal Server Error".to_string()),
+            request_id: None,
+            details: None,
+        },
+        _ => ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "INTERNAL_ERROR".to_string(),
+            message: "unexpected error".to_string(),
+            problem_type: Some("/problems/internal-error".to_string()),
+            title: Some("Internal Server Error".to_string()),
+            request_id: None,
+            details: None,
+        },
+    }
+}
+
+/// POST /v1/route-drafts/{draftId}/publication
+///
+/// Publish a route draft, creating a new immutable route version.
+/// Requires an Idempotency-Key header (must be a valid UUID per OpenAPI spec).
+/// Returns 201 on success with the new route version details.
+///
+/// The handler delegates entirely to the transactional committer without
+/// pre-loading the draft. The committer locks the draft row (SELECT FOR UPDATE)
+/// and resolves activity_id from the locked row, eliminating the TOCTOU window
+/// that would exist if we read the draft here first.
+pub async fn post_publish_draft(
+    State(state): State<RouteEditingAppState>,
+    actor: AuthenticatedActor,
+    Path(draft_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<PublishRouteDraftRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let idempotency_key = extract_uuid_idempotency_key(&headers)?;
+
+    let committer = state
+        .publication_committer
+        .as_ref()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "INTERNAL_ERROR".to_string(),
+            message: "publication service not configured".to_string(),
+            problem_type: Some("/problems/internal-error".to_string()),
+            title: Some("Internal Server Error".to_string()),
+            request_id: None,
+            details: None,
+        })?;
+
+    let commit_data = PublicationCommitData {
+        draft_id: RouteDraftId::new(draft_id),
+        expected_revision: body.expected_revision,
+        actor_id: actor.0.user_id,
+        idempotency_key,
+        edit_summary: body.edit_summary,
+    };
+
+    let result = committer
+        .commit(&commit_data)
+        .await
+        .map_err(route_versioning_error_to_api_error)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(PublicationResponse {
+            route_version_id: result.route_version_id.0,
+            version_number: result.version_number,
+            draft_id: result.draft_id.0,
+        }),
+    ))
 }
 
 #[cfg(test)]
