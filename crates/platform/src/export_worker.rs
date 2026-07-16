@@ -282,7 +282,6 @@ impl GenerateExportJobHandler {
         if already_exists {
             tracing::info!(
                 export_job_id = %payload.export_job_id,
-                key = %key,
                 "Export file already exists in storage, marking complete"
             );
             // The file was already generated (retry scenario). Ensure the export
@@ -305,7 +304,12 @@ impl GenerateExportJobHandler {
                 }
                 if export_job.status == ExportStatus::Generating {
                     export_job
-                        .complete(key.clone(), checksum, expires_at)
+                        .complete_with_verified_checksum(
+                            key.clone(),
+                            checksum.clone(),
+                            checksum,
+                            expires_at,
+                        )
                         .map_err(|e| format!("failed to complete export job: {e}"))?;
                 }
                 persist_export_job(&self.pool, &export_job).await?;
@@ -450,15 +454,35 @@ impl GenerateExportJobHandler {
             return Err(reason.into());
         }
 
+        // (j.1) Post-upload verification: re-download and verify checksum
+        let verified_bytes = match self.object_storage.download(&key).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                let reason = format!("failed to download export for verification: {e}");
+                self.mark_failed(payload.export_job_id, &reason).await;
+                return Err(reason.into());
+            }
+        };
+        let verified_checksum = sha256_hex(&verified_bytes);
+
+        if checksum != verified_checksum {
+            let reason = format!(
+                "post-upload verification failed: checksum mismatch (expected {}, got {})",
+                checksum, verified_checksum
+            );
+            self.mark_failed(payload.export_job_id, &reason).await;
+            return Err(reason.into());
+        }
+
         // (k) Compute expiration (24 hours from now)
         let expires_at = Utc::now() + Duration::hours(24);
 
-        // (l) Complete the export job
+        // (l) Complete the export job with verified checksum
         // Re-load the export job in case it was updated concurrently
         let mut export_job = load_export_job(&self.pool, payload.export_job_id).await?;
         if export_job.status == ExportStatus::Generating {
             export_job
-                .complete(key, checksum, expires_at)
+                .complete_with_verified_checksum(key, checksum, verified_checksum, expires_at)
                 .map_err(|e| format!("failed to complete export job: {e}"))?;
             persist_export_job(&self.pool, &export_job).await?;
         }

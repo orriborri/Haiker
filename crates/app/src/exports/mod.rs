@@ -22,7 +22,9 @@ use crate::route_versioning::RouteVersionId;
 use self::state_machine::ExportStatus;
 
 // Re-export key types for consumers.
-pub use self::commands::{handle_get_export, handle_request_export, RequestExportCommand};
+pub use self::commands::{
+    handle_expire_export, handle_get_export, handle_request_export, RequestExportCommand,
+};
 pub use self::gpx_generator::{generate_gpx, GpxGeneratorError, GpxGeneratorInput, GpxPoint};
 pub use self::job_types::{GenerateExportJob, GENERATE_EXPORT_JOB_TYPE};
 pub use self::repository::ExportRepository;
@@ -81,6 +83,16 @@ pub trait RouteVersionGateway: Send + Sync {
         route_version_id: RouteVersionId,
         owner_id: UserId,
     ) -> Result<(), ExportError>;
+}
+
+/// Trait for artifact storage operations in the export domain.
+///
+/// Abstracts object storage so domain command handlers can delete or verify
+/// artifacts without depending on infrastructure.
+#[async_trait]
+pub trait ArtifactStore: Send + Sync {
+    /// Delete an artifact from storage by its key.
+    async fn delete_artifact(&self, key: &str) -> Result<(), ExportError>;
 }
 
 /// The ExportJob aggregate representing an export job through its lifecycle.
@@ -165,6 +177,33 @@ impl ExportJob {
         Ok(())
     }
 
+    /// Transition to Ready state after verifying the uploaded artifact checksum.
+    ///
+    /// Validates that the `verified_checksum` (computed after re-downloading the
+    /// uploaded object) matches the `expected_checksum` (computed before upload).
+    /// If they match, transitions to Ready. If they differ, returns a
+    /// `ChecksumMismatch` error without changing the job state.
+    pub fn complete_with_verified_checksum(
+        &mut self,
+        object_storage_key: String,
+        expected_checksum: String,
+        verified_checksum: String,
+        expires_at: DateTime<Utc>,
+    ) -> Result<(), ExportError> {
+        if expected_checksum != verified_checksum {
+            return Err(ExportError::ChecksumMismatch {
+                expected: expected_checksum,
+                actual: verified_checksum,
+            });
+        }
+        self.status = self.status.transition_to(ExportStatus::Ready)?;
+        self.object_storage_key = Some(object_storage_key);
+        self.checksum = Some(expected_checksum);
+        self.expires_at = Some(expires_at);
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
     /// Transition to Failed state with a reason.
     pub fn fail(&mut self, reason: String) -> Result<(), ExportError> {
         self.status = self.status.transition_to(ExportStatus::Failed)?;
@@ -174,7 +213,13 @@ impl ExportJob {
     }
 
     /// Transition to Expired state.
+    ///
+    /// This operation is idempotent: calling expire() on an already-expired job
+    /// returns Ok without error.
     pub fn expire(&mut self) -> Result<(), ExportError> {
+        if self.status == ExportStatus::Expired {
+            return Ok(());
+        }
         self.status = self.status.transition_to(ExportStatus::Expired)?;
         self.updated_at = Utc::now();
         Ok(())
@@ -215,6 +260,14 @@ pub enum ExportError {
     /// A persistence error occurred.
     #[error("persistence error: {message}")]
     PersistenceError { message: String },
+
+    /// The verified checksum does not match the expected checksum.
+    #[error("checksum mismatch: expected {expected}, got {actual}")]
+    ChecksumMismatch { expected: String, actual: String },
+
+    /// The export artifact has expired and is no longer available.
+    #[error("artifact expired")]
+    ArtifactExpired,
 }
 
 #[cfg(test)]
@@ -429,7 +482,8 @@ mod tests {
 
         assert!(export_job.start_generating().is_err());
         assert!(export_job.fail("x".to_string()).is_err());
-        assert!(export_job.expire().is_err());
+        // expire() is idempotent on an already-expired job
+        assert!(export_job.expire().is_ok());
     }
 
     #[test]
@@ -504,5 +558,121 @@ mod tests {
             message: "db down".to_string(),
         };
         assert_eq!(err.to_string(), "persistence error: db down");
+
+        let err = ExportError::ChecksumMismatch {
+            expected: "abc".to_string(),
+            actual: "def".to_string(),
+        };
+        assert_eq!(err.to_string(), "checksum mismatch: expected abc, got def");
+
+        let err = ExportError::ArtifactExpired;
+        assert_eq!(err.to_string(), "artifact expired");
+    }
+
+    #[test]
+    fn complete_with_verified_checksum_succeeds_on_match() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        let mut export_job = ExportJob::new(
+            owner,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "key-verify".to_string(),
+            None,
+        )
+        .unwrap();
+
+        export_job.start_generating().unwrap();
+
+        let expires = Utc::now() + chrono::Duration::hours(24);
+        let checksum = "abcdef1234567890".to_string();
+        export_job
+            .complete_with_verified_checksum(
+                "exports/user/file.gpx".to_string(),
+                checksum.clone(),
+                checksum.clone(),
+                expires,
+            )
+            .unwrap();
+
+        assert_eq!(export_job.status, ExportStatus::Ready);
+        assert_eq!(
+            export_job.object_storage_key.as_deref(),
+            Some("exports/user/file.gpx")
+        );
+        assert_eq!(export_job.checksum.as_deref(), Some("abcdef1234567890"));
+        assert_eq!(export_job.expires_at, Some(expires));
+    }
+
+    #[test]
+    fn complete_with_verified_checksum_fails_on_mismatch() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        let mut export_job = ExportJob::new(
+            owner,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "key-mismatch".to_string(),
+            None,
+        )
+        .unwrap();
+
+        export_job.start_generating().unwrap();
+
+        let expires = Utc::now() + chrono::Duration::hours(24);
+        let result = export_job.complete_with_verified_checksum(
+            "exports/user/file.gpx".to_string(),
+            "expected_hash".to_string(),
+            "different_hash".to_string(),
+            expires,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(
+            err,
+            ExportError::ChecksumMismatch {
+                expected,
+                actual,
+            } if expected == "expected_hash" && actual == "different_hash"
+        ));
+        // Status should remain Generating (not transitioned)
+        assert_eq!(export_job.status, ExportStatus::Generating);
+    }
+
+    #[test]
+    fn expire_is_idempotent_on_already_expired() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        let mut export_job = ExportJob::new(
+            owner,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "key-expire-idem".to_string(),
+            None,
+        )
+        .unwrap();
+
+        export_job.start_generating().unwrap();
+        let expires = Utc::now() + chrono::Duration::hours(24);
+        export_job
+            .complete("key".to_string(), "hash".to_string(), expires)
+            .unwrap();
+        export_job.expire().unwrap();
+        assert_eq!(export_job.status, ExportStatus::Expired);
+
+        // Calling expire() again should succeed (idempotent)
+        let result = export_job.expire();
+        assert!(result.is_ok());
+        assert_eq!(export_job.status, ExportStatus::Expired);
     }
 }
