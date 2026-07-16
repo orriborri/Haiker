@@ -404,9 +404,13 @@ impl ExportJobBuilder {
             .object_storage_key
             .unwrap_or_else(|| format!("exports/{}/{}.gpx", self.owner_id.0, job.id.0));
         let checksum = self.checksum.unwrap_or_else(|| "a".repeat(64));
-        let expires_at = self
-            .expires_at
-            .unwrap_or_else(|| Utc::now() + chrono::Duration::hours(24));
+        let expires_at = self.expires_at.unwrap_or_else(|| {
+            if self.target_status == ExportStatus::Expired {
+                Utc::now() - chrono::Duration::hours(1)
+            } else {
+                Utc::now() + chrono::Duration::hours(24)
+            }
+        });
 
         match self.target_status {
             ExportStatus::Queued => {}
@@ -421,6 +425,7 @@ impl ExportJobBuilder {
                 let reason = self
                     .failure_reason
                     .unwrap_or_else(|| "test failure reason".to_string());
+                job.start_generating().unwrap();
                 job.fail(reason).unwrap();
             }
             ExportStatus::Expired => {

@@ -231,34 +231,10 @@ fn round_trip_non_ascii_activity_name_preserved() {
     // Note: the generator XML-escapes special chars, the parser unescapes them.
     let parsed_name = track.name.as_deref().expect("track name should be present");
 
-    // Verify that the key non-ASCII characters survived the round-trip
-    assert!(
-        parsed_name.contains('\u{5c71}'),
-        "Japanese character should be preserved"
-    );
-    assert!(
-        parsed_name.contains("Bergwanderung"),
-        "German word should be preserved"
-    );
-    assert!(
-        parsed_name.contains('\u{00fc}'),
-        "German umlaut should be preserved"
-    );
-    assert!(
-        parsed_name.contains('\u{00f6}'),
-        "German umlaut should be preserved"
-    );
-    assert!(
-        parsed_name.contains("<special>"),
-        "angle brackets should be unescaped by parser"
-    );
-    assert!(
-        parsed_name.contains("&"),
-        "ampersand should be unescaped by parser"
-    );
-    assert!(
-        parsed_name.contains("\"test\""),
-        "quotes should be unescaped by parser"
+    // Full string equality ensures no truncation, reordering, or extra characters
+    assert_eq!(
+        parsed_name, name,
+        "round-tripped name should exactly match the original"
     );
 }
 
