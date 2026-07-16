@@ -4,6 +4,7 @@ import { useActivity } from "./useActivity";
 import { useRecordedRoute } from "./useRecordedRoute";
 import { RouteMap } from "./RouteMap";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -36,6 +37,8 @@ export function ActivityDetailPage({ activityId }: ActivityDetailPageProps) {
     isError: routeError,
   } = useRecordedRoute(activityId);
 
+  useDocumentTitle(activity?.title ?? "Activity Detail");
+
   useEffect(() => {
     if (activity && headingRef.current) {
       headingRef.current.focus();
@@ -58,9 +61,9 @@ export function ActivityDetailPage({ activityId }: ActivityDetailPageProps) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-8">
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          <h2 className="text-lg font-medium text-gray-900">
+          <h1 className="text-lg font-medium text-gray-900">
             Failed to load activity
-          </h2>
+          </h1>
           <p className="mt-1 text-sm text-gray-500">
             {activityErr instanceof Error
               ? activityErr.message

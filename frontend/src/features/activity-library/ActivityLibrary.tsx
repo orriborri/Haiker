@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, Link } from "@tanstack/react-router";
 import { useActivities } from "./useActivities";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { EmptyState } from "@/components/EmptyState";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import type { ActivitySummary } from "@/api/client";
 
 function formatDate(dateStr: string): string {
@@ -15,48 +16,29 @@ function formatDate(dateStr: string): string {
 }
 
 function ActivityRow({ activity }: { activity: ActivitySummary }) {
-  const navigate = useNavigate();
-
-  const handleSelect = useCallback(() => {
-    void navigate({
-      to: "/activities/$activityId",
-      params: { activityId: activity.id },
-    });
-  }, [navigate, activity.id]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        handleSelect();
-      }
-    },
-    [handleSelect],
-  );
-
   return (
-    <li
-      className="flex cursor-pointer items-center gap-4 border-b border-gray-100 px-4 py-3 transition-colors hover:bg-gray-50 focus:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
-      role="button"
-      tabIndex={0}
-      onClick={handleSelect}
-      onKeyDown={handleKeyDown}
-      aria-label={`View activity: ${activity.title}`}
-    >
-      <div className="min-w-0 flex-1">
-        <h3 className="truncate text-sm font-medium text-gray-900">
-          {activity.title}
-        </h3>
-        <p className="mt-0.5 text-xs text-gray-500">
-          <span className="capitalize">{activity.activityType}</span>
-          {activity.startedAt && (
-            <>
-              {" \u00B7 "}
-              {formatDate(activity.startedAt)}
-            </>
-          )}
-        </p>
-      </div>
+    <li className="border-b border-gray-100">
+      <Link
+        to="/activities/$activityId"
+        params={{ activityId: activity.id }}
+        className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-gray-50 focus:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+        aria-label={`View activity: ${activity.title}`}
+      >
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-medium text-gray-900">
+            {activity.title}
+          </h3>
+          <p className="mt-0.5 text-xs text-gray-500">
+            <span className="capitalize">{activity.activityType}</span>
+            {activity.startedAt && (
+              <>
+                {" \u00B7 "}
+                {formatDate(activity.startedAt)}
+              </>
+            )}
+          </p>
+        </div>
+      </Link>
     </li>
   );
 }
@@ -84,6 +66,8 @@ function LoadingSkeleton() {
 }
 
 export function ActivityLibrary() {
+  useDocumentTitle("Activities");
+
   const {
     data,
     isLoading,

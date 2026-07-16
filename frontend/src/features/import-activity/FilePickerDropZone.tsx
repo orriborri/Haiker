@@ -130,8 +130,12 @@ export function FilePickerDropZone({
           Drop your GPX file here, or click to browse
         </p>
         <p className="mt-1 text-xs text-gray-500">GPX files up to 50 MB</p>
+        <label htmlFor="gpx-file-input" className="sr-only">
+          Choose a GPX file
+        </label>
         <input
           ref={inputRef}
+          id="gpx-file-input"
           type="file"
           className="hidden"
           accept=".gpx,application/gpx+xml,application/xml"
