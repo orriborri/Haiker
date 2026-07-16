@@ -659,4 +659,51 @@ mod tests {
         assert!(segments[0].is_empty());
         assert!(segments[1].is_empty());
     }
+
+    #[test]
+    fn parse_geometry_json_deeply_nested_invalid_structure() {
+        // Deeply nested invalid JSON that does not match either expected format
+        let json = serde_json::json!({
+            "deeply": {
+                "nested": {
+                    "structure": [[[{"latitude": 47.0}]]]
+                }
+            }
+        });
+
+        let result = parse_geometry_json(&json);
+        assert!(
+            result.is_err(),
+            "deeply nested invalid structure should fail"
+        );
+        assert!(result
+            .unwrap_err()
+            .contains("neither a segmented array nor a flat point array"));
+    }
+
+    #[test]
+    fn sha256_hex_empty_input() {
+        let digest = sha256_hex(b"");
+        // Known SHA-256 of empty input
+        assert_eq!(
+            digest,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn storage_key_uses_nil_uuids() {
+        let owner_id = Uuid::nil();
+        let export_job_id = Uuid::nil();
+
+        let key = storage_key(owner_id, export_job_id);
+        assert_eq!(
+            key,
+            "exports/00000000-0000-0000-0000-000000000000/00000000-0000-0000-0000-000000000000.gpx"
+        );
+        // Verify the format includes owner and export id
+        assert!(key.starts_with("exports/"));
+        assert!(key.ends_with(".gpx"));
+        assert_eq!(key.matches('/').count(), 2);
+    }
 }
