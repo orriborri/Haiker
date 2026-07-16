@@ -25,6 +25,8 @@ mod activities_dto;
 mod auth;
 mod auth_handlers;
 mod error;
+mod exports;
+mod exports_dto;
 mod health;
 mod imports;
 mod imports_dto;
@@ -160,6 +162,22 @@ async fn main() {
         )
         .with_state(route_editing_state);
 
+    // Export subsystem state (placeholder - no real persistence impl yet)
+    // TODO: Wire up real persistence and gateway implementations when available
+    let export_state = exports::ExportAppState {
+        repo: Arc::new(InMemoryExportRepoPlaceholder),
+        route_version_gateway: Arc::new(StubRouteVersionGatewayPlaceholder),
+        job_queue: None,
+    };
+
+    let export_routes = Router::new()
+        .route(
+            "/v1/activities/{activityId}/exports",
+            post(exports::post_request_export),
+        )
+        .route("/v1/exports/{exportId}", get(exports::get_export_status))
+        .with_state(export_state);
+
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
@@ -171,6 +189,7 @@ async fn main() {
         .merge(activity_routes)
         .merge(recorded_route_routes)
         .merge(route_editing_routes)
+        .merge(export_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());
@@ -224,6 +243,58 @@ impl AuditSink for AuditSinkAdapter {
                     message: format!("audit log error: {e}"),
                 },
             )?;
+        Ok(())
+    }
+}
+
+/// Placeholder in-memory export repository for the main binary.
+/// TODO: Replace with PgExportRepository once persistence layer is implemented.
+struct InMemoryExportRepoPlaceholder;
+
+#[async_trait::async_trait]
+impl haiker_app::exports::ExportRepository for InMemoryExportRepoPlaceholder {
+    async fn save(
+        &self,
+        _export_job: &haiker_app::exports::ExportJob,
+    ) -> Result<(), haiker_app::exports::ExportError> {
+        Ok(())
+    }
+
+    async fn find_by_id(
+        &self,
+        _id: haiker_app::exports::ExportJobId,
+    ) -> Result<Option<haiker_app::exports::ExportJob>, haiker_app::exports::ExportError> {
+        Ok(None)
+    }
+
+    async fn find_by_idempotency_key(
+        &self,
+        _owner_id: haiker_app::identity::UserId,
+        _key: &str,
+    ) -> Result<Option<haiker_app::exports::ExportJob>, haiker_app::exports::ExportError> {
+        Ok(None)
+    }
+
+    async fn update(
+        &self,
+        _export_job: &haiker_app::exports::ExportJob,
+    ) -> Result<(), haiker_app::exports::ExportError> {
+        Ok(())
+    }
+}
+
+/// Placeholder route version gateway for the main binary.
+/// TODO: Replace with real cross-context gateway once available.
+struct StubRouteVersionGatewayPlaceholder;
+
+#[async_trait::async_trait]
+impl haiker_app::exports::RouteVersionGateway for StubRouteVersionGatewayPlaceholder {
+    async fn verify_owned_route_version(
+        &self,
+        _activity_id: haiker_app::activity_catalog::ActivityId,
+        _route_version_id: haiker_app::route_versioning::RouteVersionId,
+        _owner_id: haiker_app::identity::UserId,
+    ) -> Result<(), haiker_app::exports::ExportError> {
         Ok(())
     }
 }
