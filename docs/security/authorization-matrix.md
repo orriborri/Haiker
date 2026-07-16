@@ -51,11 +51,7 @@ This document maps every protected API operation to its authorization requiremen
 |--------|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | POST | `/v1/imports` | Yes | N/A (creates for actor) | N/A | 401 | Yes | Yes | imports (10 RPM) |
 | GET | `/v1/imports/{id}` | Yes | Yes | 404 Not Found | 401 | No | No | reads (120 RPM) |
-| POST | `/v1/imports/{id}/completion` | Yes | Yes | **403 Forbidden** | 401 | Yes | Yes | imports (10 RPM) |
-
-### Finding: Import Completion BOLA
-
-The `POST /v1/imports/{id}/completion` endpoint returns **403 Forbidden** for cross-owner requests instead of 404 Not Found. This discloses that the import resource exists but belongs to another user. See threat-model.md HIGH-002.
+| POST | `/v1/imports/{id}/completion` | Yes | Yes | 404 Not Found | 401 | Yes | Yes | imports (10 RPM) |
 
 ---
 
@@ -74,28 +70,14 @@ The `POST /v1/imports/{id}/completion` endpoint returns **403 Forbidden** for cr
 | Method | Path | Auth Required | Ownership Check | Cross-Owner Response | Unauthenticated Response | CSRF Required | Idempotency Key | Rate Limit Category |
 |--------|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | POST | `/v1/activities/{id}/route-drafts` | Yes | Yes (activity ownership) | 404 Not Found | 401 | Yes | Yes | mutations (30 RPM) |
-| GET | `/v1/route-drafts/{id}` | Yes | Yes | **403 Forbidden** | 401 | No | No | reads (120 RPM) |
-| POST | `/v1/route-drafts/{id}/operations` | Yes | Yes | **403 Forbidden** | 401 | Yes | Yes | mutations (30 RPM) |
-| POST | `/v1/route-drafts/{id}/undo` | Yes | Yes | **403 Forbidden** | 401 | Yes | Yes | mutations (30 RPM) |
-| POST | `/v1/route-drafts/{id}/redo` | Yes | Yes | **403 Forbidden** | 401 | Yes | Yes | mutations (30 RPM) |
-| POST | `/v1/route-drafts/{id}/reset` | Yes | Yes | **403 Forbidden** | 401 | Yes | Yes | mutations (30 RPM) |
-| DELETE | `/v1/route-drafts/{id}` | Yes | Yes | **403 Forbidden** | 401 | Yes | Yes | mutations (30 RPM) |
-| POST | `/v1/route-drafts/{id}/validation` | Yes | Yes | **403 Forbidden** | 401 | Yes | Yes | mutations (30 RPM) |
-| POST | `/v1/route-drafts/{id}/publication` | Yes | Yes (via committer) | **403 Forbidden** | 401 | Yes | Yes (UUID format) | mutations (30 RPM) |
-
-### Finding: Route Draft BOLA
-
-All route-draft endpoints return **403 Forbidden** for cross-owner requests instead of 404 Not Found. This allows authenticated attackers to enumerate valid route-draft UUIDs belonging to other users. See threat-model.md HIGH-001.
-
-**Affected handlers** (all in `crates/api/src/route_editing.rs`):
-- `get_draft` (line 344)
-- `post_apply_operation` (line 376)
-- `post_undo` (line 536)
-- `post_redo` (line 590)
-- `post_reset` (line 646)
-- `delete_draft` (line 717)
-- `post_validate_draft` (line 762)
-- `post_publish_draft` (line 984)
+| GET | `/v1/route-drafts/{id}` | Yes | Yes | 404 Not Found | 401 | No | No | reads (120 RPM) |
+| POST | `/v1/route-drafts/{id}/operations` | Yes | Yes | 404 Not Found | 401 | Yes | Yes | mutations (30 RPM) |
+| POST | `/v1/route-drafts/{id}/undo` | Yes | Yes | 404 Not Found | 401 | Yes | Yes | mutations (30 RPM) |
+| POST | `/v1/route-drafts/{id}/redo` | Yes | Yes | 404 Not Found | 401 | Yes | Yes | mutations (30 RPM) |
+| POST | `/v1/route-drafts/{id}/reset` | Yes | Yes | 404 Not Found | 401 | Yes | Yes | mutations (30 RPM) |
+| DELETE | `/v1/route-drafts/{id}` | Yes | Yes | 404 Not Found | 401 | Yes | Yes | mutations (30 RPM) |
+| POST | `/v1/route-drafts/{id}/validation` | Yes | Yes | 404 Not Found | 401 | Yes | Yes | mutations (30 RPM) |
+| POST | `/v1/route-drafts/{id}/publication` | Yes | Yes (via committer) | 404 Not Found | 401 | Yes | Yes (UUID format) | mutations (30 RPM) |
 
 ---
 
@@ -108,14 +90,14 @@ All route-draft endpoints return **403 Forbidden** for cross-owner requests inst
 | Public endpoints | 2 (login, callback) |
 | Require CSRF token | 14 |
 | Require Idempotency-Key | 12 |
-| Non-disclosing cross-owner (404) | 12 |
-| Disclosing cross-owner (403) | 9 |
-| Operations with BOLA findings | 9 |
+| Non-disclosing cross-owner (404) | 21 |
+| Disclosing cross-owner (403) | 0 |
+| Operations with BOLA findings | 0 |
 
 ---
 
 ## Recommendations
 
-1. **Standardize cross-owner responses to 404** across all ownership-checked endpoints to prevent resource enumeration.
-2. **Add automated BOLA regression tests** that verify cross-owner requests receive 404 (not 403) for all ownership-checked endpoints.
+1. **Maintain non-disclosing cross-owner responses (404)** across all ownership-checked endpoints to prevent resource enumeration.
+2. **Automated BOLA regression tests** verify cross-owner requests receive 404 (not 403) for all ownership-checked endpoints.
 3. **Document the public endpoint allowlist** in the route registration code to make accidental exposure visible in code review.

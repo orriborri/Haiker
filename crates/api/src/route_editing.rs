@@ -252,6 +252,23 @@ fn extract_uuid_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError>
     Ok(key)
 }
 
+/// Construct a non-disclosing ownership error.
+///
+/// Returns a 404 NOT_FOUND ApiError with a generic "route draft not found" message.
+/// Used in all ownership checks to avoid revealing whether a resource exists when
+/// the authenticated user is not the owner (prevents resource-ID enumeration).
+fn ownership_not_found_error() -> ApiError {
+    ApiError {
+        status: StatusCode::NOT_FOUND,
+        code: "NOT_FOUND".to_string(),
+        message: "route draft not found".to_string(),
+        problem_type: Some("/problems/not-found".to_string()),
+        title: Some("Not Found".to_string()),
+        request_id: None,
+        details: None,
+    }
+}
+
 /// POST /v1/activities/{activityId}/route-drafts
 ///
 /// Create a new route draft for the given activity.
@@ -355,15 +372,7 @@ pub async fn get_draft(
 
     // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
-        return Err(ApiError {
-            status: StatusCode::NOT_FOUND,
-            code: "NOT_FOUND".to_string(),
-            message: "route draft not found".to_string(),
-            problem_type: Some("/problems/not-found".to_string()),
-            title: Some("Not Found".to_string()),
-            request_id: None,
-            details: None,
-        });
+        return Err(ownership_not_found_error());
     }
 
     let response = draft_to_response(&draft);
@@ -484,15 +493,7 @@ pub async fn post_apply_operation(
 
     // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
-        return Err(ApiError {
-            status: StatusCode::NOT_FOUND,
-            code: "NOT_FOUND".to_string(),
-            message: "route draft not found".to_string(),
-            problem_type: Some("/problems/not-found".to_string()),
-            title: Some("Not Found".to_string()),
-            request_id: None,
-            details: None,
-        });
+        return Err(ownership_not_found_error());
     }
 
     let operation = body.operation.to_domain().map_err(|msg| ApiError {
@@ -551,15 +552,7 @@ pub async fn post_undo(
 
     // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
-        return Err(ApiError {
-            status: StatusCode::NOT_FOUND,
-            code: "NOT_FOUND".to_string(),
-            message: "route draft not found".to_string(),
-            problem_type: Some("/problems/not-found".to_string()),
-            title: Some("Not Found".to_string()),
-            request_id: None,
-            details: None,
-        });
+        return Err(ownership_not_found_error());
     }
 
     draft
@@ -605,15 +598,7 @@ pub async fn post_redo(
 
     // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
-        return Err(ApiError {
-            status: StatusCode::NOT_FOUND,
-            code: "NOT_FOUND".to_string(),
-            message: "route draft not found".to_string(),
-            problem_type: Some("/problems/not-found".to_string()),
-            title: Some("Not Found".to_string()),
-            request_id: None,
-            details: None,
-        });
+        return Err(ownership_not_found_error());
     }
 
     draft
@@ -661,15 +646,7 @@ pub async fn post_reset(
 
     // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
-        return Err(ApiError {
-            status: StatusCode::NOT_FOUND,
-            code: "NOT_FOUND".to_string(),
-            message: "route draft not found".to_string(),
-            problem_type: Some("/problems/not-found".to_string()),
-            title: Some("Not Found".to_string()),
-            request_id: None,
-            details: None,
-        });
+        return Err(ownership_not_found_error());
     }
 
     // The draft must have a base_route_version_id to reset against
@@ -728,15 +705,7 @@ pub async fn delete_draft(
 
     // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
-        return Err(ApiError {
-            status: StatusCode::NOT_FOUND,
-            code: "NOT_FOUND".to_string(),
-            message: "route draft not found".to_string(),
-            problem_type: Some("/problems/not-found".to_string()),
-            title: Some("Not Found".to_string()),
-            request_id: None,
-            details: None,
-        });
+        return Err(ownership_not_found_error());
     }
 
     draft.discard().map_err(route_editing_error_to_api_error)?;
@@ -794,15 +763,7 @@ pub async fn post_validate_draft(
             for err in &errors {
                 match err {
                     PublicationValidationError::NotOwner => {
-                        return Err(ApiError {
-                            status: StatusCode::NOT_FOUND,
-                            code: "NOT_FOUND".to_string(),
-                            message: "route draft not found".to_string(),
-                            problem_type: Some("/problems/not-found".to_string()),
-                            title: Some("Not Found".to_string()),
-                            request_id: None,
-                            details: None,
-                        });
+                        return Err(ownership_not_found_error());
                     }
                     PublicationValidationError::DraftNotActive => {
                         return Err(ApiError {
