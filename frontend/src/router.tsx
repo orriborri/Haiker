@@ -9,6 +9,7 @@ import { ActivityLibrary } from "@/features/activity-library/ActivityLibrary";
 import { ActivityDetailPage } from "@/features/activity-detail/ActivityDetail";
 import { RouteEditor } from "@/features/route-editor/RouteEditor";
 import { ImportActivity } from "@/features/import-activity";
+import { ExportRoute } from "@/features/export-route";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 const rootRoute = createRootRoute({
@@ -56,11 +57,27 @@ const importRoute = createRoute({
   component: ImportActivity,
 });
 
+const exportSearchSchema = z.object({
+  exportId: z.string().optional(),
+  routeVersionId: z.string().optional(),
+});
+
+const exportRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/activities/$activityId/export",
+  validateSearch: exportSearchSchema,
+  component: function ExportRouteWrapper() {
+    const { activityId } = exportRoute.useParams();
+    return <ExportRoute activityId={activityId} />;
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   activityDetailRoute,
   activityEditRoute,
   importRoute,
+  exportRoute,
 ]);
 
 export const router = createRouter({ routeTree });
