@@ -59,14 +59,28 @@ async function apiFetch<T>(
 
 // Schemas
 
+const RecordedSummarySchema = z.object({
+  distance_meters: z.number().optional(),
+  elevation_gain_meters: z.number().optional(),
+  elevation_loss_meters: z.number().optional(),
+  point_count: z.number().optional(),
+  segment_count: z.number().optional(),
+});
+
+const CorrectedSummarySchema = z.object({
+  distance_meters: z.number().optional(),
+  point_count: z.number().optional(),
+  calculation_version: z.string().optional(),
+});
+
 const ActivitySummarySchema = z.object({
   id: z.string(),
   title: z.string(),
   activityType: z.string(),
   startedAt: z.string().nullable(),
   endedAt: z.string().nullable(),
-  recordedSummary: z.unknown().nullable().optional(),
-  correctedSummary: z.unknown().nullable().optional(),
+  recordedSummary: RecordedSummarySchema.nullable().optional(),
+  correctedSummary: CorrectedSummarySchema.nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -89,8 +103,8 @@ const ActivityDetailSchema = z.object({
   startedAt: z.string().nullable(),
   endedAt: z.string().nullable(),
   lifecycleState: z.string(),
-  recordedSummary: z.unknown().nullable().optional(),
-  correctedSummary: z.unknown().nullable().optional(),
+  recordedSummary: RecordedSummarySchema.nullable().optional(),
+  correctedSummary: CorrectedSummarySchema.nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -121,6 +135,8 @@ export type ActivitySummary = z.infer<typeof ActivitySummarySchema>;
 export type ActivitiesPage = z.infer<typeof ActivitiesPageSchema>;
 export type ActivityDetail = z.infer<typeof ActivityDetailSchema>;
 export type RecordedRoute = z.infer<typeof RecordedRouteSchema>;
+export type RecordedSummary = z.infer<typeof RecordedSummarySchema>;
+export type CorrectedSummary = z.infer<typeof CorrectedSummarySchema>;
 
 // API Functions
 
