@@ -2,6 +2,16 @@
 //!
 //! Provides an Axum extractor (`AuthSession`) that validates session cookies
 //! and CSRF tokens, producing an authenticated `Actor` for downstream handlers.
+//!
+//! # DEV_AUTH_ENABLED
+//!
+//! When the `DEV_AUTH_ENABLED` environment variable is set to `true` or `1`,
+//! a fallback authentication mode is activated that accepts a Bearer token
+//! containing a raw UUID as the user ID. This is strictly for local development
+//! and testing without an OIDC provider.
+//!
+//! **WARNING: DEV_AUTH_ENABLED=true MUST NOT be set in production.** It bypasses
+//! all real credential validation and allows any caller to impersonate any user.
 
 use std::sync::OnceLock;
 
@@ -93,6 +103,11 @@ where
         // Dev mode fallback: accept Bearer token as UUID user ID.
         if is_dev_auth_enabled() {
             if let Some(actor) = try_dev_bearer_auth(parts) {
+                tracing::warn!(
+                    user_id = %actor.user_id,
+                    "DEV_AUTH_ENABLED: authenticating via raw Bearer UUID. \
+                     This MUST NOT be used in production."
+                );
                 return Ok(AuthSession(actor));
             }
         }
