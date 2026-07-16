@@ -1,0 +1,51 @@
+name: Dispatch Kiro on issue close
+
+on:
+  issues:
+    types: [closed]
+
+concurrency:
+  group: kiro-issue-dispatch-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  dispatch:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: kiro-dispatch
+    steps:
+      - name: Check out the manifest and scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Verify the connected-user token is configured
+        env:
+          GH_TOKEN: ${{ secrets.KIRO_GH_TOKEN }}
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "KIRO_GH_TOKEN must contain a token for a GitHub user connected to Kiro" >&2
+            exit 1
+          fi
+
+      - name: Synchronize issue dependencies and label definitions
+        env:
+          GH_TOKEN: ${{ secrets.KIRO_GH_TOKEN }}
+        run: scripts/sync-github-issues.sh --apply
+
+      - name: Reconcile the agent-ready label on unblocked issues
+        env:
+          GH_TOKEN: ${{ secrets.KIRO_GH_TOKEN }}
+        run: scripts/label-unblocked-issues.sh --apply
+
+      - name: Dispatch at most one unblocked issue with kiro label
+        env:
+          GH_TOKEN: ${{ secrets.KIRO_GH_TOKEN }}
+        run: scripts/dispatch-kiro-issue.sh --apply --max-concurrency 1
