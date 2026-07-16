@@ -4,6 +4,7 @@
 //! and expiration.
 
 pub mod commands;
+pub mod gpx_generator;
 pub mod job_types;
 pub mod repository;
 pub mod state_machine;
@@ -22,6 +23,7 @@ use self::state_machine::ExportStatus;
 
 // Re-export key types for consumers.
 pub use self::commands::{handle_get_export, handle_request_export, RequestExportCommand};
+pub use self::gpx_generator::{generate_gpx, GpxGeneratorError, GpxGeneratorInput, GpxPoint};
 pub use self::job_types::{GenerateExportJob, GENERATE_EXPORT_JOB_TYPE};
 pub use self::repository::ExportRepository;
 pub use self::state_machine::ExportStatus as Status;
