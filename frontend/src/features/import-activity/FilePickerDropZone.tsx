@@ -97,6 +97,19 @@ export function FilePickerDropZone({
 
   return (
     <div className="space-y-4">
+      <label htmlFor="gpx-file-input" className="sr-only">
+        Choose a GPX file
+      </label>
+      <input
+        ref={inputRef}
+        id="gpx-file-input"
+        type="file"
+        className="hidden"
+        accept=".gpx,application/gpx+xml,application/xml"
+        onChange={handleInputChange}
+        disabled={disabled}
+        tabIndex={-1}
+      />
       <div
         className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${
           isDragOver
@@ -130,14 +143,6 @@ export function FilePickerDropZone({
           Drop your GPX file here, or click to browse
         </p>
         <p className="mt-1 text-xs text-gray-500">GPX files up to 50 MB</p>
-        <input
-          ref={inputRef}
-          type="file"
-          className="hidden"
-          accept=".gpx,application/gpx+xml,application/xml"
-          onChange={handleInputChange}
-          disabled={disabled}
-        />
       </div>
 
       {validationError && (

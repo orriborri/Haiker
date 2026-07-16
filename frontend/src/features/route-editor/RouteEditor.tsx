@@ -22,6 +22,7 @@ import {
 import { getRouteDraft } from "@/api/client";
 import { useRecordedRoute } from "@/features/activity-detail/useRecordedRoute";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { ApiError } from "@/api/client";
 import type { RoutePointDto } from "@/api/client";
 import type { Selection, RouteOperation, PendingOperation, SectionSelection } from "./types";
@@ -63,6 +64,7 @@ function recordedRouteToGeometry(
 }
 
 export function RouteEditor({ activityId }: RouteEditorProps) {
+  useDocumentTitle("Edit Route");
   const navigate = useNavigate();
   const { isOnline } = useOnlineStatus();
   const {

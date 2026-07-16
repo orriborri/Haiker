@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, Link } from "@tanstack/react-router";
 import { useActivities } from "./useActivities";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { EmptyState } from "@/components/EmptyState";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import type { ActivitySummary } from "@/api/client";
 
 function formatDate(dateStr: string): string {
@@ -104,6 +105,8 @@ function LoadingSkeleton() {
 }
 
 export function ActivityLibrary() {
+  useDocumentTitle("Activities");
+
   const {
     data,
     isLoading,

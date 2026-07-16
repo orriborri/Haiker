@@ -4,8 +4,10 @@ import { useImportActivity } from "./useImportActivity";
 import { FilePickerDropZone } from "./FilePickerDropZone";
 import { ImportProgress } from "./ImportProgress";
 import { ImportResult } from "./ImportResult";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export function ImportActivity() {
+  useDocumentTitle("Import Activity");
   const navigate = useNavigate();
   const { importId: importIdParam } = useSearch({ from: "/import" });
   const initialImportId = importIdParam ?? null;

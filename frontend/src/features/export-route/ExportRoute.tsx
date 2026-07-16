@@ -5,6 +5,7 @@ import { ExportProgress } from "./ExportProgress";
 import { ExportReady } from "./ExportReady";
 import { ExportFailed } from "./ExportFailed";
 import { ExportExpired } from "./ExportExpired";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 interface ExportRouteProps {
   activityId: string;
@@ -37,6 +38,7 @@ function getAnnouncementText(
 }
 
 export function ExportRoute({ activityId }: ExportRouteProps) {
+  useDocumentTitle("Export Route");
   const navigate = useNavigate();
   const { exportId: exportIdParam, routeVersionId: routeVersionIdParam } =
     useSearch({ from: "/activities/$activityId/export" });
