@@ -149,6 +149,22 @@ impl ObjectStorageClient {
         Ok(url)
     }
 
+    /// Generate a presigned download URL valid for the specified duration.
+    pub async fn presigned_download_url(
+        &self,
+        key: &str,
+        expires_in: Duration,
+    ) -> Result<String, ObjectStorageError> {
+        let expiry_secs = expires_in.as_secs().try_into().unwrap_or(u32::MAX);
+        let url = self
+            .bucket
+            .presign_get(key, expiry_secs, None)
+            .await
+            .map_err(|e| ObjectStorageError::Storage(e.to_string()))?;
+
+        Ok(url)
+    }
+
     /// Check whether an object exists in storage.
     pub async fn exists(&self, key: &str) -> Result<bool, ObjectStorageError> {
         match self.bucket.head_object(key).await {

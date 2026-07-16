@@ -23,7 +23,8 @@ use self::state_machine::ExportStatus;
 
 // Re-export key types for consumers.
 pub use self::commands::{
-    handle_expire_export, handle_get_export, handle_request_export, RequestExportCommand,
+    handle_download_export, handle_expire_export, handle_get_export, handle_request_export,
+    RequestExportCommand,
 };
 pub use self::gpx_generator::{generate_gpx, GpxGeneratorError, GpxGeneratorInput, GpxPoint};
 pub use self::job_types::{GenerateExportJob, GENERATE_EXPORT_JOB_TYPE};
@@ -93,6 +94,34 @@ pub trait RouteVersionGateway: Send + Sync {
 pub trait ArtifactStore: Send + Sync {
     /// Delete an artifact from storage by its key.
     async fn delete_artifact(&self, key: &str) -> Result<(), ExportError>;
+}
+
+/// Information about a generated download URL.
+#[derive(Debug, Clone)]
+pub struct DownloadInfo {
+    /// The presigned download URL.
+    pub url: String,
+    /// When the presigned URL expires.
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Trait for generating short-lived presigned download URLs.
+///
+/// Abstracts the URL generation so domain/API code does not depend on
+/// infrastructure directly.
+#[async_trait]
+pub trait DownloadUrlGenerator: Send + Sync {
+    /// Generate a presigned download URL for the given object key.
+    ///
+    /// The generated URL should set content-disposition to the provided filename
+    /// and content-type to the provided content_type.
+    async fn generate_download_url(
+        &self,
+        key: &str,
+        filename: &str,
+        content_type: &str,
+        expires_in_seconds: u64,
+    ) -> Result<DownloadInfo, ExportError>;
 }
 
 /// The ExportJob aggregate representing an export job through its lifecycle.
@@ -268,6 +297,10 @@ pub enum ExportError {
     /// The export artifact has expired and is no longer available.
     #[error("artifact expired")]
     ArtifactExpired,
+
+    /// The export is not in a ready state for download.
+    #[error("export not ready: current status is {status}")]
+    NotReady { status: String },
 }
 
 #[cfg(test)]
@@ -567,6 +600,14 @@ mod tests {
 
         let err = ExportError::ArtifactExpired;
         assert_eq!(err.to_string(), "artifact expired");
+
+        let err = ExportError::NotReady {
+            status: "queued".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "export not ready: current status is queued"
+        );
     }
 
     #[test]

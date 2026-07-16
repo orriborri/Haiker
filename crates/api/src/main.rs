@@ -189,6 +189,8 @@ async fn main() {
         repo: Arc::new(InMemoryExportRepoPlaceholder),
         route_version_gateway: Arc::new(StubRouteVersionGatewayPlaceholder),
         job_queue: None,
+        download_url_generator: None,
+        audit_sink: None,
     };
 
     let export_routes = Router::new()
@@ -197,6 +199,10 @@ async fn main() {
             post(exports::post_request_export),
         )
         .route("/v1/exports/{exportId}", get(exports::get_export_status))
+        .route(
+            "/v1/exports/{exportId}/download",
+            get(exports::get_export_download),
+        )
         .layer(axum::Extension(RouteCategoryExtension(
             RouteCategory::Export,
         )))

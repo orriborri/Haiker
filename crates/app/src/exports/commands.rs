@@ -10,6 +10,7 @@ use crate::identity::UserId;
 use crate::route_versioning::RouteVersionId;
 
 use super::repository::ExportRepository;
+use super::state_machine::ExportStatus;
 use super::{
     ArtifactStore, ExportError, ExportFormat, ExportJob, ExportJobId, RouteVersionGateway,
 };
@@ -150,6 +151,44 @@ pub async fn handle_expire_export(
     repo.update(&export_job).await?;
 
     Ok(())
+}
+
+/// Handle download export authorization and validation.
+///
+/// Loads the export, verifies the caller is the owner, checks that the export
+/// is in Ready state and has not expired. Returns the ExportJob on success so
+/// the caller can use its object_storage_key, checksum, and other fields to
+/// construct the download response.
+pub async fn handle_download_export(
+    export_id: ExportJobId,
+    caller_id: UserId,
+    repo: &dyn ExportRepository,
+) -> Result<ExportJob, ExportError> {
+    let export_job = repo
+        .find_by_id(export_id)
+        .await?
+        .ok_or(ExportError::NotFound)?;
+
+    // Owner check: return NotFound to avoid leaking existence
+    if export_job.requested_by != caller_id {
+        return Err(ExportError::NotFound);
+    }
+
+    // Status check: must be Ready
+    if export_job.status != ExportStatus::Ready {
+        return Err(ExportError::NotReady {
+            status: export_job.status.to_string(),
+        });
+    }
+
+    // Expiry check: if expires_at is set and in the past, the artifact is expired
+    if let Some(expires_at) = export_job.expires_at {
+        if expires_at <= chrono::Utc::now() {
+            return Err(ExportError::ArtifactExpired);
+        }
+    }
+
+    Ok(export_job)
 }
 
 #[cfg(test)]
@@ -643,5 +682,164 @@ mod tests {
         // Verify the job stays in Ready state (not transitioned)
         let updated = repo.find_by_id(export_job.id).await.unwrap().unwrap();
         assert_eq!(updated.status, ExportStatus::Ready);
+    }
+
+    // ===== handle_download_export tests =====
+
+    #[tokio::test]
+    async fn download_export_happy_path_returns_export_job() {
+        let repo = InMemoryExportRepo::new();
+        let gateway = FakeGatewayOk;
+        let owner = UserId::new(Uuid::new_v4());
+
+        // Create and bring to Ready state
+        let cmd = make_cmd(owner, "download-happy");
+        let mut export_job = handle_request_export(cmd, &repo, &gateway).await.unwrap();
+        export_job.start_generating().unwrap();
+        let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+        export_job
+            .complete(
+                "exports/user/file.gpx".to_string(),
+                "sha256hash".to_string(),
+                expires,
+            )
+            .unwrap();
+        repo.update(&export_job).await.unwrap();
+
+        // Download as owner should succeed
+        let result = handle_download_export(export_job.id, owner, &repo).await;
+        assert!(result.is_ok());
+        let fetched = result.unwrap();
+        assert_eq!(fetched.id, export_job.id);
+        assert_eq!(fetched.status, ExportStatus::Ready);
+        assert_eq!(
+            fetched.object_storage_key.as_deref(),
+            Some("exports/user/file.gpx")
+        );
+    }
+
+    #[tokio::test]
+    async fn download_export_owner_mismatch_returns_not_found() {
+        let repo = InMemoryExportRepo::new();
+        let gateway = FakeGatewayOk;
+        let owner = UserId::new(Uuid::new_v4());
+        let other = UserId::new(Uuid::new_v4());
+
+        let cmd = make_cmd(owner, "download-owner-mismatch");
+        let mut export_job = handle_request_export(cmd, &repo, &gateway).await.unwrap();
+        export_job.start_generating().unwrap();
+        let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+        export_job
+            .complete(
+                "exports/user/file.gpx".to_string(),
+                "hash".to_string(),
+                expires,
+            )
+            .unwrap();
+        repo.update(&export_job).await.unwrap();
+
+        // Download as different user should return NotFound
+        let result = handle_download_export(export_job.id, other, &repo).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ExportError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn download_export_queued_returns_not_ready() {
+        let repo = InMemoryExportRepo::new();
+        let gateway = FakeGatewayOk;
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = make_cmd(owner, "download-queued");
+        let _export_job = handle_request_export(cmd, &repo, &gateway).await.unwrap();
+        let export_job = repo
+            .exports
+            .lock()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+
+        let result = handle_download_export(export_job.id, owner, &repo).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ExportError::NotReady { status } => assert_eq!(status, "queued"),
+            other => panic!("expected NotReady, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_export_generating_returns_not_ready() {
+        let repo = InMemoryExportRepo::new();
+        let gateway = FakeGatewayOk;
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = make_cmd(owner, "download-generating");
+        let mut export_job = handle_request_export(cmd, &repo, &gateway).await.unwrap();
+        export_job.start_generating().unwrap();
+        repo.update(&export_job).await.unwrap();
+
+        let result = handle_download_export(export_job.id, owner, &repo).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ExportError::NotReady { status } => assert_eq!(status, "generating"),
+            other => panic!("expected NotReady, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_export_failed_returns_not_ready() {
+        let repo = InMemoryExportRepo::new();
+        let gateway = FakeGatewayOk;
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = make_cmd(owner, "download-failed");
+        let mut export_job = handle_request_export(cmd, &repo, &gateway).await.unwrap();
+        export_job.fail("some error".to_string()).unwrap();
+        repo.update(&export_job).await.unwrap();
+
+        let result = handle_download_export(export_job.id, owner, &repo).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ExportError::NotReady { status } => assert_eq!(status, "failed"),
+            other => panic!("expected NotReady, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_export_expired_returns_artifact_expired() {
+        let repo = InMemoryExportRepo::new();
+        let gateway = FakeGatewayOk;
+        let owner = UserId::new(Uuid::new_v4());
+
+        let cmd = make_cmd(owner, "download-expired");
+        let mut export_job = handle_request_export(cmd, &repo, &gateway).await.unwrap();
+        export_job.start_generating().unwrap();
+        // Set expires_at to the past
+        let expired_at = chrono::Utc::now() - chrono::Duration::hours(1);
+        export_job
+            .complete(
+                "exports/user/expired.gpx".to_string(),
+                "hash".to_string(),
+                expired_at,
+            )
+            .unwrap();
+        repo.update(&export_job).await.unwrap();
+
+        let result = handle_download_export(export_job.id, owner, &repo).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ExportError::ArtifactExpired));
+    }
+
+    #[tokio::test]
+    async fn download_export_not_found_returns_not_found() {
+        let repo = InMemoryExportRepo::new();
+        let owner = UserId::new(Uuid::new_v4());
+        let fake_id = ExportJobId::generate();
+
+        let result = handle_download_export(fake_id, owner, &repo).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ExportError::NotFound));
     }
 }
