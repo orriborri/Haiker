@@ -8,11 +8,13 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use haiker_app::activity_catalog::{Activity, ActivityId, ActivityTitle, ActivityType};
+use haiker_app::exports;
 use haiker_app::identity::{Actor, UserId};
 use haiker_app::imports::checksum::Checksum;
 use haiker_app::imports::state_machine::ImportStatus;
 use haiker_app::imports::{Import, ImportFormat, ImportId};
 use haiker_app::recorded_activity::SourceArtifactId;
+use haiker_app::route_versioning::RouteVersionId;
 
 /// Builder for creating `Import` domain objects with sensible defaults.
 ///
@@ -275,6 +277,163 @@ impl ActivityBuilder {
     }
 }
 
+/// Builder for creating `ExportJob` domain objects with sensible defaults.
+///
+/// # Example
+/// ```ignore
+/// let export_job = ExportJobBuilder::new()
+///     .with_status(ExportStatus::Ready)
+///     .with_owner(owner_id)
+///     .build();
+/// ```
+pub struct ExportJobBuilder {
+    owner_id: UserId,
+    activity_id: ActivityId,
+    route_version_id: RouteVersionId,
+    format: exports::ExportFormat,
+    idempotency_key: String,
+    payload_hash: Option<String>,
+    target_status: exports::state_machine::ExportStatus,
+    object_storage_key: Option<String>,
+    checksum: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+    failure_reason: Option<String>,
+}
+
+impl Default for ExportJobBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ExportJobBuilder {
+    /// Create a new ExportJobBuilder with default values.
+    pub fn new() -> Self {
+        Self {
+            owner_id: UserId::new(Uuid::new_v4()),
+            activity_id: ActivityId::new(Uuid::new_v4()),
+            route_version_id: RouteVersionId::new(Uuid::new_v4()),
+            format: exports::ExportFormat::Gpx,
+            idempotency_key: Uuid::new_v4().to_string(),
+            payload_hash: None,
+            target_status: exports::state_machine::ExportStatus::Queued,
+            object_storage_key: None,
+            checksum: None,
+            expires_at: None,
+            failure_reason: None,
+        }
+    }
+
+    /// Set the owner of the export job.
+    pub fn with_owner(mut self, owner_id: UserId) -> Self {
+        self.owner_id = owner_id;
+        self
+    }
+
+    /// Set the activity ID.
+    pub fn with_activity_id(mut self, activity_id: ActivityId) -> Self {
+        self.activity_id = activity_id;
+        self
+    }
+
+    /// Set the route version ID.
+    pub fn with_route_version_id(mut self, route_version_id: RouteVersionId) -> Self {
+        self.route_version_id = route_version_id;
+        self
+    }
+
+    /// Set the export format.
+    pub fn with_format(mut self, format: exports::ExportFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Set the idempotency key.
+    pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = key.into();
+        self
+    }
+
+    /// Set the target status to advance the export job to.
+    pub fn with_status(mut self, status: exports::state_machine::ExportStatus) -> Self {
+        self.target_status = status;
+        self
+    }
+
+    /// Set the object storage key (used when status is Ready or beyond).
+    pub fn with_object_storage_key(mut self, key: impl Into<String>) -> Self {
+        self.object_storage_key = Some(key.into());
+        self
+    }
+
+    /// Set the checksum (used when status is Ready or beyond).
+    pub fn with_checksum(mut self, checksum: impl Into<String>) -> Self {
+        self.checksum = Some(checksum.into());
+        self
+    }
+
+    /// Set the expiration time (used when status is Ready or beyond).
+    pub fn with_expires_at(mut self, expires_at: DateTime<Utc>) -> Self {
+        self.expires_at = Some(expires_at);
+        self
+    }
+
+    /// Set the failure reason (used when status is Failed).
+    pub fn with_failure_reason(mut self, reason: impl Into<String>) -> Self {
+        self.failure_reason = Some(reason.into());
+        self
+    }
+
+    /// Build the ExportJob, advancing through state transitions as needed.
+    ///
+    /// Panics if any transition fails (this is a test helper).
+    pub fn build(self) -> exports::ExportJob {
+        use exports::state_machine::ExportStatus;
+
+        let mut job = exports::ExportJob::new(
+            self.owner_id,
+            self.activity_id,
+            self.route_version_id,
+            self.format,
+            self.idempotency_key,
+            self.payload_hash,
+        )
+        .unwrap();
+
+        let storage_key = self
+            .object_storage_key
+            .unwrap_or_else(|| format!("exports/{}/{}.gpx", self.owner_id.0, job.id.0));
+        let checksum = self.checksum.unwrap_or_else(|| "a".repeat(64));
+        let expires_at = self
+            .expires_at
+            .unwrap_or_else(|| Utc::now() + chrono::Duration::hours(24));
+
+        match self.target_status {
+            ExportStatus::Queued => {}
+            ExportStatus::Generating => {
+                job.start_generating().unwrap();
+            }
+            ExportStatus::Ready => {
+                job.start_generating().unwrap();
+                job.complete(storage_key, checksum, expires_at).unwrap();
+            }
+            ExportStatus::Failed => {
+                let reason = self
+                    .failure_reason
+                    .unwrap_or_else(|| "test failure reason".to_string());
+                job.fail(reason).unwrap();
+            }
+            ExportStatus::Expired => {
+                job.start_generating().unwrap();
+                job.complete(storage_key, checksum, expires_at).unwrap();
+                job.expire().unwrap();
+            }
+        }
+
+        job
+    }
+}
+
 /// Helper to generate a random valid SHA-256 checksum string.
 pub fn random_checksum() -> String {
     format!("{:064x}", Uuid::new_v4().as_u128())
@@ -396,5 +555,83 @@ mod tests {
         let checksum = random_checksum();
         assert_eq!(checksum.len(), 64);
         assert!(checksum.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn export_job_builder_default_creates_queued_job() {
+        use haiker_app::exports::state_machine::ExportStatus;
+
+        let job = ExportJobBuilder::new().build();
+        assert_eq!(job.status, ExportStatus::Queued);
+        assert_eq!(job.format, haiker_app::exports::ExportFormat::Gpx);
+    }
+
+    #[test]
+    fn export_job_builder_with_status_generating() {
+        use haiker_app::exports::state_machine::ExportStatus;
+
+        let job = ExportJobBuilder::new()
+            .with_status(ExportStatus::Generating)
+            .build();
+        assert_eq!(job.status, ExportStatus::Generating);
+    }
+
+    #[test]
+    fn export_job_builder_with_status_ready() {
+        use haiker_app::exports::state_machine::ExportStatus;
+
+        let job = ExportJobBuilder::new()
+            .with_status(ExportStatus::Ready)
+            .build();
+        assert_eq!(job.status, ExportStatus::Ready);
+        assert!(job.object_storage_key.is_some());
+        assert!(job.checksum.is_some());
+        assert!(job.expires_at.is_some());
+    }
+
+    #[test]
+    fn export_job_builder_with_status_failed() {
+        use haiker_app::exports::state_machine::ExportStatus;
+
+        let job = ExportJobBuilder::new()
+            .with_status(ExportStatus::Failed)
+            .build();
+        assert_eq!(job.status, ExportStatus::Failed);
+        assert!(job.failure_reason.is_some());
+    }
+
+    #[test]
+    fn export_job_builder_with_status_expired() {
+        use haiker_app::exports::state_machine::ExportStatus;
+
+        let job = ExportJobBuilder::new()
+            .with_status(ExportStatus::Expired)
+            .build();
+        assert_eq!(job.status, ExportStatus::Expired);
+    }
+
+    #[test]
+    fn export_job_builder_with_custom_owner() {
+        let owner = test_user_id();
+        let job = ExportJobBuilder::new().with_owner(owner).build();
+        assert_eq!(job.requested_by, owner);
+    }
+
+    #[test]
+    fn export_job_builder_with_custom_route_version_id() {
+        let rv_id = RouteVersionId::new(Uuid::new_v4());
+        let job = ExportJobBuilder::new().with_route_version_id(rv_id).build();
+        assert_eq!(job.route_version_id, rv_id);
+    }
+
+    #[test]
+    fn export_job_builder_with_custom_failure_reason() {
+        use haiker_app::exports::state_machine::ExportStatus;
+
+        let job = ExportJobBuilder::new()
+            .with_status(ExportStatus::Failed)
+            .with_failure_reason("custom failure")
+            .build();
+        assert_eq!(job.failure_reason.as_deref(), Some("custom failure"));
     }
 }

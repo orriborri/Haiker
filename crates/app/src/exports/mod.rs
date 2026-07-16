@@ -716,4 +716,99 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(export_job.status, ExportStatus::Expired);
     }
+
+    #[test]
+    fn failed_export_retains_source_version_id() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        let mut export_job = ExportJob::new(
+            owner,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "key-fail-retain".to_string(),
+            None,
+        )
+        .unwrap();
+
+        export_job.fail("generation error".to_string()).unwrap();
+
+        assert_eq!(export_job.status, ExportStatus::Failed);
+        assert_eq!(
+            export_job.route_version_id, route_version_id,
+            "route_version_id must be preserved after failure"
+        );
+    }
+
+    #[test]
+    fn export_job_retry_from_queued_preserves_route_version() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        // First attempt: create job, start generating, then fail
+        let mut first_job = ExportJob::new(
+            owner,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "key-retry-1".to_string(),
+            None,
+        )
+        .unwrap();
+
+        first_job.start_generating().unwrap();
+        first_job.fail("transient error".to_string()).unwrap();
+        assert_eq!(first_job.route_version_id, route_version_id);
+
+        // Retry: create a NEW job with the same route_version_id
+        let retry_job = ExportJob::new(
+            owner,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "key-retry-2".to_string(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            retry_job.route_version_id, route_version_id,
+            "retry job must reference the same immutable route version"
+        );
+        assert_eq!(retry_job.status, ExportStatus::Queued);
+    }
+
+    #[test]
+    fn ready_export_retains_route_version_after_expiry() {
+        let owner = UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        let mut export_job = ExportJob::new(
+            owner,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "key-expire-retain".to_string(),
+            None,
+        )
+        .unwrap();
+
+        export_job.start_generating().unwrap();
+        let expires = Utc::now() + chrono::Duration::hours(24);
+        export_job
+            .complete("key".to_string(), "hash".to_string(), expires)
+            .unwrap();
+        assert_eq!(export_job.status, ExportStatus::Ready);
+
+        export_job.expire().unwrap();
+        assert_eq!(export_job.status, ExportStatus::Expired);
+        assert_eq!(
+            export_job.route_version_id, route_version_id,
+            "route_version_id must be preserved after expiry"
+        );
+    }
 }
