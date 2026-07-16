@@ -1,0 +1,136 @@
+RequestExportBody:
+  type: object
+  required:
+    - routeVersionId
+    - format
+  properties:
+    routeVersionId:
+      type: string
+      format: uuid
+      description: ID of the route version to export
+      example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    format:
+      type: string
+      description: Export file format
+      enum:
+        - gpx
+      example: "gpx"
+  additionalProperties: false
+
+ExportJobResponse:
+  type: object
+  properties:
+    exportId:
+      type: string
+      format: uuid
+      description: Unique identifier for the export job
+    activityId:
+      type: string
+      format: uuid
+      description: ID of the activity being exported
+    routeVersionId:
+      type: string
+      format: uuid
+      description: ID of the route version being exported
+    format:
+      type: string
+      description: Export file format
+      enum:
+        - gpx
+    status:
+      type: string
+      description: Current status of the export job
+      enum:
+        - queued
+        - generating
+        - ready
+        - failed
+        - expired
+    createdAt:
+      type: string
+      format: date-time
+      description: When the export job was created
+  required:
+    - exportId
+    - activityId
+    - routeVersionId
+    - format
+    - status
+    - createdAt
+
+ExportStatusResponse:
+  type: object
+  properties:
+    exportId:
+      type: string
+      format: uuid
+      description: Unique identifier for the export job
+    activityId:
+      type: string
+      format: uuid
+      description: ID of the activity being exported
+    routeVersionId:
+      type: string
+      format: uuid
+      description: ID of the route version being exported
+    format:
+      type: string
+      description: Export file format
+      enum:
+        - gpx
+    status:
+      type: string
+      description: Current status of the export job
+      enum:
+        - queued
+        - generating
+        - ready
+        - failed
+        - expired
+    failureReason:
+      type:
+        - string
+        - "null"
+      description: Human-readable failure reason (present when status is failed)
+    downloadAvailableUntil:
+      type:
+        - string
+        - "null"
+      format: date-time
+      description: When the download URL expires (present when status is ready)
+    createdAt:
+      type: string
+      format: date-time
+      description: When the export job was created
+    updatedAt:
+      type: string
+      format: date-time
+      description: When the export job was last updated
+  required:
+    - exportId
+    - activityId
+    - routeVersionId
+    - format
+    - status
+    - createdAt
+    - updatedAt
+
+ExportDownloadResponse:
+  type: object
+  properties:
+    downloadUrl:
+      type: string
+      format: uri
+      description: Temporary URL to download the export file
+    filename:
+      type: string
+      description: Suggested filename for the download
+      example: "morning-hike.gpx"
+    expiresAt:
+      type: string
+      format: date-time
+      description: When the download URL expires
+  required:
+    - downloadUrl
+    - filename
+    - expiresAt

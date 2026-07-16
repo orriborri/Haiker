@@ -1,0 +1,144 @@
+/v1/activities/{activityId}/exports:
+  post:
+    operationId: requestExport
+    summary: Request a GPX export for a route version
+    description: |
+      Initiates a GPX export for a specific route version of an activity.
+      Returns a 202 with the export job details.
+
+      Requires an Idempotency-Key header to ensure safe retries.
+    tags:
+      - Exports
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Unique key to ensure idempotent request handling
+        schema:
+          type: string
+          example: "550e8400-e29b-41d4-a716-446655440000"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/exports.yaml#/RequestExportBody"
+    responses:
+      "202":
+        description: Export job accepted
+        content:
+          application/json:
+            schema:
+              $ref: "../components/exports.yaml#/ExportJobResponse"
+      "400":
+        description: Missing Idempotency-Key header
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "401":
+        description: Missing or invalid authentication
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity or route version not found
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Validation failed (invalid route version or format)
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/exports/{exportId}:
+  get:
+    operationId: getExportStatus
+    summary: Get export job status
+    description: Returns the current status of an export job.
+    tags:
+      - Exports
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: exportId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: Current export status
+        content:
+          application/json:
+            schema:
+              $ref: "../components/exports.yaml#/ExportStatusResponse"
+      "401":
+        description: Missing or invalid authentication
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Export not found or not owned by caller
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/exports/{exportId}/download:
+  get:
+    operationId: getExportDownloadUrl
+    summary: Get export download URL
+    description: |
+      Returns a temporary download URL for a completed export.
+      Only available when the export status is "ready".
+    tags:
+      - Exports
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: exportId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: Download URL for the export file
+        content:
+          application/json:
+            schema:
+              $ref: "../components/exports.yaml#/ExportDownloadResponse"
+      "401":
+        description: Missing or invalid authentication
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Export not found or not owned by caller
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: Export is not in ready state
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
