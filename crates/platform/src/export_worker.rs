@@ -304,7 +304,12 @@ impl GenerateExportJobHandler {
                 }
                 if export_job.status == ExportStatus::Generating {
                     export_job
-                        .complete(key.clone(), checksum, expires_at)
+                        .complete_with_verified_checksum(
+                            key.clone(),
+                            checksum.clone(),
+                            checksum,
+                            expires_at,
+                        )
                         .map_err(|e| format!("failed to complete export job: {e}"))?;
                 }
                 persist_export_job(&self.pool, &export_job).await?;

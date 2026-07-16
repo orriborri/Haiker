@@ -297,13 +297,17 @@ mod tests {
             self.deleted_keys.lock().unwrap().push(key.to_string());
             Ok(())
         }
+    }
 
-        async fn verify_artifact_checksum(
-            &self,
-            _key: &str,
-            _expected_checksum: &str,
-        ) -> Result<bool, ExportError> {
-            Ok(true)
+    /// In-memory ArtifactStore that always fails on delete_artifact.
+    struct FailingArtifactStore;
+
+    #[async_trait]
+    impl ArtifactStore for FailingArtifactStore {
+        async fn delete_artifact(&self, _key: &str) -> Result<(), ExportError> {
+            Err(ExportError::PersistenceError {
+                message: "storage unavailable".to_string(),
+            })
         }
     }
 
@@ -605,5 +609,39 @@ mod tests {
         let result = handle_expire_export(fake_id, &repo, &artifact_store).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ExportError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn handle_expire_export_propagates_artifact_deletion_failure() {
+        let repo = InMemoryExportRepo::new();
+        let artifact_store = FailingArtifactStore;
+        let gateway = FakeGatewayOk;
+        let owner = UserId::new(Uuid::new_v4());
+
+        // Create and bring to Ready state
+        let cmd = make_cmd(owner, "expire-fail-delete");
+        let mut export_job = handle_request_export(cmd, &repo, &gateway).await.unwrap();
+        export_job.start_generating().unwrap();
+        let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+        export_job
+            .complete(
+                "exports/user/fail.gpx".to_string(),
+                "somehash".to_string(),
+                expires,
+            )
+            .unwrap();
+        repo.update(&export_job).await.unwrap();
+
+        // Attempt to expire - should propagate the deletion error
+        let result = handle_expire_export(export_job.id, &repo, &artifact_store).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ExportError::PersistenceError { .. }
+        ));
+
+        // Verify the job stays in Ready state (not transitioned)
+        let updated = repo.find_by_id(export_job.id).await.unwrap().unwrap();
+        assert_eq!(updated.status, ExportStatus::Ready);
     }
 }

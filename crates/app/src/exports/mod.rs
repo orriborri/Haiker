@@ -93,15 +93,6 @@ pub trait RouteVersionGateway: Send + Sync {
 pub trait ArtifactStore: Send + Sync {
     /// Delete an artifact from storage by its key.
     async fn delete_artifact(&self, key: &str) -> Result<(), ExportError>;
-
-    /// Verify the checksum of a stored artifact matches the expected value.
-    ///
-    /// Returns `true` if the checksum matches, `false` otherwise.
-    async fn verify_artifact_checksum(
-        &self,
-        key: &str,
-        expected_checksum: &str,
-    ) -> Result<bool, ExportError>;
 }
 
 /// The ExportJob aggregate representing an export job through its lifecycle.
