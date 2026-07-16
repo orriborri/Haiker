@@ -131,11 +131,11 @@ fn import_error_to_api_error(err: ImportError) -> ApiError {
             details: None,
         },
         ImportError::Unauthorized => ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this import".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "import not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
             request_id: None,
             details: None,
         },
@@ -1019,7 +1019,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_upload_wrong_owner_returns_403() {
+    async fn complete_upload_wrong_owner_returns_404() {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
@@ -1085,7 +1085,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[test]
@@ -1624,7 +1624,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn contract_post_completion_403_wrong_owner_returns_problem_detail() {
+    async fn contract_post_completion_404_wrong_owner_returns_problem_detail() {
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
@@ -1685,10 +1685,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
         let json = response_json(response).await;
-        assert_problem_detail(&json, 403);
-        assert_eq!(json["code"], "FORBIDDEN");
+        assert_problem_detail(&json, 404);
+        assert_eq!(json["code"], "NOT_FOUND");
     }
 
     #[tokio::test]

@@ -142,11 +142,11 @@ fn export_error_to_api_error(err: ExportError) -> ApiError {
             details: None,
         },
         ExportError::Unauthorized => ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this export".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "export not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
             request_id: None,
             details: None,
         },
@@ -1629,6 +1629,28 @@ mod tests {
                 Request::builder()
                     .method("GET")
                     .uri(format!("/v1/exports/{random_id}/download"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 401);
+        assert_eq!(json["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn get_export_status_without_auth_returns_401() {
+        let app = test_app();
+        let random_id = Uuid::new_v4();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{random_id}"))
                     .body(Body::empty())
                     .unwrap(),
             )
