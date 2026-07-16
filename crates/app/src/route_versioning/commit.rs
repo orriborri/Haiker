@@ -40,6 +40,8 @@ pub struct PublicationResult {
     pub version_number: i32,
     /// The draft that was published.
     pub draft_id: RouteDraftId,
+    /// The corrected statistics computed during publication (as JSON for the API layer).
+    pub corrected_statistics_json: serde_json::Value,
 }
 
 /// Trait for committing a route version publication in a single transaction.
@@ -94,6 +96,11 @@ mod tests {
             route_version_id: RouteVersionId::generate(),
             version_number: 2,
             draft_id: RouteDraftId::new(Uuid::new_v4()),
+            corrected_statistics_json: serde_json::json!({
+                "distance_meters": 1234.5,
+                "point_count": 10,
+                "calculation_version": "v1.0"
+            }),
         };
 
         assert_eq!(result.version_number, 2);

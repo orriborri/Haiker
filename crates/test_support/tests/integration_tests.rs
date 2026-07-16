@@ -102,10 +102,12 @@ impl ImportRepository for InMemoryRepo {
     }
 }
 
+/// Maps (owner_id, checksum) -> (import_id, activity_id) to enforce
+/// owner-scoped duplicate detection matching production behavior.
+type ChecksumRegistry = HashMap<(UserId, String), (ImportId, Option<ActivityId>)>;
+
 struct InMemoryDuplicateChecker {
-    /// Stores (owner_id, checksum) -> (import_id, activity_id) to enforce
-    /// owner-scoped duplicate detection matching production behavior.
-    known_checksums: Mutex<HashMap<(UserId, String), (ImportId, Option<ActivityId>)>>,
+    known_checksums: Mutex<ChecksumRegistry>,
 }
 
 impl InMemoryDuplicateChecker {

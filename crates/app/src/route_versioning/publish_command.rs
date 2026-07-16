@@ -11,7 +11,7 @@ use crate::route_editing::{RouteDraftId, RouteDraftRepository, RoutePoint};
 
 use super::gateway::PublicationGateway;
 use super::repository::RouteVersionRepository;
-use super::{RouteVersion, RouteVersioningError};
+use super::{CorrectedStatistics, RouteVersion, RouteVersioningError};
 
 /// Command to publish a route draft as a new route version.
 #[derive(Debug, Clone)]
@@ -74,11 +74,7 @@ pub async fn execute_publish(
         },
     )?;
 
-    let total_distance = compute_total_distance(&flat_geometry);
-    let corrected_statistics = serde_json::json!({
-        "distance_meters": total_distance,
-        "point_count": flat_geometry.len(),
-    });
+    let corrected_statistics = CorrectedStatistics::calculate_from_geometry(&flat_geometry);
 
     // 5. Find the latest version for the activity
     let latest_version = version_repo
@@ -95,8 +91,8 @@ pub async fn execute_publish(
         draft.activity_id,
         flat_geometry,
         bounding_box,
-        corrected_statistics,
-        "v1.0".to_string(),
+        corrected_statistics.clone(),
+        corrected_statistics.calculation_version.clone(),
         command.edit_summary,
         command.actor_id,
     )?;
@@ -117,7 +113,11 @@ pub async fn execute_publish(
 
     // 9. Update activity current version pointer
     gateway
-        .update_activity_current_version(draft.activity_id, new_version.id)
+        .update_activity_current_version(
+            draft.activity_id,
+            new_version.id,
+            serde_json::to_value(&new_version.corrected_statistics).unwrap_or_default(),
+        )
         .await?;
 
     // 10. Return the new RouteVersion
@@ -137,32 +137,6 @@ fn flatten_geometry(segments: &[Vec<RoutePoint>]) -> Vec<Coordinate> {
             longitude: point.coordinate.longitude,
         })
         .collect()
-}
-
-/// Compute total distance in meters using haversine formula.
-/// This is a stub implementation for initial publication.
-fn compute_total_distance(coords: &[Coordinate]) -> f64 {
-    if coords.len() < 2 {
-        return 0.0;
-    }
-
-    let mut total = 0.0;
-    for window in coords.windows(2) {
-        total += haversine_distance(&window[0], &window[1]);
-    }
-    total
-}
-
-/// Haversine distance between two coordinates in meters.
-fn haversine_distance(a: &Coordinate, b: &Coordinate) -> f64 {
-    let r = 6_371_000.0; // Earth radius in meters
-    let lat1 = a.latitude.to_radians();
-    let lat2 = b.latitude.to_radians();
-    let dlat = (b.latitude - a.latitude).to_radians();
-    let dlon = (b.longitude - a.longitude).to_radians();
-
-    let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
-    2.0 * r * h.sqrt().asin()
 }
 
 /// Map publication validation errors to RouteVersioningError.
@@ -229,7 +203,9 @@ mod tests {
     use crate::route_editing::{
         Coordinate as EditCoordinate, RouteDraft, RouteDraftId, RoutePoint,
     };
-    use crate::route_versioning::{RouteVersion, RouteVersionId, RouteVersioningError};
+    use crate::route_versioning::{
+        CorrectedStatistics, RouteVersion, RouteVersionId, RouteVersioningError,
+    };
     use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -376,7 +352,7 @@ mod tests {
     // --- Fake PublicationGateway ---
 
     struct FakeGateway {
-        calls: Mutex<Vec<(ActivityId, RouteVersionId)>>,
+        calls: Mutex<Vec<(ActivityId, RouteVersionId, serde_json::Value)>>,
     }
 
     impl FakeGateway {
@@ -386,7 +362,7 @@ mod tests {
             }
         }
 
-        fn calls(&self) -> Vec<(ActivityId, RouteVersionId)> {
+        fn calls(&self) -> Vec<(ActivityId, RouteVersionId, serde_json::Value)> {
             self.calls.lock().unwrap().clone()
         }
     }
@@ -397,11 +373,12 @@ mod tests {
             &self,
             activity_id: ActivityId,
             route_version_id: RouteVersionId,
+            corrected_summary: serde_json::Value,
         ) -> Result<(), RouteVersioningError> {
             self.calls
                 .lock()
                 .unwrap()
-                .push((activity_id, route_version_id));
+                .push((activity_id, route_version_id, corrected_summary));
             Ok(())
         }
     }
@@ -430,7 +407,7 @@ mod tests {
                 RecCoordinate::new(47.0, 11.0).unwrap(),
                 RecCoordinate::new(47.1, 11.1).unwrap(),
             ),
-            serde_json::json!({"distance_meters": 1000.0}),
+            CorrectedStatistics::new(1000.0, 2, "v1.0".to_string()),
             "v1.0".to_string(),
             user_id,
         )
@@ -484,6 +461,8 @@ mod tests {
         assert_eq!(gateway_calls.len(), 1);
         assert_eq!(gateway_calls[0].0, activity_id);
         assert_eq!(gateway_calls[0].1, new_version.id);
+        // Verify corrected_summary was passed
+        assert!(gateway_calls[0].2.get("distance_meters").is_some());
 
         // Verify version was saved
         let saved = version_repo.saved_versions();
@@ -596,7 +575,7 @@ mod tests {
                 RecCoordinate::new(47.0, 11.0).unwrap(),
                 RecCoordinate::new(47.1, 11.1).unwrap(),
             ),
-            serde_json::json!({"distance_meters": 500.0}),
+            CorrectedStatistics::new(500.0, 2, "v1.0".to_string()),
             "v1.0".to_string(),
             Some("Previous edit".to_string()),
             owner,

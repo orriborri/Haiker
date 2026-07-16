@@ -4250,6 +4250,11 @@ impl CommitPublication for FakePublicationCommitter {
                 route_version_id: RouteVersionId::generate(),
                 version_number: *version_number,
                 draft_id: data.draft_id,
+                corrected_statistics_json: serde_json::json!({
+                    "distance_meters": 12345.6,
+                    "point_count": 3,
+                    "calculation_version": "v1.0"
+                }),
             }),
             FakeCommitBehavior::Error(err) => {
                 // Clone the error for returning
@@ -4400,6 +4405,11 @@ async fn publish_draft_success_returns_201() {
     assert!(json["routeVersionId"].is_string());
     assert_eq!(json["versionNumber"], 2);
     assert_eq!(json["draftId"], draft_id);
+    // Verify correctedStatistics is present in the response
+    assert!(json["correctedStatistics"].is_object());
+    assert_eq!(json["correctedStatistics"]["distanceMeters"], 12345.6);
+    assert_eq!(json["correctedStatistics"]["pointCount"], 3);
+    assert_eq!(json["correctedStatistics"]["calculationVersion"], "v1.0");
 }
 
 #[tokio::test]

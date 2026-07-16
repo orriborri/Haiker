@@ -17,6 +17,8 @@ use super::{RouteVersionId, RouteVersioningError};
 pub trait PublicationGateway: Send + Sync {
     /// Update the activity's current route version to the newly published version.
     ///
+    /// Also sets the corrected_summary on the activity for the catalog read model.
+    ///
     /// Returns:
     /// - `Ok(())` if the activity pointer was updated successfully
     /// - `Err(RouteVersioningError::ActivityNotFound)` if the activity does not exist
@@ -24,5 +26,6 @@ pub trait PublicationGateway: Send + Sync {
         &self,
         activity_id: ActivityId,
         route_version_id: RouteVersionId,
+        corrected_summary: serde_json::Value,
     ) -> Result<(), RouteVersioningError>;
 }

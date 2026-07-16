@@ -14,6 +14,10 @@ function formatDate(dateStr: string): string {
   });
 }
 
+function formatDistanceKm(meters: number): string {
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
 function ActivityRow({ activity }: { activity: ActivitySummary }) {
   const navigate = useNavigate();
 
@@ -33,6 +37,9 @@ function ActivityRow({ activity }: { activity: ActivitySummary }) {
     },
     [handleSelect],
   );
+
+  const recordedDistance = activity.recordedSummary?.distance_meters;
+  const correctedDistance = activity.correctedSummary?.distance_meters;
 
   return (
     <li
@@ -56,6 +63,19 @@ function ActivityRow({ activity }: { activity: ActivitySummary }) {
             </>
           )}
         </p>
+        {(recordedDistance != null || correctedDistance != null) && (
+          <p className="mt-0.5 text-xs text-gray-500">
+            {recordedDistance != null && (
+              <span>Recorded: {formatDistanceKm(recordedDistance)}</span>
+            )}
+            {correctedDistance != null && (
+              <>
+                {recordedDistance != null && <span>{" \u00B7 "}</span>}
+                <span>Corrected: {formatDistanceKm(correctedDistance)}</span>
+              </>
+            )}
+          </p>
+        )}
       </div>
     </li>
   );

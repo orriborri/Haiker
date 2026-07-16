@@ -1016,12 +1016,37 @@ pub async fn post_publish_draft(
         .await
         .map_err(route_versioning_error_to_api_error)?;
 
+    // Extract corrected statistics from the JSON value using typed deserialization
+    // to fail loudly on malformed data rather than silently returning zeros.
+    let corrected_stats: haiker_app::route_versioning::CorrectedStatistics =
+        serde_json::from_value(result.corrected_statistics_json.clone()).map_err(|e| {
+            tracing::error!(
+                error = %e,
+                json = %result.corrected_statistics_json,
+                "failed to deserialize corrected_statistics_json from committer"
+            );
+            ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "INTERNAL_ERROR".to_string(),
+                message: "failed to read corrected statistics from publication result".to_string(),
+                problem_type: Some("/problems/internal-error".to_string()),
+                title: Some("Internal Server Error".to_string()),
+                request_id: None,
+                details: None,
+            }
+        })?;
+
     Ok((
         StatusCode::CREATED,
         Json(PublicationResponse {
             route_version_id: result.route_version_id.0,
             version_number: result.version_number,
             draft_id: result.draft_id.0,
+            corrected_statistics: crate::route_editing_dto::CorrectedStatisticsDto {
+                distance_meters: corrected_stats.distance_meters,
+                point_count: corrected_stats.point_count,
+                calculation_version: corrected_stats.calculation_version,
+            },
         }),
     ))
 }

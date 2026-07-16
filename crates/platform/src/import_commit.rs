@@ -177,6 +177,13 @@ impl CommitImport for PgImportCommitter {
                 message: format!("failed to serialize statistics: {e}"),
             })?;
 
+        let corrected_statistics_json =
+            serde_json::to_value(&data.corrected_statistics).map_err(|e| {
+                ImportError::StorageError {
+                    message: format!("failed to serialize corrected statistics: {e}"),
+                }
+            })?;
+
         sqlx::query(
             r#"
             INSERT INTO route_versioning.route_versions (
@@ -191,7 +198,7 @@ impl CommitImport for PgImportCommitter {
         .bind(data.activity_id.0)
         .bind(&route_geometry_json)
         .bind(&route_bbox_json)
-        .bind(&statistics_json)
+        .bind(&corrected_statistics_json)
         .bind(&data.parser_version)
         .bind(data.owner_id.0)
         .execute(&mut *tx)
@@ -204,13 +211,14 @@ impl CommitImport for PgImportCommitter {
         sqlx::query(
             r#"
             UPDATE activity_catalog.activities
-            SET current_route_version_id = $2, recorded_summary_json = $3, updated_at = now()
+            SET current_route_version_id = $2, recorded_summary_json = $3, corrected_summary_json = $4, updated_at = now()
             WHERE id = $1
             "#,
         )
         .bind(data.activity_id.0)
         .bind(data.route_version_id.0)
         .bind(&statistics_json)
+        .bind(&corrected_statistics_json)
         .execute(&mut *tx)
         .await
         .map_err(|e| ImportError::StorageError {
