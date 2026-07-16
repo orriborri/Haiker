@@ -262,7 +262,7 @@ impl<'a> ImportOrchestrator<'a> {
             activity_id,
             normalized.preview_geometry.clone(),
             normalized.recorded_track.bounding_box,
-            corrected_statistics,
+            corrected_statistics.clone(),
             PARSER_VERSION.to_string(),
             owner_id,
         )
@@ -293,6 +293,7 @@ impl<'a> ImportOrchestrator<'a> {
             started_at: normalized.started_at,
             ended_at: normalized.ended_at,
             route_version_id: route_version.id,
+            corrected_statistics,
         };
 
         // Capture time spent in Committing state (before commit completes)

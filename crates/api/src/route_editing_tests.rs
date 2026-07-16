@@ -4409,6 +4409,7 @@ async fn publish_draft_success_returns_201() {
     assert!(json["correctedStatistics"].is_object());
     assert_eq!(json["correctedStatistics"]["distanceMeters"], 12345.6);
     assert_eq!(json["correctedStatistics"]["pointCount"], 3);
+    assert_eq!(json["correctedStatistics"]["calculationVersion"], "v1.0");
 }
 
 #[tokio::test]

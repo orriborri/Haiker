@@ -14,7 +14,7 @@ use crate::recorded_activity::{
     BoundingBox, Coordinate, RecordedStatistics, RecordedTrackId, SourceArtifactId,
     SourceRevisionId, TrackSegment,
 };
-use crate::route_versioning::RouteVersionId;
+use crate::route_versioning::{CorrectedStatistics, RouteVersionId};
 
 use super::ImportError;
 use super::ImportId;
@@ -59,6 +59,9 @@ pub struct ImportCommitData {
 
     // -- Route Version (route_versioning context) --
     pub route_version_id: RouteVersionId,
+
+    // -- Corrected Statistics (computed from initial geometry) --
+    pub corrected_statistics: CorrectedStatistics,
 }
 
 /// Trait for committing a fully parsed import in a single transaction.
@@ -88,7 +91,7 @@ pub trait CommitImport: Send + Sync {
 mod tests {
     use super::*;
     use crate::recorded_activity::{Coordinate, Elevation, TrackPoint};
-    use crate::route_versioning::RouteVersionId;
+    use crate::route_versioning::{CorrectedStatistics, RouteVersionId};
 
     #[test]
     fn import_commit_data_can_be_constructed() {
@@ -145,6 +148,7 @@ mod tests {
             started_at: None,
             ended_at: None,
             route_version_id: RouteVersionId::generate(),
+            corrected_statistics: CorrectedStatistics::new(1000.0, 2, "v1.0".to_string()),
         };
 
         assert_eq!(data.owner_id, owner_id);

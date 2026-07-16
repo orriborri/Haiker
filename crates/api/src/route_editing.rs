@@ -1016,17 +1016,25 @@ pub async fn post_publish_draft(
         .await
         .map_err(route_versioning_error_to_api_error)?;
 
-    // Extract corrected statistics from the JSON value
-    let distance_meters = result
-        .corrected_statistics_json
-        .get("distance_meters")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
-    let point_count = result
-        .corrected_statistics_json
-        .get("point_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+    // Extract corrected statistics from the JSON value using typed deserialization
+    // to fail loudly on malformed data rather than silently returning zeros.
+    let corrected_stats: haiker_app::route_versioning::CorrectedStatistics =
+        serde_json::from_value(result.corrected_statistics_json.clone()).map_err(|e| {
+            tracing::error!(
+                error = %e,
+                json = %result.corrected_statistics_json,
+                "failed to deserialize corrected_statistics_json from committer"
+            );
+            ApiError {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                code: "INTERNAL_ERROR".to_string(),
+                message: "failed to read corrected statistics from publication result".to_string(),
+                problem_type: Some("/problems/internal-error".to_string()),
+                title: Some("Internal Server Error".to_string()),
+                request_id: None,
+                details: None,
+            }
+        })?;
 
     Ok((
         StatusCode::CREATED,
@@ -1035,8 +1043,9 @@ pub async fn post_publish_draft(
             version_number: result.version_number,
             draft_id: result.draft_id.0,
             corrected_statistics: crate::route_editing_dto::CorrectedStatisticsDto {
-                distance_meters,
-                point_count,
+                distance_meters: corrected_stats.distance_meters,
+                point_count: corrected_stats.point_count,
+                calculation_version: corrected_stats.calculation_version,
             },
         }),
     ))

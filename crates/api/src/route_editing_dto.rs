@@ -324,4 +324,5 @@ pub struct PublicationResponse {
 pub struct CorrectedStatisticsDto {
     pub distance_meters: f64,
     pub point_count: u32,
+    pub calculation_version: String,
 }

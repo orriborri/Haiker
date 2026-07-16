@@ -388,6 +388,7 @@ CorrectedStatistics:
   required:
     - distanceMeters
     - pointCount
+    - calculationVersion
   properties:
     distanceMeters:
       type: number
@@ -397,3 +398,6 @@ CorrectedStatistics:
       type: integer
       format: int32
       description: Number of coordinate points in the corrected geometry
+    calculationVersion:
+      type: string
+      description: Algorithm version used to compute these statistics (e.g. "v1.0")

@@ -413,6 +413,13 @@ struct GeometryPoint {
 }
 
 /// Compute total distance in meters using haversine formula.
+///
+/// NOTE: This is intentionally duplicated from CorrectedStatistics::calculate_from_geometry
+/// in the domain layer. Both use the same haversine formula and Earth radius constant
+/// (6,371,000 m). The duplication exists because PgPublicationCommitter operates on
+/// raw (f64, f64) tuples loaded from the database, while the domain version operates
+/// on Coordinate value objects. If the algorithm changes (e.g., switching to Vincenty
+/// or adding altitude correction), update BOTH implementations and bump CALCULATION_VERSION.
 fn compute_total_distance(coords: &[(f64, f64)]) -> f64 {
     if coords.len() < 2 {
         return 0.0;
