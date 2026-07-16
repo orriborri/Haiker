@@ -733,4 +733,41 @@ mod tests {
         assert_eq!(RouteCategory::Read.as_str(), "read");
         assert_eq!(RouteCategory::Export.as_str(), "export");
     }
+
+    #[tokio::test]
+    async fn load_test_burst_requests_are_bounded() {
+        // Demonstrates bounded API resource use under burst:
+        // a small bucket (5 per minute) correctly rejects excess traffic.
+        let config = RateLimitConfig {
+            auth_rpm: 5,
+            ..Default::default()
+        };
+        let limiter = test_limiter(config);
+        let app = build_app(limiter, RouteCategory::Auth);
+
+        let mut passed = 0u32;
+        let mut rejected = 0u32;
+
+        for _ in 0..50 {
+            let response = app.clone().oneshot(build_request()).await.unwrap();
+            match response.status() {
+                StatusCode::OK => passed += 1,
+                StatusCode::TOO_MANY_REQUESTS => rejected += 1,
+                other => panic!("Unexpected status: {}", other),
+            }
+        }
+
+        // Exactly 5 requests should pass (the bucket capacity)
+        assert_eq!(
+            passed, 5,
+            "Expected exactly 5 requests to pass, got {}",
+            passed
+        );
+        // The remaining 45 should be rejected
+        assert_eq!(
+            rejected, 45,
+            "Expected exactly 45 rejections, got {}",
+            rejected
+        );
+    }
 }

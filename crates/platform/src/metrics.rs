@@ -151,6 +151,36 @@ pub fn record_rate_limit_decision(route_category: &str, decision: &str) {
     );
 }
 
+/// Record worker backpressure metric event.
+///
+/// Emitted when all worker job slots are occupied and a new poll cycle
+/// cannot acquire a permit.
+///
+/// Fields: active_jobs, max_concurrent.
+/// Privacy-safe: uses only low-cardinality numeric labels.
+pub fn record_worker_backpressure(active_jobs: u64, max_concurrent: u64) {
+    tracing::info!(
+        target: "metrics",
+        metric = "worker_backpressure",
+        active_jobs = active_jobs,
+        max_concurrent = max_concurrent,
+        "worker at capacity, all job slots occupied"
+    );
+}
+
+/// Record when a worker job execution is terminated due to timeout.
+///
+/// Fields: job_type.
+/// Privacy-safe: uses only the low-cardinality job_type label.
+pub fn record_worker_job_timeout(job_type: &str) {
+    tracing::info!(
+        target: "metrics",
+        metric = "worker_job_timeout",
+        job_type = %job_type,
+        "job execution timed out"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +241,17 @@ mod tests {
         record_rate_limit_decision("auth", "allowed");
         record_rate_limit_decision("read", "rejected");
         record_rate_limit_decision("mutation", "allowed");
+    }
+
+    #[test]
+    fn record_worker_backpressure_does_not_panic() {
+        record_worker_backpressure(5, 5);
+        record_worker_backpressure(0, 10);
+    }
+
+    #[test]
+    fn record_worker_job_timeout_does_not_panic() {
+        record_worker_job_timeout("parse_gpx");
+        record_worker_job_timeout("send_email");
     }
 }
