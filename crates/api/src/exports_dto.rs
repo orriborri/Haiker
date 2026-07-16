@@ -39,3 +39,14 @@ pub struct ExportStatusResponse {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+/// Response body for GET /v1/exports/{exportId}/download.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportDownloadUrlResponse {
+    pub download_url: String,
+    pub filename: String,
+    pub expires_at: DateTime<Utc>,
+    pub checksum: String,
+    pub content_type: String,
+}

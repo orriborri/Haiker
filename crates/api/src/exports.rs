@@ -1,9 +1,10 @@
 //! Export API handlers.
 //!
-//! Implements POST /v1/activities/{activityId}/exports and GET /v1/exports/{exportId}.
+//! Implements POST /v1/activities/{activityId}/exports, GET /v1/exports/{exportId},
+//! and GET /v1/exports/{exportId}/download.
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use std::sync::Arc;
@@ -11,16 +12,20 @@ use uuid::Uuid;
 
 use haiker_app::activity_catalog::ActivityId;
 use haiker_app::exports::commands::{
-    handle_get_export, handle_request_export, RequestExportCommand,
+    handle_download_export, handle_get_export, handle_request_export, RequestExportCommand,
 };
 use haiker_app::exports::job_types::{GenerateExportJob, GENERATE_EXPORT_JOB_TYPE};
 use haiker_app::exports::repository::ExportRepository;
-use haiker_app::exports::{ExportError, ExportFormat, ExportJob, ExportJobId, RouteVersionGateway};
+use haiker_app::exports::{
+    DownloadUrlGenerator, ExportError, ExportFormat, ExportJob, ExportJobId, RouteVersionGateway,
+};
 use haiker_app::route_versioning::RouteVersionId;
 
 use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
-use crate::exports_dto::{ExportStatusResponse, RequestExportRequest, RequestExportResponse};
+use crate::exports_dto::{
+    ExportDownloadUrlResponse, ExportStatusResponse, RequestExportRequest, RequestExportResponse,
+};
 use crate::imports::JobEnqueuer;
 
 /// Shared application state for export handlers.
@@ -29,7 +34,31 @@ pub struct ExportAppState {
     pub repo: Arc<dyn ExportRepository>,
     pub route_version_gateway: Arc<dyn RouteVersionGateway>,
     pub job_queue: Option<Arc<dyn JobEnqueuer>>,
+    pub download_url_generator: Option<Arc<dyn DownloadUrlGenerator>>,
+    pub audit_sink: Option<Arc<dyn ExportAuditSink>>,
 }
+
+/// Trait for audit logging within the export subsystem.
+///
+/// Abstracts the audit infrastructure so the API handler does not depend
+/// directly on the platform audit implementation.
+#[async_trait::async_trait]
+pub trait ExportAuditSink: Send + Sync {
+    /// Record an audit event for an export action.
+    async fn record(
+        &self,
+        actor_id: Uuid,
+        action: &str,
+        resource_type: &str,
+        resource_id: &str,
+    ) -> Result<(), ExportError>;
+}
+
+/// Presigned download URL time-to-live in seconds.
+///
+/// Controls how long the presigned URL remains valid after generation.
+/// Kept short to limit the exposure window if a URL is inadvertently leaked.
+const DOWNLOAD_URL_TTL_SECONDS: u64 = 300;
 
 /// Known client-safe failure reason prefixes for export errors.
 const SAFE_EXPORT_FAILURE_REASONS: &[&str] = &[
@@ -196,6 +225,15 @@ fn export_error_to_api_error(err: ExportError) -> ApiError {
             request_id: None,
             details: None,
         },
+        ExportError::NotReady { status } => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "EXPORT_NOT_READY".to_string(),
+            message: format!("export is not ready for download: current status is {status}"),
+            problem_type: Some("/problems/export-not-ready".to_string()),
+            title: Some("Export Not Ready".to_string()),
+            request_id: None,
+            details: None,
+        },
     }
 }
 
@@ -316,6 +354,158 @@ pub async fn get_export_status(
     Ok((StatusCode::OK, Json(export_to_status_response(&export_job))))
 }
 
+/// Sanitize a string into a safe filename component.
+///
+/// Keeps ASCII alphanumeric characters and hyphens, replaces everything else
+/// with hyphens, collapses consecutive hyphens, trims hyphens from both ends,
+/// truncates to max 100 characters (including extension), and defaults to "export"
+/// if the result is empty.
+fn sanitize_filename(name: &str, extension: &str) -> String {
+    let max_base_len = 100 - extension.len() - 1; // account for the dot and extension
+
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    // Collapse consecutive hyphens and trim
+    let mut result = String::new();
+    let mut prev_hyphen = false;
+    for c in sanitized.chars() {
+        if c == '-' {
+            if !prev_hyphen {
+                result.push(c);
+            }
+            prev_hyphen = true;
+        } else {
+            result.push(c);
+            prev_hyphen = false;
+        }
+    }
+
+    let result = result.trim_matches('-').to_string();
+
+    // Truncate if too long
+    let result = if result.len() > max_base_len {
+        result[..max_base_len].trim_end_matches('-').to_string()
+    } else {
+        result
+    };
+
+    // Default if empty
+    let base = if result.is_empty() {
+        "export".to_string()
+    } else {
+        result
+    };
+
+    format!("{base}.{extension}")
+}
+
+/// GET /v1/exports/{exportId}/download
+///
+/// Authorize and return a short-lived presigned download URL for the export.
+pub async fn get_export_download(
+    State(state): State<ExportAppState>,
+    actor: AuthenticatedActor,
+    Path(export_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    // Validate authorization, status, and expiry via domain command
+    let export_job = handle_download_export(
+        ExportJobId::new(export_id),
+        actor.0.user_id,
+        state.repo.as_ref(),
+    )
+    .await
+    .map_err(export_error_to_api_error)?;
+
+    // Extract required fields from the export job
+    let storage_key = export_job.object_storage_key.ok_or_else(|| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "INTERNAL_ERROR".to_string(),
+        message: "an unexpected error occurred".to_string(),
+        problem_type: Some("/problems/internal-error".to_string()),
+        title: Some("Internal Server Error".to_string()),
+        request_id: None,
+        details: None,
+    })?;
+
+    let checksum = export_job.checksum.unwrap_or_default();
+
+    // Determine content type and extension based on format
+    let (content_type, extension) = match export_job.format {
+        ExportFormat::Gpx => ("application/gpx+xml", "gpx"),
+    };
+
+    // TODO: The filename defaults to "export.gpx" because the ExportJob aggregate
+    // does not currently store the activity title. Once the domain model is extended
+    // to include the activity title, pass it here for a more descriptive filename.
+    let filename = sanitize_filename("export", extension);
+
+    // Generate presigned download URL
+    let download_url_generator = state
+        .download_url_generator
+        .as_ref()
+        .ok_or_else(|| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "INTERNAL_ERROR".to_string(),
+            message: "an unexpected error occurred".to_string(),
+            problem_type: Some("/problems/internal-error".to_string()),
+            title: Some("Internal Server Error".to_string()),
+            request_id: None,
+            details: None,
+        })?;
+
+    let download_info = download_url_generator
+        .generate_download_url(
+            &storage_key,
+            &filename,
+            content_type,
+            DOWNLOAD_URL_TTL_SECONDS,
+        )
+        .await
+        .map_err(export_error_to_api_error)?;
+
+    // Log audit event (do NOT log the URL). Fail-open for availability but
+    // emit a warning so audit pipeline failures are observable.
+    if let Some(ref audit) = state.audit_sink {
+        if let Err(e) = audit
+            .record(
+                actor.0.user_id.0,
+                "export.download",
+                "export_job",
+                &export_id.to_string(),
+            )
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                export_id = %export_id,
+                "failed to record audit event for export download"
+            );
+        }
+    }
+
+    let response = ExportDownloadUrlResponse {
+        download_url: download_info.url,
+        filename,
+        expires_at: download_info.expires_at,
+        checksum,
+        content_type: content_type.to_string(),
+    };
+
+    let mut headers = HeaderMap::new();
+    headers.insert("cache-control", HeaderValue::from_static("no-store"));
+
+    Ok((StatusCode::OK, headers, Json(response)))
+}
+
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
@@ -393,6 +583,67 @@ impl RouteVersionGateway for StubRouteVersionGateway {
     }
 }
 
+/// Fake download URL generator for testing.
+#[cfg(test)]
+pub struct FakeDownloadUrlGenerator;
+
+#[cfg(test)]
+#[async_trait]
+impl DownloadUrlGenerator for FakeDownloadUrlGenerator {
+    async fn generate_download_url(
+        &self,
+        _key: &str,
+        _filename: &str,
+        _content_type: &str,
+        expires_in_seconds: u64,
+    ) -> Result<haiker_app::exports::DownloadInfo, ExportError> {
+        let expires_at = chrono::Utc::now() + chrono::Duration::seconds(expires_in_seconds as i64);
+        Ok(haiker_app::exports::DownloadInfo {
+            url: "https://storage.example.com/presigned-download-url?token=abc123".to_string(),
+            expires_at,
+        })
+    }
+}
+
+/// Fake audit sink for testing that records calls.
+#[cfg(test)]
+pub struct FakeAuditSink {
+    records: Mutex<Vec<(Uuid, String, String, String)>>,
+}
+
+#[cfg(test)]
+impl FakeAuditSink {
+    pub fn new() -> Self {
+        Self {
+            records: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn records(&self) -> Vec<(Uuid, String, String, String)> {
+        self.records.lock().unwrap().clone()
+    }
+}
+
+#[cfg(test)]
+#[async_trait]
+impl ExportAuditSink for FakeAuditSink {
+    async fn record(
+        &self,
+        actor_id: Uuid,
+        action: &str,
+        resource_type: &str,
+        resource_id: &str,
+    ) -> Result<(), ExportError> {
+        self.records.lock().unwrap().push((
+            actor_id,
+            action.to_string(),
+            resource_type.to_string(),
+            resource_id.to_string(),
+        ));
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,6 +658,8 @@ mod tests {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
+            download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
+            audit_sink: Some(Arc::new(FakeAuditSink::new())),
         };
 
         Router::new()
@@ -415,6 +668,7 @@ mod tests {
                 post(post_request_export),
             )
             .route("/v1/exports/{exportId}", get(get_export_status))
+            .route("/v1/exports/{exportId}/download", get(get_export_download))
             .with_state(state)
     }
 
@@ -577,6 +831,8 @@ mod tests {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
+            download_url_generator: None,
+            audit_sink: None,
         };
 
         let app = Router::new()
@@ -643,6 +899,8 @@ mod tests {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
+            download_url_generator: None,
+            audit_sink: None,
         };
 
         let app = Router::new()
@@ -712,6 +970,8 @@ mod tests {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
+            download_url_generator: None,
+            audit_sink: None,
         };
 
         let app = Router::new()
@@ -808,6 +1068,8 @@ mod tests {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
+            download_url_generator: None,
+            audit_sink: None,
         };
 
         let app = Router::new()
@@ -896,6 +1158,8 @@ mod tests {
             repo,
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
+            download_url_generator: None,
+            audit_sink: None,
         };
 
         let app = Router::new()
@@ -953,6 +1217,8 @@ mod tests {
             repo,
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
+            download_url_generator: None,
+            audit_sink: None,
         };
 
         let app = Router::new()
@@ -1053,6 +1319,8 @@ mod tests {
             repo,
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
+            download_url_generator: None,
+            audit_sink: None,
         };
 
         let app = Router::new()
@@ -1095,5 +1363,437 @@ mod tests {
             !json_str.contains("exports/private/secret-key.gpx"),
             "storage key value must not appear anywhere in the response"
         );
+    }
+
+    // ===== GET /v1/exports/{exportId}/download tests =====
+
+    /// Helper to create a ready export in the given repo and return (export_job, owner_id).
+    fn create_ready_export(
+        repo: &InMemoryExportRepository,
+        storage_key: &str,
+    ) -> (ExportJob, haiker_app::identity::UserId) {
+        let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        let mut export_job = ExportJob::new(
+            owner_id,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            format!("download-test-{}", Uuid::new_v4()),
+            None,
+        )
+        .unwrap();
+        export_job.start_generating().unwrap();
+        let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+        export_job
+            .complete(
+                storage_key.to_string(),
+                "sha256-abcdef123456".to_string(),
+                expires,
+            )
+            .unwrap();
+
+        repo.exports
+            .lock()
+            .unwrap()
+            .insert(export_job.id, export_job.clone());
+
+        (export_job, owner_id)
+    }
+
+    #[tokio::test]
+    async fn download_export_happy_path_returns_200_with_expected_fields() {
+        let repo = Arc::new(InMemoryExportRepository::new());
+        let audit_sink = Arc::new(FakeAuditSink::new());
+
+        let (export_job, owner_id) = create_ready_export(&repo, "exports/user/my-export.gpx");
+
+        let state = ExportAppState {
+            repo,
+            route_version_gateway: Arc::new(StubRouteVersionGateway),
+            job_queue: None,
+            download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
+            audit_sink: Some(audit_sink.clone()),
+        };
+
+        let app = Router::new()
+            .route("/v1/exports/{exportId}/download", get(get_export_download))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{}/download", export_job.id.0))
+                    .header("Authorization", format!("Bearer {}", owner_id.0))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify Cache-Control: no-store header
+        let cache_control = response
+            .headers()
+            .get("cache-control")
+            .expect("Cache-Control header must be present")
+            .to_str()
+            .unwrap();
+        assert_eq!(cache_control, "no-store");
+
+        let json = response_json(response).await;
+
+        // Verify all expected fields
+        assert_eq!(
+            json["downloadUrl"],
+            "https://storage.example.com/presigned-download-url?token=abc123"
+        );
+        assert_eq!(json["filename"], "export.gpx");
+        assert!(json["expiresAt"].is_string());
+        assert_eq!(json["checksum"], "sha256-abcdef123456");
+        assert_eq!(json["contentType"], "application/gpx+xml");
+
+        // Verify audit was recorded
+        let records = audit_sink.records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].0, owner_id.0);
+        assert_eq!(records[0].1, "export.download");
+        assert_eq!(records[0].2, "export_job");
+        assert_eq!(records[0].3, export_job.id.0.to_string());
+    }
+
+    #[tokio::test]
+    async fn download_export_cross_owner_returns_404() {
+        let repo = Arc::new(InMemoryExportRepository::new());
+        let (export_job, _owner_id) = create_ready_export(&repo, "exports/user/file.gpx");
+
+        let state = ExportAppState {
+            repo,
+            route_version_gateway: Arc::new(StubRouteVersionGateway),
+            job_queue: None,
+            download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
+            audit_sink: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/exports/{exportId}/download", get(get_export_download))
+            .with_state(state);
+
+        let other_user = Uuid::new_v4();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{}/download", export_job.id.0))
+                    .header("Authorization", format!("Bearer {other_user}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 404);
+        assert_eq!(json["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn download_export_non_ready_returns_409() {
+        let repo = Arc::new(InMemoryExportRepository::new());
+
+        let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        // Create a queued (non-ready) export
+        let export_job = ExportJob::new(
+            owner_id,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "queued-download-test".to_string(),
+            None,
+        )
+        .unwrap();
+
+        repo.exports
+            .lock()
+            .unwrap()
+            .insert(export_job.id, export_job.clone());
+
+        let state = ExportAppState {
+            repo,
+            route_version_gateway: Arc::new(StubRouteVersionGateway),
+            job_queue: None,
+            download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
+            audit_sink: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/exports/{exportId}/download", get(get_export_download))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{}/download", export_job.id.0))
+                    .header("Authorization", format!("Bearer {}", owner_id.0))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 409);
+        assert_eq!(json["code"], "EXPORT_NOT_READY");
+    }
+
+    #[tokio::test]
+    async fn download_export_expired_returns_410() {
+        let repo = Arc::new(InMemoryExportRepository::new());
+
+        let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        let mut export_job = ExportJob::new(
+            owner_id,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "expired-download-test".to_string(),
+            None,
+        )
+        .unwrap();
+        export_job.start_generating().unwrap();
+        // Set expires_at to the past
+        let expired_at = chrono::Utc::now() - chrono::Duration::hours(1);
+        export_job
+            .complete(
+                "exports/user/expired.gpx".to_string(),
+                "hash".to_string(),
+                expired_at,
+            )
+            .unwrap();
+
+        repo.exports
+            .lock()
+            .unwrap()
+            .insert(export_job.id, export_job.clone());
+
+        let state = ExportAppState {
+            repo,
+            route_version_gateway: Arc::new(StubRouteVersionGateway),
+            job_queue: None,
+            download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
+            audit_sink: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/exports/{exportId}/download", get(get_export_download))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{}/download", export_job.id.0))
+                    .header("Authorization", format!("Bearer {}", owner_id.0))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::GONE);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 410);
+        assert_eq!(json["code"], "ARTIFACT_EXPIRED");
+    }
+
+    #[tokio::test]
+    async fn download_export_unauthenticated_returns_401() {
+        let app = test_app();
+        let random_id = Uuid::new_v4();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{random_id}/download"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 401);
+        assert_eq!(json["code"], "UNAUTHORIZED");
+    }
+
+    #[tokio::test]
+    async fn download_export_not_found_returns_404() {
+        let app = test_app();
+        let (auth_key, auth_val) = auth_header();
+        let random_id = Uuid::new_v4();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{random_id}/download"))
+                    .header(&auth_key, &auth_val)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let json = response_json(response).await;
+        assert_problem_detail(&json, 404);
+        assert_eq!(json["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn download_export_response_does_not_contain_object_storage_key() {
+        let repo = Arc::new(InMemoryExportRepository::new());
+        let storage_key = "exports/private/secret-internal-key.gpx";
+        let (export_job, owner_id) = create_ready_export(&repo, storage_key);
+
+        let state = ExportAppState {
+            repo,
+            route_version_gateway: Arc::new(StubRouteVersionGateway),
+            job_queue: None,
+            download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
+            audit_sink: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/exports/{exportId}/download", get(get_export_download))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{}/download", export_job.id.0))
+                    .header("Authorization", format!("Bearer {}", owner_id.0))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+
+        // The raw object_storage_key must NEVER appear in the response
+        let json_str = serde_json::to_string(&json).unwrap();
+        assert!(
+            !json_str.contains(storage_key),
+            "raw object_storage_key must not appear in the download response"
+        );
+        assert!(
+            json.get("objectStorageKey").is_none(),
+            "objectStorageKey field must not exist"
+        );
+        assert!(
+            json.get("object_storage_key").is_none(),
+            "object_storage_key field must not exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn download_export_audit_does_not_log_url() {
+        let repo = Arc::new(InMemoryExportRepository::new());
+        let audit_sink = Arc::new(FakeAuditSink::new());
+        let (export_job, owner_id) = create_ready_export(&repo, "exports/user/audit-test.gpx");
+
+        let state = ExportAppState {
+            repo,
+            route_version_gateway: Arc::new(StubRouteVersionGateway),
+            job_queue: None,
+            download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
+            audit_sink: Some(audit_sink.clone()),
+        };
+
+        let app = Router::new()
+            .route("/v1/exports/{exportId}/download", get(get_export_download))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{}/download", export_job.id.0))
+                    .header("Authorization", format!("Bearer {}", owner_id.0))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify audit record exists and does NOT contain the presigned URL
+        let records = audit_sink.records();
+        assert_eq!(records.len(), 1);
+        let (actor, action, resource_type, resource_id) = &records[0];
+        assert_eq!(*actor, owner_id.0);
+        assert_eq!(action, "export.download");
+        assert_eq!(resource_type, "export_job");
+        assert_eq!(*resource_id, export_job.id.0.to_string());
+        // The audit record fields should not contain a URL
+        assert!(!resource_id.contains("https://"));
+        assert!(!action.contains("https://"));
+    }
+
+    // ===== sanitize_filename unit tests =====
+
+    #[test]
+    fn sanitize_filename_basic() {
+        assert_eq!(sanitize_filename("Morning-Hike", "gpx"), "Morning-Hike.gpx");
+    }
+
+    #[test]
+    fn sanitize_filename_special_chars() {
+        assert_eq!(
+            sanitize_filename("My Hike! @#$% 2024", "gpx"),
+            "My-Hike-2024.gpx"
+        );
+    }
+
+    #[test]
+    fn sanitize_filename_empty_defaults() {
+        assert_eq!(sanitize_filename("", "gpx"), "export.gpx");
+    }
+
+    #[test]
+    fn sanitize_filename_only_special_chars() {
+        assert_eq!(sanitize_filename("!!!@@@", "gpx"), "export.gpx");
+    }
+
+    #[test]
+    fn sanitize_filename_truncates_long_names() {
+        let long_name = "a".repeat(200);
+        let result = sanitize_filename(&long_name, "gpx");
+        assert!(result.len() <= 100);
+        assert!(result.ends_with(".gpx"));
+    }
+
+    #[test]
+    fn sanitize_filename_collapses_hyphens() {
+        assert_eq!(sanitize_filename("a   b   c", "gpx"), "a-b-c.gpx");
     }
 }
