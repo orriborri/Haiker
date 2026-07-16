@@ -240,7 +240,26 @@ async fn main() {
         state_store: Arc::new(OidcStateStore::new()),
         user_repo: Arc::new(PgUserRepository::new(pool.clone())),
         session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+        cookie_secure: app_config
+            .oidc
+            .as_ref()
+            .map(|c| c.redirect_uri.starts_with("https://"))
+            .unwrap_or(true),
     };
+
+    // Warn loudly if both OIDC and dev auth are enabled simultaneously
+    if app_config.oidc.is_some() {
+        let dev_auth_enabled = std::env::var("DEV_AUTH_ENABLED")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
+        if dev_auth_enabled {
+            tracing::error!(
+                "SECURITY RISK: Both OIDC provider and DEV_AUTH_ENABLED=true are configured. \
+                 The dev auth bypass allows any caller to fabricate identity via a Bearer UUID. \
+                 This MUST NOT be used in production. Disable DEV_AUTH_ENABLED for production deployments."
+            );
+        }
+    }
 
     let auth_flow_routes = Router::new()
         .route("/auth/login", post(auth_handlers::post_login))
