@@ -479,4 +479,39 @@ mod tests {
         assert!(!xml.contains("\r\n"), "must not contain CRLF line endings");
         assert!(xml.contains('\n'), "must use LF line endings");
     }
+
+    #[test]
+    fn deterministic_fixture() {
+        let input = GpxGeneratorInput {
+            activity_name: Some("Morning Hike".to_string()),
+            segments: vec![vec![
+                GpxPoint {
+                    latitude: 47.2692124,
+                    longitude: 11.3933257,
+                    elevation: Some(574.2),
+                },
+                GpxPoint {
+                    latitude: 47.2695011,
+                    longitude: 11.3938400,
+                    elevation: Some(578.5),
+                },
+                GpxPoint {
+                    latitude: 47.2698500,
+                    longitude: 11.3942100,
+                    elevation: Some(582.0),
+                },
+            ]],
+        };
+
+        let result = generate_gpx(&input).expect("generation should succeed");
+        let expected = haiker_test_support::fixtures::expected_export_simple();
+
+        assert_eq!(
+            result,
+            expected,
+            "generated GPX must match fixture byte-for-byte.\nGenerated:\n{}\nExpected:\n{}",
+            String::from_utf8_lossy(&result),
+            String::from_utf8_lossy(expected),
+        );
+    }
 }

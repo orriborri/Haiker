@@ -59,6 +59,12 @@ pub fn excessive_depth() -> &'static [u8] {
     include_bytes!("../fixtures/excessive_depth.gpx")
 }
 
+/// Expected GPX export output for a simple known input (3 points, single segment,
+/// with elevation, activity name "Morning Hike"). Used for deterministic fixture testing.
+pub fn expected_export_simple() -> &'static [u8] {
+    include_bytes!("../fixtures/expected_export_simple.gpx")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +82,7 @@ mod tests {
         assert!(!invalid_coordinates().is_empty());
         assert!(!xxe_attack().is_empty());
         assert!(!excessive_depth().is_empty());
+        assert!(!expected_export_simple().is_empty());
     }
 
     #[test]
