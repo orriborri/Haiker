@@ -353,14 +353,14 @@ pub async fn get_draft(
         .map_err(route_editing_error_to_api_error)?
         .ok_or_else(|| route_editing_error_to_api_error(RouteEditingError::DraftNotFound))?;
 
-    // Check ownership
+    // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
         return Err(ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "route draft not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
             request_id: None,
             details: None,
         });
@@ -482,14 +482,14 @@ pub async fn post_apply_operation(
         .map_err(route_editing_error_to_api_error)?
         .ok_or_else(|| route_editing_error_to_api_error(RouteEditingError::DraftNotFound))?;
 
-    // Check ownership
+    // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
         return Err(ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "route draft not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
             request_id: None,
             details: None,
         });
@@ -549,14 +549,14 @@ pub async fn post_undo(
         .map_err(route_editing_error_to_api_error)?
         .ok_or_else(|| route_editing_error_to_api_error(RouteEditingError::DraftNotFound))?;
 
-    // Check ownership
+    // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
         return Err(ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "route draft not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
             request_id: None,
             details: None,
         });
@@ -603,14 +603,14 @@ pub async fn post_redo(
         .map_err(route_editing_error_to_api_error)?
         .ok_or_else(|| route_editing_error_to_api_error(RouteEditingError::DraftNotFound))?;
 
-    // Check ownership
+    // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
         return Err(ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "route draft not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
             request_id: None,
             details: None,
         });
@@ -659,14 +659,14 @@ pub async fn post_reset(
         .map_err(route_editing_error_to_api_error)?
         .ok_or_else(|| route_editing_error_to_api_error(RouteEditingError::DraftNotFound))?;
 
-    // Check ownership
+    // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
         return Err(ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "route draft not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
             request_id: None,
             details: None,
         });
@@ -726,14 +726,14 @@ pub async fn delete_draft(
         .map_err(route_editing_error_to_api_error)?
         .ok_or_else(|| route_editing_error_to_api_error(RouteEditingError::DraftNotFound))?;
 
-    // Check ownership
+    // Check ownership (non-disclosing: return 404 so attackers cannot enumerate resource IDs)
     if draft.owner_id != actor.0.user_id {
         return Err(ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to access this draft".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "route draft not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
             request_id: None,
             details: None,
         });
@@ -756,8 +756,7 @@ pub async fn delete_draft(
 /// modify any state and does NOT require an Idempotency-Key header.
 ///
 /// Returns 200 with `{valid: true/false, errors: [...]}` for validation results.
-/// Returns 404 if the draft is not found.
-/// Returns 403 if the caller is not the owner.
+/// Returns 404 if the draft is not found or the caller is not the owner.
 /// Returns 409 if the draft is not active or revision mismatch.
 pub async fn post_validate_draft(
     State(state): State<RouteEditingAppState>,
@@ -796,11 +795,11 @@ pub async fn post_validate_draft(
                 match err {
                     PublicationValidationError::NotOwner => {
                         return Err(ApiError {
-                            status: StatusCode::FORBIDDEN,
-                            code: "FORBIDDEN".to_string(),
-                            message: "not authorized to access this draft".to_string(),
-                            problem_type: Some("/problems/forbidden".to_string()),
-                            title: Some("Forbidden".to_string()),
+                            status: StatusCode::NOT_FOUND,
+                            code: "NOT_FOUND".to_string(),
+                            message: "route draft not found".to_string(),
+                            problem_type: Some("/problems/not-found".to_string()),
+                            title: Some("Not Found".to_string()),
                             request_id: None,
                             details: None,
                         });
@@ -897,11 +896,11 @@ fn route_versioning_error_to_api_error(err: RouteVersioningError) -> ApiError {
             details: None,
         },
         RouteVersioningError::NotAuthorized => ApiError {
-            status: StatusCode::FORBIDDEN,
-            code: "FORBIDDEN".to_string(),
-            message: "not authorized to publish this draft".to_string(),
-            problem_type: Some("/problems/forbidden".to_string()),
-            title: Some("Forbidden".to_string()),
+            status: StatusCode::NOT_FOUND,
+            code: "NOT_FOUND".to_string(),
+            message: "route draft not found".to_string(),
+            problem_type: Some("/problems/not-found".to_string()),
+            title: Some("Not Found".to_string()),
             request_id: None,
             details: None,
         },

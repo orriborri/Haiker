@@ -818,7 +818,7 @@ async fn draft_not_found_returns_404() {
 }
 
 #[tokio::test]
-async fn wrong_owner_returns_403() {
+async fn wrong_owner_returns_404() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
@@ -848,7 +848,7 @@ async fn wrong_owner_returns_403() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -2233,7 +2233,7 @@ async fn apply_delete_point_invalid_index_returns_422() {
 }
 
 #[tokio::test]
-async fn apply_move_point_another_owner_returns_403() {
+async fn apply_move_point_another_owner_returns_404() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
@@ -2275,7 +2275,7 @@ async fn apply_move_point_another_owner_returns_403() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 // --- Reset endpoint tests (server-side base geometry fetch) ---
@@ -2572,7 +2572,7 @@ async fn reset_with_stale_revision_returns_409() {
 }
 
 #[tokio::test]
-async fn reset_cross_owner_returns_403() {
+async fn reset_cross_owner_returns_404() {
     let user1 = Uuid::new_v4();
     let user2 = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
@@ -2648,7 +2648,7 @@ async fn reset_cross_owner_returns_403() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -3684,7 +3684,7 @@ async fn contract_not_found_error_matches_problem_detail_schema() {
 }
 
 #[tokio::test]
-async fn contract_forbidden_error_matches_problem_detail_schema() {
+async fn contract_cross_owner_error_matches_problem_detail_schema() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
@@ -3712,13 +3712,13 @@ async fn contract_forbidden_error_matches_problem_detail_schema() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
     let b = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
     assert_problem_detail_schema(&json);
-    assert_eq!(json["status"], 403);
+    assert_eq!(json["status"], 404);
 }
 
 #[tokio::test]
@@ -3879,7 +3879,7 @@ async fn validate_draft_not_found_returns_404() {
 }
 
 #[tokio::test]
-async fn validate_wrong_owner_returns_403() {
+async fn validate_wrong_owner_returns_404() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
@@ -3909,7 +3909,7 @@ async fn validate_wrong_owner_returns_403() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -4413,7 +4413,7 @@ async fn publish_draft_success_returns_201() {
 }
 
 #[tokio::test]
-async fn publish_draft_cross_owner_returns_403() {
+async fn publish_draft_cross_owner_returns_404() {
     let (app, _repo) = publication_test_app(FakePublicationCommitter::failing(
         RouteVersioningError::NotAuthorized,
     ));
@@ -4442,12 +4442,12 @@ async fn publish_draft_cross_owner_returns_403() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
     let b = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&b).unwrap();
-    assert_eq!(json["code"], "FORBIDDEN");
+    assert_eq!(json["code"], "NOT_FOUND");
 }
 
 #[tokio::test]
@@ -4829,7 +4829,7 @@ async fn publish_draft_without_auth_returns_401() {
 // =============================================================================
 
 #[tokio::test]
-async fn undo_cross_owner_returns_403() {
+async fn undo_cross_owner_returns_404() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
@@ -4887,11 +4887,11 @@ async fn undo_cross_owner_returns_403() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
-async fn redo_cross_owner_returns_403() {
+async fn redo_cross_owner_returns_404() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
@@ -4965,11 +4965,11 @@ async fn redo_cross_owner_returns_403() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
-async fn delete_draft_cross_owner_returns_403() {
+async fn delete_draft_cross_owner_returns_404() {
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
@@ -4999,5 +4999,5 @@ async fn delete_draft_cross_owner_returns_403() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

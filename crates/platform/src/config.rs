@@ -37,7 +37,7 @@ pub struct DatabaseConfig {
 }
 
 /// S3-compatible object storage configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct StorageConfig {
     /// Endpoint URL for the storage service.
     pub endpoint: String,
@@ -49,8 +49,19 @@ pub struct StorageConfig {
     pub secret_access_key: String,
 }
 
+impl std::fmt::Debug for StorageConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StorageConfig")
+            .field("endpoint", &self.endpoint)
+            .field("bucket", &self.bucket)
+            .field("access_key_id", &self.access_key_id)
+            .field("secret_access_key", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// OIDC identity provider configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct OidcConfig {
     /// The OIDC issuer URL (e.g. https://your-tenant.auth0.com/).
     pub issuer_url: String,
@@ -60,6 +71,17 @@ pub struct OidcConfig {
     pub client_secret: String,
     /// The callback URL registered with the provider.
     pub redirect_uri: String,
+}
+
+impl std::fmt::Debug for OidcConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OidcConfig")
+            .field("issuer_url", &self.issuer_url)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"[REDACTED]")
+            .field("redirect_uri", &self.redirect_uri)
+            .finish()
+    }
 }
 
 impl AppConfig {
@@ -128,5 +150,51 @@ mod tests {
         let config = AppConfig::from_env();
         assert_eq!(config.server.port, 3000);
         assert_eq!(config.database.max_connections, 10);
+    }
+
+    #[test]
+    fn storage_config_debug_redacts_secret_access_key() {
+        let config = StorageConfig {
+            endpoint: "http://localhost:9000".to_string(),
+            bucket: "test-bucket".to_string(),
+            access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
+            secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
+        };
+        let debug_output = format!("{:?}", config);
+        assert!(
+            !debug_output.contains("wJalrXUtnFEMI"),
+            "secret_access_key must not appear in Debug output"
+        );
+        assert!(
+            debug_output.contains("[REDACTED]"),
+            "Debug output must show [REDACTED] for secret_access_key"
+        );
+        assert!(
+            debug_output.contains("AKIAIOSFODNN7EXAMPLE"),
+            "access_key_id should still appear in Debug output"
+        );
+    }
+
+    #[test]
+    fn oidc_config_debug_redacts_client_secret() {
+        let config = OidcConfig {
+            issuer_url: "https://example.auth0.com/".to_string(),
+            client_id: "my-client-id".to_string(),
+            client_secret: "super-secret-value-12345".to_string(),
+            redirect_uri: "http://localhost:3000/auth/callback".to_string(),
+        };
+        let debug_output = format!("{:?}", config);
+        assert!(
+            !debug_output.contains("super-secret-value-12345"),
+            "client_secret must not appear in Debug output"
+        );
+        assert!(
+            debug_output.contains("[REDACTED]"),
+            "Debug output must show [REDACTED] for client_secret"
+        );
+        assert!(
+            debug_output.contains("my-client-id"),
+            "client_id should still appear in Debug output"
+        );
     }
 }

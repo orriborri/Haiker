@@ -87,13 +87,13 @@ The system uses a layered authentication architecture:
 | `POST /v1/imports/{id}/completion` | **403 Forbidden** | **Yes** | **High** |
 | `GET /v1/exports/{id}` | 404 Not Found | No | Low |
 | `GET /v1/exports/{id}/download` | 404 Not Found | No | Low |
-| `GET /v1/route-drafts/{id}` | **403 Forbidden** | **Yes** | **High** |
-| `POST /v1/route-drafts/{id}/operations` | **403 Forbidden** | **Yes** | **High** |
-| `POST /v1/route-drafts/{id}/undo` | **403 Forbidden** | **Yes** | **High** |
-| `POST /v1/route-drafts/{id}/redo` | **403 Forbidden** | **Yes** | **High** |
-| `POST /v1/route-drafts/{id}/reset` | **403 Forbidden** | **Yes** | **High** |
-| `DELETE /v1/route-drafts/{id}` | **403 Forbidden** | **Yes** | **High** |
-| `POST /v1/route-drafts/{id}/validation` | **403 Forbidden** | **Yes** | **High** |
+| `GET /v1/route-drafts/{id}` | 404 Not Found | No | Low |
+| `POST /v1/route-drafts/{id}/operations` | 404 Not Found | No | Low |
+| `POST /v1/route-drafts/{id}/undo` | 404 Not Found | No | Low |
+| `POST /v1/route-drafts/{id}/redo` | 404 Not Found | No | Low |
+| `POST /v1/route-drafts/{id}/reset` | 404 Not Found | No | Low |
+| `DELETE /v1/route-drafts/{id}` | 404 Not Found | No | Low |
+| `POST /v1/route-drafts/{id}/validation` | 404 Not Found | No | Low |
 
 ### Findings
 
@@ -400,10 +400,10 @@ All API endpoints require the `AuthenticatedActor` extractor, which:
 
 | ID | Severity | Category | Description | File | Status | Owner | Target Date |
 |----|----------|----------|-------------|------|--------|-------|-------------|
-| HIGH-001 | High | BOLA | Route draft endpoints return 403 for cross-owner (discloses resource existence) | `crates/api/src/route_editing.rs:357-667` | Open | platform-team | 2025-02-14 |
+| HIGH-001 | High | BOLA | Route draft endpoints return 404 for cross-owner (non-disclosing) | `crates/api/src/route_editing.rs` | Fixed | platform-team | 2025-02-14 |
 | HIGH-002 | High | BOLA | Import completion returns 403 for cross-owner (discloses resource existence) | `crates/api/src/imports.rs:132-139` | Open | platform-team | 2025-02-14 |
-| MEDIUM-001 | Medium | Secret Exposure | StorageConfig derives Debug, could leak secret_access_key in logs | `crates/platform/src/config.rs:40` | Open | platform-team | 2025-02-14 |
-| MEDIUM-002 | Medium | Secret Exposure | OidcConfig derives Debug, could leak client_secret in logs | `crates/platform/src/config.rs:53` | Open | platform-team | 2025-02-14 |
+| MEDIUM-001 | Medium | Secret Exposure | StorageConfig custom Debug redacts secret_access_key | `crates/platform/src/config.rs:40` | Fixed | platform-team | 2025-02-14 |
+| MEDIUM-002 | Medium | Secret Exposure | OidcConfig custom Debug redacts client_secret | `crates/platform/src/config.rs:53` | Fixed | platform-team | 2025-02-14 |
 | MEDIUM-003 | Medium | XSS | Frontend stores auth_token in localStorage (XSS exfiltration risk) | `frontend/src/api/client.ts:6` | Accepted | platform-team | 2025-02-14 |
 | LOW-001 | Low | Session | 7-day session Max-Age without step-up authentication for sensitive ops | `crates/api/src/auth_handlers.rs:284` | Accepted | platform-team | - |
 | LOW-002 | Low | Rate Limit | IP-based limiting bypassable with rotating IPs | `crates/platform/src/rate_limit.rs` | Accepted | platform-team | - |
