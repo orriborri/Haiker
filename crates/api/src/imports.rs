@@ -379,8 +379,7 @@ pub async fn post_complete_upload(
                 let mut response = ApiError {
                     status: StatusCode::TOO_MANY_REQUESTS,
                     code: "QUEUE_BACKPRESSURE".to_string(),
-                    message: "the processing queue is at capacity, please retry later"
-                        .to_string(),
+                    message: "the processing queue is at capacity, please retry later".to_string(),
                     problem_type: Some("/problems/queue-backpressure".to_string()),
                     title: Some("Service Temporarily Overloaded".to_string()),
                     request_id: None,
