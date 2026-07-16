@@ -7,6 +7,8 @@ use haiker_platform::config::AppConfig;
 use haiker_platform::database;
 use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::object_storage::ObjectStorageClient;
+use haiker_platform::oidc::Auth0OidcProvider;
+use haiker_platform::oidc_state_store::OidcStateStore;
 use haiker_platform::publication_commit::PgPublicationCommitter;
 use haiker_platform::rate_limit::{
     rate_limit_middleware, RateLimitConfig, RateLimiter, RouteCategory, RouteCategoryExtension,
@@ -17,6 +19,7 @@ use haiker_platform::route_editing_gateways::{PgActivityGateway, PgRouteVersionG
 use haiker_platform::route_editing_persistence::PgRouteDraftRepository;
 use haiker_platform::telemetry::{self, TelemetryConfig};
 use haiker_platform::upload_quota::{UploadQuota, UploadQuotaConfig};
+use haiker_platform::user_persistence::PgUserRepository;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -204,15 +207,53 @@ async fn main() {
 
     let auth_routes = Router::new()
         .route("/me", get(auth::me))
+        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Auth)));
+
+    // Construct OIDC provider if configured
+    let oidc_provider: Option<Arc<dyn haiker_app::identity::OidcProvider>> = if let Some(
+        ref oidc_config,
+    ) = app_config.oidc
+    {
+        let domain_config = haiker_app::identity::OidcConfig {
+            issuer_url: oidc_config.issuer_url.clone(),
+            client_id: oidc_config.client_id.clone(),
+            client_secret: oidc_config.client_secret.clone(),
+            redirect_uri: oidc_config.redirect_uri.clone(),
+        };
+        match Auth0OidcProvider::from_config(&domain_config).await {
+            Ok(provider) => {
+                tracing::info!("OIDC provider configured successfully");
+                Some(Arc::new(provider))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to initialize OIDC provider; auth routes will return 503");
+                None
+            }
+        }
+    } else {
+        tracing::info!("No OIDC configuration found; auth login/callback/logout will return 503");
+        None
+    };
+
+    let auth_app_state = auth_handlers::AuthAppState {
+        oidc_provider,
+        state_store: Arc::new(OidcStateStore::new()),
+        user_repo: Arc::new(PgUserRepository::new(pool.clone())),
+        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+    };
+
+    let auth_flow_routes = Router::new()
         .route("/auth/login", post(auth_handlers::post_login))
         .route("/auth/callback", get(auth_handlers::get_callback))
         .route("/auth/logout", post(auth_handlers::post_logout))
-        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Auth)));
+        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Auth)))
+        .with_state(auth_app_state);
 
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .merge(auth_routes)
+        .merge(auth_flow_routes)
         .merge(import_routes)
         .merge(activity_routes)
         .merge(recorded_route_routes)

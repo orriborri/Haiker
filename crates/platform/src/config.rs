@@ -14,6 +14,8 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     /// Object storage configuration.
     pub storage: StorageConfig,
+    /// OIDC configuration (optional; auth routes return 503 if absent).
+    pub oidc: Option<OidcConfig>,
 }
 
 /// HTTP server configuration.
@@ -47,6 +49,19 @@ pub struct StorageConfig {
     pub secret_access_key: String,
 }
 
+/// OIDC identity provider configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OidcConfig {
+    /// The OIDC issuer URL (e.g. https://your-tenant.auth0.com/).
+    pub issuer_url: String,
+    /// OAuth2 client ID.
+    pub client_id: String,
+    /// OAuth2 client secret.
+    pub client_secret: String,
+    /// The callback URL registered with the provider.
+    pub redirect_uri: String,
+}
+
 impl AppConfig {
     /// Load configuration from environment variables.
     ///
@@ -55,6 +70,23 @@ impl AppConfig {
     pub fn from_env() -> Self {
         // Best-effort .env loading; ignore if file is missing
         let _ = dotenvy::dotenv();
+
+        let oidc = match (
+            std::env::var("OIDC_ISSUER_URL").ok(),
+            std::env::var("OIDC_CLIENT_ID").ok(),
+            std::env::var("OIDC_CLIENT_SECRET").ok(),
+            std::env::var("OIDC_REDIRECT_URI").ok(),
+        ) {
+            (Some(issuer_url), Some(client_id), Some(client_secret), Some(redirect_uri)) => {
+                Some(OidcConfig {
+                    issuer_url,
+                    client_id,
+                    client_secret,
+                    redirect_uri,
+                })
+            }
+            _ => None,
+        };
 
         Self {
             server: ServerConfig {
@@ -82,6 +114,7 @@ impl AppConfig {
                 secret_access_key: std::env::var("STORAGE_SECRET_ACCESS_KEY")
                     .unwrap_or_else(|_| "minioadmin".to_string()),
             },
+            oidc,
         }
     }
 }
