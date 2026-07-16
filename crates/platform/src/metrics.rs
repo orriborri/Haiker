@@ -136,6 +136,21 @@ pub fn record_import_file_metrics(file_size_bytes: u64, point_count: u64) {
     );
 }
 
+/// Record a rate limit decision metric event.
+///
+/// Fields: route_category, decision.
+/// Privacy-safe: uses only low-cardinality labels (route_category, decision).
+/// No user_id, IP address, or other PII.
+pub fn record_rate_limit_decision(route_category: &str, decision: &str) {
+    tracing::info!(
+        target: "metrics",
+        metric = "rate_limit_decision",
+        route_category = %route_category,
+        decision = %decision,
+        "rate limit decision"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +204,12 @@ mod tests {
     fn record_import_file_metrics_does_not_panic() {
         record_import_file_metrics(1_048_576, 2500);
         record_import_file_metrics(0, 0);
+    }
+
+    #[test]
+    fn record_rate_limit_decision_does_not_panic() {
+        record_rate_limit_decision("auth", "allowed");
+        record_rate_limit_decision("read", "rejected");
+        record_rate_limit_decision("mutation", "allowed");
     }
 }
