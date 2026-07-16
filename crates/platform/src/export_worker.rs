@@ -373,9 +373,30 @@ impl GenerateExportJobHandler {
         };
 
         // (d) Optionally load activity name
-        let activity_name = load_activity_name(&self.pool, payload.activity_id)
-            .await
-            .unwrap_or(None);
+        let activity_name = match load_activity_name(&self.pool, payload.activity_id).await {
+            Ok(name) => name,
+            Err(e) => {
+                tracing::warn!(
+                    export_job_id = %payload.export_job_id,
+                    activity_id = %payload.activity_id,
+                    error = %e,
+                    "Failed to load activity name, proceeding without it"
+                );
+                None
+            }
+        };
+
+        // (d.1) Input size guard: prevent OOM from pathologically large geometry
+        let total_points: usize = segments.iter().map(|seg| seg.len()).sum();
+        const MAX_POINTS: usize = 500_000;
+        if total_points > MAX_POINTS {
+            let reason = format!(
+                "geometry exceeds maximum point count: {} points (limit: {})",
+                total_points, MAX_POINTS
+            );
+            self.mark_failed(payload.export_job_id, &reason).await;
+            return Err(reason.into());
+        }
 
         // (f) Generate GPX on a blocking task (CPU-bound XML serialization)
         let input = GpxGeneratorInput {
@@ -383,15 +404,33 @@ impl GenerateExportJobHandler {
             segments,
         };
 
-        let gpx_bytes = match tokio::task::spawn_blocking(move || generate_gpx(&input)).await {
-            Ok(Ok(bytes)) => bytes,
-            Ok(Err(gen_err)) => {
+        // Apply timeout from the job's configured timeout_seconds (default 300s if 0)
+        let timeout_secs = if job.timeout_seconds > 0 {
+            job.timeout_seconds as u64
+        } else {
+            300
+        };
+        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
+
+        let gpx_bytes = match tokio::time::timeout(
+            timeout_duration,
+            tokio::task::spawn_blocking(move || generate_gpx(&input)),
+        )
+        .await
+        {
+            Ok(Ok(Ok(bytes))) => bytes,
+            Ok(Ok(Err(gen_err))) => {
                 let reason = format!("GPX generation failed: {gen_err}");
                 self.mark_failed(payload.export_job_id, &reason).await;
                 return Err(reason.into());
             }
-            Err(join_err) => {
+            Ok(Err(join_err)) => {
                 let reason = format!("GPX generation task panicked: {join_err}");
+                self.mark_failed(payload.export_job_id, &reason).await;
+                return Err(reason.into());
+            }
+            Err(_elapsed) => {
+                let reason = format!("GPX generation timed out after {}s", timeout_secs);
                 self.mark_failed(payload.export_job_id, &reason).await;
                 return Err(reason.into());
             }
