@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use std::sync::Arc;
@@ -25,6 +25,8 @@ use crate::imports_dto::{
     CompleteUploadRequest, ImportStatusResponse, StartImportRequest, StartImportResponse,
 };
 
+use haiker_platform::upload_quota::UploadQuota;
+
 /// Trait for enqueueing background jobs from the API layer.
 ///
 /// This abstracts the job queue infrastructure so the API handlers
@@ -41,6 +43,10 @@ pub trait JobEnqueuer: Send + Sync {
     /// The `correlation_id` is used as a deduplication key: if an active job
     /// with the same (job_type, correlation_id) already exists, its ID is
     /// returned without creating a new job.
+    ///
+    /// Returns `Err` with a message. If the message starts with
+    /// [`BACKPRESSURE_ERROR_PREFIX`], the queue is at capacity and the caller
+    /// should respond with a 429 status.
     async fn enqueue(
         &self,
         job_type: &str,
@@ -49,6 +55,13 @@ pub trait JobEnqueuer: Send + Sync {
     ) -> Result<Uuid, String>;
 }
 
+/// Error message prefix indicating that the job queue is at capacity.
+///
+/// When a [`JobEnqueuer::enqueue`] call fails with a message starting with
+/// this prefix, the API layer should respond with HTTP 429 and a
+/// Retry-After header.
+pub const BACKPRESSURE_ERROR_PREFIX: &str = "BACKPRESSURE:";
+
 /// Shared application state for import handlers.
 #[derive(Clone)]
 pub struct ImportAppState {
@@ -56,6 +69,7 @@ pub struct ImportAppState {
     pub url_generator: Arc<dyn UploadUrlGenerator>,
     pub upload_verifier: Arc<dyn UploadVerifier>,
     pub job_queue: Option<Arc<dyn JobEnqueuer>>,
+    pub upload_quota: Option<Arc<UploadQuota>>,
 }
 
 /// Convert an Import domain model to the API response DTO.
@@ -258,6 +272,30 @@ pub async fn post_start_import(
 ) -> Result<impl IntoResponse, ApiError> {
     let idempotency_key = extract_idempotency_key(&headers)?;
 
+    // Check upload quota before proceeding.
+    if let Some(ref quota) = state.upload_quota {
+        if let Err(exceeded) = quota.check_and_increment(actor.0.user_id.0) {
+            let retry_after = exceeded.seconds_until_reset;
+            let max = quota.max_imports_per_day();
+            let mut response = ApiError {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                code: "UPLOAD_QUOTA_EXCEEDED".to_string(),
+                message: format!(
+                    "daily import limit of {max} exceeded, retry after {retry_after}s"
+                ),
+                problem_type: Some("/problems/upload-quota-exceeded".to_string()),
+                title: Some("Upload Quota Exceeded".to_string()),
+                request_id: None,
+                details: None,
+            }
+            .into_response();
+            if let Ok(val) = HeaderValue::from_str(&retry_after.to_string()) {
+                response.headers_mut().insert("retry-after", val);
+            }
+            return Ok(response);
+        }
+    }
+
     let cmd = StartImportCommand {
         owner_id: actor.0.user_id,
         idempotency_key,
@@ -276,7 +314,7 @@ pub async fn post_start_import(
         status: result.import.status.to_string(),
     };
 
-    Ok((StatusCode::ACCEPTED, Json(response)))
+    Ok((StatusCode::ACCEPTED, Json(response)).into_response())
 }
 
 /// POST /v1/imports/:import_id/completion
@@ -335,15 +373,29 @@ pub async fn post_complete_upload(
             )
             .await
             .map_err(|e| {
-                tracing::error!("failed to enqueue parsing job: {e}");
-                ApiError {
-                    status: StatusCode::INTERNAL_SERVER_ERROR,
-                    code: "JOB_ENQUEUE_FAILED".to_string(),
-                    message: "an unexpected error occurred".to_string(),
-                    problem_type: Some("/problems/internal-error".to_string()),
-                    title: Some("Internal Server Error".to_string()),
-                    request_id: None,
-                    details: None,
+                if e.starts_with(BACKPRESSURE_ERROR_PREFIX) {
+                    tracing::warn!("queue backpressure triggered for import {}", import.id.0);
+                    ApiError {
+                        status: StatusCode::TOO_MANY_REQUESTS,
+                        code: "QUEUE_BACKPRESSURE".to_string(),
+                        message: "the processing queue is at capacity, please retry later"
+                            .to_string(),
+                        problem_type: Some("/problems/queue-backpressure".to_string()),
+                        title: Some("Service Temporarily Overloaded".to_string()),
+                        request_id: None,
+                        details: None,
+                    }
+                } else {
+                    tracing::error!("failed to enqueue parsing job: {e}");
+                    ApiError {
+                        status: StatusCode::INTERNAL_SERVER_ERROR,
+                        code: "JOB_ENQUEUE_FAILED".to_string(),
+                        message: "an unexpected error occurred".to_string(),
+                        problem_type: Some("/problems/internal-error".to_string()),
+                        title: Some("Internal Server Error".to_string()),
+                        request_id: None,
+                        details: None,
+                    }
                 }
             })?;
     }
@@ -514,6 +566,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         Router::new()
@@ -798,6 +851,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -867,6 +921,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -965,6 +1020,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -1134,6 +1190,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -1374,6 +1431,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -1441,6 +1499,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -1566,6 +1625,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -1662,6 +1722,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -1750,6 +1811,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -1886,6 +1948,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -1950,6 +2013,7 @@ mod tests {
                 ImportError::ObjectNotFound,
             )),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -2026,6 +2090,7 @@ mod tests {
                 },
             )),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -2122,6 +2187,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -2203,6 +2269,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -2264,6 +2331,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -2312,6 +2380,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -2492,6 +2561,7 @@ mod tests {
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
+            upload_quota: None,
         };
 
         let app = Router::new()
@@ -2520,5 +2590,351 @@ mod tests {
             json.get("failureCode").is_none() || json["failureCode"].is_null(),
             "failureCode should be absent when not set"
         );
+    }
+
+    // ===== Upload quota tests =====
+
+    #[tokio::test]
+    async fn post_start_import_over_quota_returns_429() {
+        use haiker_platform::upload_quota::{UploadQuota, UploadQuotaConfig};
+
+        let quota = Arc::new(UploadQuota::new(&UploadQuotaConfig {
+            max_imports_per_day: 2,
+        }));
+
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
+            job_queue: None,
+            upload_quota: Some(quota),
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+        let body_bytes = serde_json::to_vec(&body).unwrap();
+
+        // First two requests should succeed (quota is 2).
+        for i in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/imports")
+                        .header("Authorization", &auth_val)
+                        .header("content-type", "application/json")
+                        .header("idempotency-key", format!("quota-key-{i}"))
+                        .body(Body::from(body_bytes.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::ACCEPTED,
+                "Request {i} should succeed"
+            );
+        }
+
+        // Third request should be rejected with 429.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "quota-key-over")
+                    .body(Body::from(body_bytes))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(response.headers().contains_key("retry-after"));
+
+        let json = response_json(response).await;
+        assert_eq!(json["type"], "/problems/upload-quota-exceeded");
+        assert_eq!(json["title"], "Upload Quota Exceeded");
+        assert_eq!(json["code"], "UPLOAD_QUOTA_EXCEEDED");
+        assert_eq!(json["status"], 429);
+        assert!(json["detail"]
+            .as_str()
+            .unwrap()
+            .contains("daily import limit"));
+    }
+
+    #[tokio::test]
+    async fn post_start_import_different_users_have_independent_quotas() {
+        use haiker_platform::upload_quota::{UploadQuota, UploadQuotaConfig};
+
+        let quota = Arc::new(UploadQuota::new(&UploadQuotaConfig {
+            max_imports_per_day: 1,
+        }));
+
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
+            job_queue: None,
+            upload_quota: Some(quota),
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .with_state(state);
+
+        let user1 = Uuid::new_v4();
+        let user2 = Uuid::new_v4();
+
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+        let body_bytes = serde_json::to_vec(&body).unwrap();
+
+        // user1 uses their quota.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", format!("Bearer {user1}"))
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "user1-key")
+                    .body(Body::from(body_bytes.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        // user1 is now over quota.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", format!("Bearer {user1}"))
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "user1-key-2")
+                    .body(Body::from(body_bytes.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // user2 should still be allowed.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", format!("Bearer {user2}"))
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "user2-key")
+                    .body(Body::from(body_bytes))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    // ===== Queue backpressure tests =====
+
+    /// Mock job enqueuer that simulates backpressure by always returning
+    /// a backpressure error.
+    struct BackpressureJobEnqueuer;
+
+    #[async_trait]
+    impl JobEnqueuer for BackpressureJobEnqueuer {
+        async fn enqueue(
+            &self,
+            _job_type: &str,
+            _payload: serde_json::Value,
+            _correlation_id: Uuid,
+        ) -> Result<Uuid, String> {
+            Err(format!("{}queue is at capacity", BACKPRESSURE_ERROR_PREFIX))
+        }
+    }
+
+    /// Mock job enqueuer that always succeeds.
+    struct SuccessJobEnqueuer;
+
+    #[async_trait]
+    impl JobEnqueuer for SuccessJobEnqueuer {
+        async fn enqueue(
+            &self,
+            _job_type: &str,
+            _payload: serde_json::Value,
+            _correlation_id: Uuid,
+        ) -> Result<Uuid, String> {
+            Ok(Uuid::new_v4())
+        }
+    }
+
+    #[tokio::test]
+    async fn complete_upload_backpressure_returns_429() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
+            job_queue: Some(Arc::new(BackpressureJobEnqueuer)),
+            upload_quota: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route(
+                "/v1/imports/{import_id}/completion",
+                post(post_complete_upload),
+            )
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        // Start import.
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "backpressure-key")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        // Complete upload - should trigger backpressure 429.
+        let complete_body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{import_id}/completion"))
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&complete_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let json = response_json(response).await;
+        assert_eq!(json["type"], "/problems/queue-backpressure");
+        assert_eq!(json["title"], "Service Temporarily Overloaded");
+        assert_eq!(json["code"], "QUEUE_BACKPRESSURE");
+        assert_eq!(json["status"], 429);
+        assert!(json["detail"]
+            .as_str()
+            .unwrap()
+            .contains("queue is at capacity"));
+    }
+
+    #[tokio::test]
+    async fn complete_upload_with_successful_enqueue_returns_200() {
+        let state = ImportAppState {
+            repo: Arc::new(InMemoryImportRepository::new()),
+            url_generator: Arc::new(StubUrlGenerator),
+            upload_verifier: Arc::new(StubUploadVerifier),
+            job_queue: Some(Arc::new(SuccessJobEnqueuer)),
+            upload_quota: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/imports", post(post_start_import))
+            .route(
+                "/v1/imports/{import_id}/completion",
+                post(post_complete_upload),
+            )
+            .with_state(state);
+
+        let user_id = Uuid::new_v4();
+        let auth_val = format!("Bearer {user_id}");
+
+        // Start import.
+        let body = serde_json::json!({
+            "filename": "hike.gpx",
+            "contentType": "application/gpx+xml",
+            "fileSizeBytes": 1024
+        });
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/imports")
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "success-enqueue-key")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let start_json = response_json(response).await;
+        let import_id = start_json["importId"].as_str().unwrap();
+
+        // Complete upload - should succeed.
+        let complete_body = serde_json::json!({
+            "checksum": "a".repeat(64)
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/imports/{import_id}/completion"))
+                    .header("Authorization", &auth_val)
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::to_vec(&complete_body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["status"], "uploaded");
     }
 }

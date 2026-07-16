@@ -7,6 +7,7 @@
 pub mod activity_persistence;
 pub mod audit;
 pub mod auth_middleware;
+pub mod backpressure;
 pub mod clock;
 pub mod config;
 pub mod database;
@@ -29,4 +30,5 @@ pub mod route_editing_gateways;
 pub mod route_editing_persistence;
 pub mod session;
 pub mod telemetry;
+pub mod upload_quota;
 pub mod worker_runtime;
