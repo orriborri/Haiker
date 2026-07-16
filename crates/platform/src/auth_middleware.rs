@@ -64,29 +64,39 @@ pub enum AuthSessionError {
 
 impl IntoResponse for AuthSessionError {
     fn into_response(self) -> Response {
-        let (status, code, message) = match self {
+        let (status, code, message, problem_type, title) = match self {
             AuthSessionError::MissingCredentials => (
                 StatusCode::UNAUTHORIZED,
                 "UNAUTHORIZED",
                 "missing session credentials",
+                "/problems/unauthorized",
+                "Unauthorized",
             ),
             AuthSessionError::InvalidSession => (
                 StatusCode::UNAUTHORIZED,
                 "UNAUTHORIZED",
                 "invalid or expired session",
+                "/problems/unauthorized",
+                "Unauthorized",
             ),
             AuthSessionError::CsrfMismatch => (
                 StatusCode::FORBIDDEN,
                 "CSRF_MISMATCH",
                 "CSRF token missing or invalid",
+                "/problems/csrf-mismatch",
+                "CSRF Mismatch",
             ),
         };
 
+        let request_id = Uuid::new_v4().to_string();
+
         let body = json!({
-            "error": {
-                "code": code,
-                "message": message
-            }
+            "type": problem_type,
+            "title": title,
+            "status": status.as_u16(),
+            "code": code,
+            "detail": message,
+            "requestId": request_id
         });
 
         (status, Json(body)).into_response()

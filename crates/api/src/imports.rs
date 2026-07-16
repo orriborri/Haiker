@@ -19,12 +19,13 @@ use haiker_app::imports::job_types::ParseGpxJob;
 use haiker_app::imports::repository::ImportRepository;
 use haiker_app::imports::{Import, ImportError, ImportId};
 
-use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
 use crate::imports_dto::{
     CompleteUploadRequest, ImportStatusResponse, StartImportRequest, StartImportResponse,
 };
 
+use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_platform::session::SessionStore;
 use haiker_platform::upload_quota::UploadQuota;
 
 /// Trait for enqueueing background jobs from the API layer.
@@ -70,6 +71,13 @@ pub struct ImportAppState {
     pub upload_verifier: Arc<dyn UploadVerifier>,
     pub job_queue: Option<Arc<dyn JobEnqueuer>>,
     pub upload_quota: Option<Arc<UploadQuota>>,
+    pub session_store: SessionStore,
+}
+
+impl HasSessionStore for ImportAppState {
+    fn session_store(&self) -> &SessionStore {
+        &self.session_store
+    }
 }
 
 /// Convert an Import domain model to the API response DTO.
@@ -266,7 +274,7 @@ fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
 /// Returns 202 Accepted with the import ID and a presigned upload URL.
 pub async fn post_start_import(
     State(state): State<ImportAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     headers: HeaderMap,
     Json(body): Json<StartImportRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -324,7 +332,7 @@ pub async fn post_start_import(
 /// a background job for GPX parsing.
 pub async fn post_complete_upload(
     State(state): State<ImportAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(import_id): Path<Uuid>,
     Json(body): Json<CompleteUploadRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -413,7 +421,7 @@ pub async fn post_complete_upload(
 /// Get the current status of an import.
 pub async fn get_import_status(
     State(state): State<ImportAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(import_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let owner_id: UserId = actor.0.user_id;
@@ -565,13 +573,30 @@ mod tests {
     use axum::Router;
     use tower::ServiceExt;
 
+    /// Ensure DEV_AUTH_ENABLED is set so AuthSession accepts Bearer UUID tokens.
+    fn ensure_dev_auth() {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            std::env::set_var("DEV_AUTH_ENABLED", "true");
+        });
+    }
+
+    /// Create a dummy SessionStore for tests.
+    fn dummy_session_store() -> SessionStore {
+        let pool = sqlx::PgPool::connect_lazy("postgres://test:test@localhost/test").unwrap();
+        SessionStore::new(pool)
+    }
+
     fn test_app() -> Router {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         Router::new()
@@ -851,12 +876,14 @@ mod tests {
 
     #[tokio::test]
     async fn idempotency_key_replay_returns_same_import() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -921,12 +948,14 @@ mod tests {
 
     #[tokio::test]
     async fn full_flow_start_then_complete_then_get() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1020,12 +1049,14 @@ mod tests {
 
     #[tokio::test]
     async fn complete_upload_wrong_owner_returns_404() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1190,12 +1221,14 @@ mod tests {
 
     #[tokio::test]
     async fn idempotency_key_with_different_payload_returns_409() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1431,12 +1464,14 @@ mod tests {
 
     #[tokio::test]
     async fn contract_post_imports_409_payload_mismatch_returns_problem_detail() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1499,12 +1534,14 @@ mod tests {
 
     #[tokio::test]
     async fn contract_post_completion_200_response_matches_schema() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1625,12 +1662,14 @@ mod tests {
 
     #[tokio::test]
     async fn contract_post_completion_404_wrong_owner_returns_problem_detail() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1722,12 +1761,14 @@ mod tests {
 
     #[tokio::test]
     async fn contract_post_completion_409_invalid_state_returns_problem_detail() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1811,12 +1852,14 @@ mod tests {
 
     #[tokio::test]
     async fn contract_get_import_200_response_matches_schema() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1948,12 +1991,14 @@ mod tests {
 
     #[tokio::test]
     async fn contract_get_import_404_wrong_owner_returns_problem_detail() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2011,6 +2056,7 @@ mod tests {
 
     #[tokio::test]
     async fn contract_post_completion_422_object_not_found_returns_problem_detail() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
@@ -2019,6 +2065,7 @@ mod tests {
             )),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2086,6 +2133,7 @@ mod tests {
 
     #[tokio::test]
     async fn contract_post_completion_500_storage_error_returns_problem_detail() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
@@ -2096,6 +2144,7 @@ mod tests {
             )),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2166,6 +2215,7 @@ mod tests {
 
     #[tokio::test]
     async fn contract_get_failed_import_has_sanitized_failure_reason() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryImportRepository::new());
 
         // Create an import and manually transition it to failed with internal error
@@ -2193,6 +2243,7 @@ mod tests {
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2240,6 +2291,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_completed_import_with_activity_id_returns_it_in_response() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryImportRepository::new());
 
         // Create a completed import with an activity_id set
@@ -2275,6 +2327,7 @@ mod tests {
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2309,6 +2362,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_failed_import_with_failure_code_returns_it_in_response() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryImportRepository::new());
 
         let owner_id = UserId::new(Uuid::new_v4());
@@ -2337,6 +2391,7 @@ mod tests {
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2374,6 +2429,7 @@ mod tests {
 
     #[tokio::test]
     async fn contract_get_import_status_transitions_visible_during_progress() {
+        ensure_dev_auth();
         // NOTE: This test constructs its own Router inline rather than using test_app()
         // because it needs to call multiple routes sequentially on shared state (start,
         // then complete, then get). The app.clone().oneshot() pattern requires owning
@@ -2386,6 +2442,7 @@ mod tests {
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2544,6 +2601,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_failed_import_without_failure_code_omits_field() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryImportRepository::new());
 
         let owner_id = UserId::new(Uuid::new_v4());
@@ -2567,6 +2625,7 @@ mod tests {
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2601,6 +2660,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_start_import_over_quota_returns_429() {
+        ensure_dev_auth();
         use haiker_platform::upload_quota::{UploadQuota, UploadQuotaConfig};
 
         let quota = Arc::new(UploadQuota::new(&UploadQuotaConfig {
@@ -2613,6 +2673,7 @@ mod tests {
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: Some(quota),
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2683,6 +2744,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_start_import_different_users_have_independent_quotas() {
+        ensure_dev_auth();
         use haiker_platform::upload_quota::{UploadQuota, UploadQuotaConfig};
 
         let quota = Arc::new(UploadQuota::new(&UploadQuotaConfig {
@@ -2695,6 +2757,7 @@ mod tests {
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: None,
             upload_quota: Some(quota),
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2797,12 +2860,14 @@ mod tests {
 
     #[tokio::test]
     async fn complete_upload_backpressure_returns_429() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: Some(Arc::new(BackpressureJobEnqueuer)),
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -2886,12 +2951,14 @@ mod tests {
 
     #[tokio::test]
     async fn complete_upload_with_successful_enqueue_returns_200() {
+        ensure_dev_auth();
         let state = ImportAppState {
             repo: Arc::new(InMemoryImportRepository::new()),
             url_generator: Arc::new(StubUrlGenerator),
             upload_verifier: Arc::new(StubUploadVerifier),
             job_queue: Some(Arc::new(SuccessJobEnqueuer)),
             upload_quota: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()

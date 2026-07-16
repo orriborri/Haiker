@@ -19,14 +19,22 @@ use crate::activities_dto::{
     ActivityDetailResponse, ActivityListResponse, ActivitySummaryResponse, ListActivitiesParams,
     PaginationMeta, RenameActivityRequest,
 };
-use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
+use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_platform::session::SessionStore;
 
 /// Shared application state for activity handlers.
 #[derive(Clone)]
 pub struct ActivityAppState {
     pub repo: Arc<dyn ActivityRepository>,
     pub audit: Arc<dyn AuditSink>,
+    pub session_store: SessionStore,
+}
+
+impl HasSessionStore for ActivityAppState {
+    fn session_store(&self) -> &SessionStore {
+        &self.session_store
+    }
 }
 
 /// Convert an ActivityCatalogError to an ApiError.
@@ -90,7 +98,7 @@ fn activity_error_to_api_error(err: ActivityCatalogError) -> ApiError {
 #[tracing::instrument(skip(state, actor))]
 pub async fn get_activities(
     State(state): State<ActivityAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Query(params): Query<ListActivitiesParams>,
 ) -> Result<impl IntoResponse, ApiError> {
     let owner_id = actor.0.user_id;
@@ -138,7 +146,7 @@ pub async fn get_activities(
 #[tracing::instrument(skip(state, actor))]
 pub async fn get_activity_detail(
     State(state): State<ActivityAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(activity_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let owner_id = actor.0.user_id;
@@ -170,7 +178,7 @@ pub async fn get_activity_detail(
 #[tracing::instrument(skip(state, actor, body))]
 pub async fn patch_activity_title(
     State(state): State<ActivityAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(activity_id): Path<Uuid>,
     Json(body): Json<RenameActivityRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -209,7 +217,7 @@ pub async fn patch_activity_title(
 #[tracing::instrument(skip(state, actor))]
 pub async fn delete_activity_handler(
     State(state): State<ActivityAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(activity_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let owner_id = actor.0.user_id;
@@ -398,10 +406,28 @@ mod tests {
     use tower::ServiceExt;
     use uuid::Uuid;
 
+    /// Ensure DEV_AUTH_ENABLED is set so AuthSession accepts Bearer UUID tokens.
+    fn ensure_dev_auth() {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            std::env::set_var("DEV_AUTH_ENABLED", "true");
+        });
+    }
+
+    /// Create a dummy SessionStore for tests. Never hits the DB because
+    /// DEV_AUTH_ENABLED short-circuits before session validation.
+    fn dummy_session_store() -> SessionStore {
+        let pool = sqlx::PgPool::connect_lazy("postgres://test:test@localhost/test").unwrap();
+        SessionStore::new(pool)
+    }
+
     fn test_app() -> Router {
+        ensure_dev_auth();
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::new()),
             audit: Arc::new(NoOpAuditSink),
+            session_store: dummy_session_store(),
         };
 
         Router::new()
@@ -418,9 +444,11 @@ mod tests {
     }
 
     fn test_app_with_activities(activities: Vec<Activity>) -> Router {
+        ensure_dev_auth();
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
             audit: Arc::new(NoOpAuditSink),
+            session_store: dummy_session_store(),
         };
 
         Router::new()
@@ -542,9 +570,11 @@ mod tests {
             ));
         }
 
+        ensure_dev_auth();
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
             audit: Arc::new(NoOpAuditSink),
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -649,9 +679,11 @@ mod tests {
             ));
         }
 
+        ensure_dev_auth();
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
             audit: Arc::new(NoOpAuditSink),
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1258,11 +1290,13 @@ mod tests {
         let activity2 = make_activity(user, "Delete This", Some(now - Duration::hours(1)));
         let activity2_id = activity2.id.0;
 
+        ensure_dev_auth();
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(vec![
                 activity1, activity2,
             ])),
             audit: Arc::new(NoOpAuditSink),
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()

@@ -90,6 +90,7 @@ async fn main() {
         upload_verifier: Arc::new(object_storage),
         job_queue: None,
         upload_quota: Some(upload_quota),
+        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
     };
 
     let import_routes = Router::new()
@@ -111,6 +112,7 @@ async fn main() {
         audit: Arc::new(AuditSinkAdapter {
             audit_log: audit_log.clone(),
         }),
+        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
     };
 
     let activity_routes = Router::new()
@@ -130,6 +132,7 @@ async fn main() {
     let recorded_route_state = recorded_route::RecordedRouteAppState {
         activity_repo: Arc::new(PgActivityRepository::new(pool.clone())),
         route_repo: Arc::new(PgRecordedRouteRepository::new(pool.clone())),
+        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
     };
 
     let recorded_route_routes = Router::new()
@@ -146,6 +149,7 @@ async fn main() {
         activity_gateway: Arc::new(PgActivityGateway::new()),
         route_version_gateway: Arc::new(PgRouteVersionGateway::new()),
         publication_committer: Some(Arc::new(PgPublicationCommitter::new(pool.clone()))),
+        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
     };
 
     let route_editing_routes = Router::new()
@@ -194,6 +198,7 @@ async fn main() {
         job_queue: None,
         download_url_generator: None,
         audit_sink: None,
+        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
     };
 
     let export_routes = Router::new()

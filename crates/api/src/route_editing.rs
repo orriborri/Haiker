@@ -20,7 +20,6 @@ use haiker_app::route_editing::{
 use haiker_app::route_versioning::commit::{CommitPublication, PublicationCommitData};
 use haiker_app::route_versioning::RouteVersioningError;
 
-use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
 use crate::route_editing_dto::{
     draft_to_response, geometry_to_domain, parse_idempotency_key, ApplyOperationRequest,
@@ -28,6 +27,8 @@ use crate::route_editing_dto::{
     PublishRouteDraftRequest, UndoRedoRequest, ValidateForPublicationRequest, ValidationErrorDto,
     ValidationResultResponse,
 };
+use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_platform::session::SessionStore;
 
 /// Shared application state for route editing handlers.
 #[derive(Clone)]
@@ -36,6 +37,13 @@ pub struct RouteEditingAppState {
     pub activity_gateway: Arc<dyn ActivityGateway>,
     pub route_version_gateway: Arc<dyn RouteVersionGateway>,
     pub publication_committer: Option<Arc<dyn CommitPublication>>,
+    pub session_store: SessionStore,
+}
+
+impl HasSessionStore for RouteEditingAppState {
+    fn session_store(&self) -> &SessionStore {
+        &self.session_store
+    }
 }
 
 /// Convert a RouteEditingError to an ApiError with Problem Details fields.
@@ -274,7 +282,7 @@ fn ownership_not_found_error() -> ApiError {
 /// Create a new route draft for the given activity.
 pub async fn post_create_draft(
     State(state): State<RouteEditingAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(activity_id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<CreateRouteDraftRequest>,
@@ -360,7 +368,7 @@ pub async fn post_create_draft(
 /// Get the current state of a route draft.
 pub async fn get_draft(
     State(state): State<RouteEditingAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(draft_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let draft = state
@@ -384,7 +392,7 @@ pub async fn get_draft(
 /// Apply an operation to the draft. Requires Idempotency-Key header.
 pub async fn post_apply_operation(
     State(state): State<RouteEditingAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(draft_id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<ApplyOperationRequest>,
@@ -536,7 +544,7 @@ pub async fn post_apply_operation(
 /// because clients must always send the current known revision.
 pub async fn post_undo(
     State(state): State<RouteEditingAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(draft_id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<UndoRedoRequest>,
@@ -582,7 +590,7 @@ pub async fn post_undo(
 /// Note: Idempotency for redo is enforced via expectedRevision (same as undo).
 pub async fn post_redo(
     State(state): State<RouteEditingAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(draft_id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<UndoRedoRequest>,
@@ -630,7 +638,7 @@ pub async fn post_redo(
 /// Note: Idempotency for reset is enforced via expectedRevision (same as undo/redo).
 pub async fn post_reset(
     State(state): State<RouteEditingAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(draft_id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<UndoRedoRequest>,
@@ -693,7 +701,7 @@ pub async fn post_reset(
 /// Discard the draft.
 pub async fn delete_draft(
     State(state): State<RouteEditingAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(draft_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let mut draft = state
@@ -729,7 +737,7 @@ pub async fn delete_draft(
 /// Returns 409 if the draft is not active or revision mismatch.
 pub async fn post_validate_draft(
     State(state): State<RouteEditingAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(draft_id): Path<Uuid>,
     Json(body): Json<ValidateForPublicationRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -943,7 +951,7 @@ fn route_versioning_error_to_api_error(err: RouteVersioningError) -> ApiError {
 /// that would exist if we read the draft here first.
 pub async fn post_publish_draft(
     State(state): State<RouteEditingAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(draft_id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<PublishRouteDraftRequest>,
