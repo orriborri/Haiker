@@ -46,7 +46,7 @@ function RootLayout() {
         Skip to content
       </a>
       {/* Route announcements for screen readers */}
-      <div aria-live="assertive" aria-atomic="true" className="sr-only">
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
         {announcement}
       </div>
       <main id="main-content" className="min-h-screen bg-white">

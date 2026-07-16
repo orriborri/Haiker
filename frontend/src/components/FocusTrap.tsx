@@ -35,18 +35,23 @@ export function FocusTrap({ children, onEscape }: FocusTrapProps) {
   }, []);
 
   useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape" && onEscape) {
+        // Only handle Escape if the event target is within this container
+        const target = e.target as Node | null;
+        if (!container!.contains(target)) return;
         e.preventDefault();
         onEscape();
         return;
       }
 
       if (e.key === "Tab") {
-        const container = containerRef.current;
         if (!container) return;
 
-        const focusable = getFocusableElements(container);
+        const focusable = getFocusableElements(container!);
         if (focusable.length === 0) {
           e.preventDefault();
           return;
@@ -69,8 +74,8 @@ export function FocusTrap({ children, onEscape }: FocusTrapProps) {
       }
     }
 
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    container.addEventListener("keydown", handleKeyDown);
+    return () => container.removeEventListener("keydown", handleKeyDown);
   }, [onEscape]);
 
   return (
