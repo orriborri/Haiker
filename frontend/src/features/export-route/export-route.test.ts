@@ -4,11 +4,14 @@ import {
   initialExportState,
   isTerminalStatus,
   getProgressLabel,
+  extractExportIdFromError,
   TERMINAL_STATUSES,
+  MAX_POLLING_DURATION_MS,
   type ExportState,
   type ExportAction,
   type ExportPhase,
 } from "./useExportRoute";
+import { ApiError } from "@/api/client";
 
 /**
  * Helper to dispatch a sequence of actions and return the final state.
@@ -342,5 +345,88 @@ describe("Polling status updates during polling phase", () => {
     });
     expect(state.phase).toBe("polling");
     expect(state.polledStatus).toBe("generating");
+  });
+});
+
+describe("extractExportIdFromError", () => {
+  it("extracts UUID from the code field when it is a valid UUID", () => {
+    const err = new ApiError(
+      409,
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "An export already exists",
+      null,
+    );
+    expect(extractExportIdFromError(err)).toBe(
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    );
+  });
+
+  it("extracts UUID from the message when code is not a UUID", () => {
+    const err = new ApiError(
+      409,
+      "DUPLICATE_EXPORT",
+      "Export a1b2c3d4-e5f6-7890-abcd-ef1234567890 already exists for this route version",
+      null,
+    );
+    expect(extractExportIdFromError(err)).toBe(
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    );
+  });
+
+  it("extracts UUID from the message when code is 'unknown'", () => {
+    const err = new ApiError(
+      409,
+      "unknown",
+      "Duplicate: existing export is f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      null,
+    );
+    expect(extractExportIdFromError(err)).toBe(
+      "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    );
+  });
+
+  it("returns null when neither code nor message contain a UUID", () => {
+    const err = new ApiError(
+      409,
+      "DUPLICATE_EXPORT",
+      "An export already exists for this route version",
+      null,
+    );
+    expect(extractExportIdFromError(err)).toBeNull();
+  });
+
+  it("returns null for empty code and message without UUID", () => {
+    const err = new ApiError(409, "unknown", "Conflict", null);
+    expect(extractExportIdFromError(err)).toBeNull();
+  });
+
+  it("extracts the first UUID when multiple UUIDs are in the message", () => {
+    const err = new ApiError(
+      409,
+      "unknown",
+      "Export a1b2c3d4-e5f6-7890-abcd-ef1234567890 conflicts with f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      null,
+    );
+    expect(extractExportIdFromError(err)).toBe(
+      "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    );
+  });
+
+  it("handles uppercase UUIDs in messages", () => {
+    const err = new ApiError(
+      409,
+      "unknown",
+      "Export A1B2C3D4-E5F6-7890-ABCD-EF1234567890 already exists",
+      null,
+    );
+    expect(extractExportIdFromError(err)).toBe(
+      "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+    );
+  });
+});
+
+describe("MAX_POLLING_DURATION_MS", () => {
+  it("is set to 120 seconds (2 minutes)", () => {
+    expect(MAX_POLLING_DURATION_MS).toBe(120_000);
   });
 });

@@ -10,6 +10,9 @@ import {
 } from "@/api/client";
 import { useOnlineStatus } from "@/features/route-editor/useOnlineStatus";
 
+/** Maximum polling duration in milliseconds (2 minutes). */
+export const MAX_POLLING_DURATION_MS = 120_000;
+
 // --- Reducer / pure logic (exported for testing) ---
 
 export type ExportPhase =
@@ -160,6 +163,7 @@ export function useExportRoute({
   const queryClient = useQueryClient();
   const { isOnline } = useOnlineStatus();
   const idempotencyKeyRef = useRef<string>(crypto.randomUUID());
+  const pollingStartRef = useRef<number | null>(null);
 
   const [state, setState] = useState<ExportState>(() => {
     if (initialExportId) {
@@ -176,6 +180,17 @@ export function useExportRoute({
   useEffect(() => {
     dispatch({ type: "SET_OFFLINE", isOffline: !isOnline });
   }, [isOnline, dispatch]);
+
+  // Start polling timer when entering polling phase
+  useEffect(() => {
+    if (state.phase === "polling") {
+      if (pollingStartRef.current === null) {
+        pollingStartRef.current = Date.now();
+      }
+    } else {
+      pollingStartRef.current = null;
+    }
+  }, [state.phase]);
 
   // Export ID changes - update URL
   const updateExportId = useCallback(
@@ -235,12 +250,26 @@ export function useExportRoute({
     },
   });
 
-  // Transition phase based on polling result
+  // Transition phase based on polling result, with timeout guard
   useEffect(() => {
+    if (state.phase !== "polling") return;
+
+    // Check polling timeout
+    if (pollingStartRef.current !== null) {
+      const elapsed = Date.now() - pollingStartRef.current;
+      if (elapsed >= MAX_POLLING_DURATION_MS) {
+        dispatch({
+          type: "REQUEST_FAILURE",
+          error: "Export is taking longer than expected. Please try again.",
+        });
+        return;
+      }
+    }
+
     if (!exportStatusQuery.data) return;
     const { status, failureReason } = exportStatusQuery.data;
     dispatch({ type: "POLL_UPDATE", status, failureReason });
-  }, [exportStatusQuery.data, dispatch]);
+  }, [exportStatusQuery.data, dispatch, state.phase]);
 
   // Handle polling errors (e.g., 401)
   useEffect(() => {
@@ -292,10 +321,20 @@ export function useExportRoute({
 
 /**
  * Attempts to extract an exportId from a 409 ApiError.
- * The backend may include it in the error message or a custom field.
+ * The backend includes the existing export ID in the response body as a UUID.
+ * Falls back to regex-matching a UUID from the error message.
  */
-function extractExportIdFromError(err: ApiError): string | null {
-  // Convention: the error message might contain an export ID as a UUID pattern
+export function extractExportIdFromError(err: ApiError): string | null {
+  // Try the code field first - it may contain the export ID
+  if (err.code && err.code !== "unknown") {
+    const uuidPattern =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (uuidPattern.test(err.code)) {
+      return err.code;
+    }
+  }
+
+  // Fall back to extracting from the message text
   const uuidPattern =
     /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
   const match = err.message.match(uuidPattern);

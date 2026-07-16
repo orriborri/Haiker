@@ -56,6 +56,12 @@
           application/json:
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
+      "409":
+        description: An export for this route version already exists
+        content:
+          application/json:
+            schema:
+              $ref: "../components/exports.yaml#/DuplicateExportResponse"
       "422":
         description: Validation failed (invalid route version or format)
         content:

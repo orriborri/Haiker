@@ -134,3 +134,17 @@ ExportDownloadResponse:
     - downloadUrl
     - filename
     - expiresAt
+
+DuplicateExportResponse:
+  description: Returned when an export for the same route version is already in progress or completed.
+  allOf:
+    - $ref: "../components/errors.yaml#/ProblemDetail"
+    - type: object
+      required:
+        - exportId
+      properties:
+        exportId:
+          type: string
+          format: uuid
+          description: The ID of the existing export job
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
