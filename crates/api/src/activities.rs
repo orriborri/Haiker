@@ -396,6 +396,27 @@ impl ActivityRepository for InMemoryActivityRepository {
 
 #[cfg(test)]
 mod tests {
+    //! # Authentication test coverage
+    //!
+    //! These tests exercise the `DEV_AUTH_ENABLED` Bearer UUID fallback path
+    //! provided by `AuthSession`. When `DEV_AUTH_ENABLED=true`, the extractor
+    //! accepts `Authorization: Bearer <uuid>` headers and skips real session
+    //! cookie validation.
+    //!
+    //! What is NOT covered here (requires integration tests with a live
+    //! PostgreSQL database):
+    //!
+    //! - Full session-cookie lifecycle: login via Auth0, cookie issuance,
+    //!   session lookup in the `SessionStore`, and session expiry/revocation.
+    //! - CSRF enforcement for state-changing requests (POST/PATCH/DELETE): the
+    //!   `AuthSession` extractor checks the `X-CSRF-Token` header against the
+    //!   session record, but this path is unreachable without a real session
+    //!   store.
+    //!
+    //! To add those tests, create integration tests under `tests/` that spin up
+    //! a PostgreSQL instance (e.g., via testcontainers) and exercise the full
+    //! Auth0 callback -> session cookie -> CSRF token flow.
+
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
