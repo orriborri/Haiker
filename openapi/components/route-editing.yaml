@@ -366,6 +366,7 @@ PublicationResponse:
     - routeVersionId
     - versionNumber
     - draftId
+    - correctedStatistics
   properties:
     routeVersionId:
       type: string
@@ -379,3 +380,20 @@ PublicationResponse:
       type: string
       format: uuid
       description: The ID of the draft that was published
+    correctedStatistics:
+      $ref: "#/CorrectedStatistics"
+
+CorrectedStatistics:
+  type: object
+  required:
+    - distanceMeters
+    - pointCount
+  properties:
+    distanceMeters:
+      type: number
+      format: double
+      description: Total distance in meters computed via haversine over the corrected geometry
+    pointCount:
+      type: integer
+      format: int32
+      description: Number of coordinate points in the corrected geometry

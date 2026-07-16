@@ -139,9 +139,9 @@ impl CommitPublication for PgPublicationCommitter {
                 }
             })?;
 
-            let row = sqlx::query_as::<_, (i32,)>(
+            let row = sqlx::query_as::<_, (i32, serde_json::Value)>(
                 r#"
-                SELECT version_number
+                SELECT version_number, corrected_statistics_json
                 FROM route_versioning.route_versions
                 WHERE id = $1
                 "#,
@@ -153,11 +153,12 @@ impl CommitPublication for PgPublicationCommitter {
                 message: format!("failed to fetch existing version: {e}"),
             })?;
 
-            if let Some((version_number,)) = row {
+            if let Some((version_number, corrected_stats)) = row {
                 return Ok(PublicationResult {
                     route_version_id: RouteVersionId::new(version_id),
                     version_number,
                     draft_id: data.draft_id,
+                    corrected_statistics_json: corrected_stats,
                 });
             }
         }
@@ -248,7 +249,8 @@ impl CommitPublication for PgPublicationCommitter {
         let total_distance = compute_total_distance(&flat_coords);
         let corrected_statistics_json = json!({
             "distance_meters": total_distance,
-            "point_count": flat_coords.len()
+            "point_count": flat_coords.len(),
+            "calculation_version": "v1.0"
         });
 
         // 5. Find latest version number for the activity
@@ -304,12 +306,13 @@ impl CommitPublication for PgPublicationCommitter {
         sqlx::query(
             r#"
             UPDATE activity_catalog.activities
-            SET current_route_version_id = $2, updated_at = now()
+            SET current_route_version_id = $2, corrected_summary_json = $3, updated_at = now()
             WHERE id = $1
             "#,
         )
         .bind(activity_id.0)
         .bind(new_version_id)
+        .bind(&corrected_statistics_json)
         .execute(&mut *tx)
         .await
         .map_err(|e| RouteVersioningError::PersistenceError {
@@ -388,6 +391,7 @@ impl CommitPublication for PgPublicationCommitter {
             route_version_id: RouteVersionId::new(new_version_id),
             version_number: new_version_number,
             draft_id: data.draft_id,
+            corrected_statistics_json: corrected_statistics_json.clone(),
         })
     }
 }

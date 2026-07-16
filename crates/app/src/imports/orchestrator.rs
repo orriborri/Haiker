@@ -15,7 +15,7 @@ use crate::activity_catalog::{ActivityId, ActivityType};
 use crate::identity::UserId;
 use crate::recorded_activity::normalization::normalize_gpx;
 use crate::recorded_activity::{RecordedTrackId, SourceArtifactId, SourceRevisionId};
-use crate::route_versioning::RouteVersion;
+use crate::route_versioning::{CorrectedStatistics, RouteVersion};
 
 use super::checksum::Checksum;
 use super::commit::{CommitImport, ImportCommitData};
@@ -252,18 +252,17 @@ impl<'a> ImportOrchestrator<'a> {
 
         // Construct the initial route version via the domain factory to enforce
         // the geometry invariant (minimum 2 points).
-        let statistics_json =
-            serde_json::to_value(normalized.recorded_track.statistics).map_err(|e| {
-                ImportError::ValidationFailed {
-                    message: format!("failed to serialize statistics: {e}"),
-                }
-            })?;
+        // Compute corrected statistics from the initial geometry (which is the
+        // same as the recorded geometry before any edits are applied).
+        let corrected_statistics = CorrectedStatistics::calculate_from_geometry(
+            &normalized.preview_geometry,
+        );
 
         let route_version = RouteVersion::new_initial(
             activity_id,
             normalized.preview_geometry.clone(),
             normalized.recorded_track.bounding_box,
-            statistics_json,
+            corrected_statistics,
             PARSER_VERSION.to_string(),
             owner_id,
         )

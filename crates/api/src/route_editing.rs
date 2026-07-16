@@ -1016,12 +1016,28 @@ pub async fn post_publish_draft(
         .await
         .map_err(route_versioning_error_to_api_error)?;
 
+    // Extract corrected statistics from the JSON value
+    let distance_meters = result
+        .corrected_statistics_json
+        .get("distance_meters")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let point_count = result
+        .corrected_statistics_json
+        .get("point_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
     Ok((
         StatusCode::CREATED,
         Json(PublicationResponse {
             route_version_id: result.route_version_id.0,
             version_number: result.version_number,
             draft_id: result.draft_id.0,
+            corrected_statistics: crate::route_editing_dto::CorrectedStatisticsDto {
+                distance_meters,
+                point_count,
+            },
         }),
     ))
 }
