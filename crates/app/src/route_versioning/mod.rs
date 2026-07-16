@@ -6,6 +6,7 @@
 //! the database level via immutability triggers.
 
 pub mod commit;
+pub mod corrected_statistics;
 pub mod gateway;
 pub mod publish_command;
 pub mod repository;
@@ -18,6 +19,8 @@ use uuid::Uuid;
 use crate::activity_catalog::ActivityId;
 use crate::identity::UserId;
 use crate::recorded_activity::{BoundingBox, Coordinate};
+
+pub use corrected_statistics::CorrectedStatistics;
 
 /// A strongly-typed route version identifier wrapping a UUID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -66,7 +69,7 @@ pub struct RouteVersion {
     /// The geographic bounding box enclosing the geometry.
     pub bounding_box: BoundingBox,
     /// Statistics computed from the corrected geometry (e.g., distance, elevation).
-    pub corrected_statistics: serde_json::Value,
+    pub corrected_statistics: CorrectedStatistics,
     /// Identifies the algorithm version used to compute corrected_statistics.
     pub calculation_version: String,
     /// Optional human-readable summary of edits made in this version.
@@ -95,7 +98,7 @@ impl RouteVersion {
         activity_id: ActivityId,
         geometry: Vec<Coordinate>,
         bounding_box: BoundingBox,
-        corrected_statistics: serde_json::Value,
+        corrected_statistics: CorrectedStatistics,
         calculation_version: String,
         created_by: UserId,
     ) -> Result<Self, RouteVersioningError> {
@@ -144,7 +147,7 @@ impl RouteVersion {
         activity_id: ActivityId,
         geometry: Vec<Coordinate>,
         bounding_box: BoundingBox,
-        corrected_statistics: serde_json::Value,
+        corrected_statistics: CorrectedStatistics,
         calculation_version: String,
         edit_summary: Option<String>,
         created_by: UserId,
@@ -271,7 +274,7 @@ mod tests {
         let user_id = UserId::new(Uuid::new_v4());
         let geometry = sample_geometry();
         let bbox = sample_bounding_box();
-        let stats = serde_json::json!({"distance_meters": 1500.0});
+        let stats = CorrectedStatistics::new(1500.0, 3, "v1.0".to_string());
 
         let version = RouteVersion::new_initial(
             activity_id,
@@ -304,7 +307,7 @@ mod tests {
             activity_id,
             vec![],
             bbox,
-            serde_json::json!({}),
+            CorrectedStatistics::new(0.0, 0, "v1.0".to_string()),
             "v1.0".to_string(),
             user_id,
         );
@@ -329,7 +332,7 @@ mod tests {
             activity_id,
             vec![sample_coordinate(47.0, 11.0)],
             bbox,
-            serde_json::json!({}),
+            CorrectedStatistics::new(0.0, 1, "v1.0".to_string()),
             "v1.0".to_string(),
             user_id,
         );
@@ -355,7 +358,7 @@ mod tests {
             activity_id,
             geometry,
             bbox,
-            serde_json::json!({}),
+            CorrectedStatistics::new(0.0, 2, "v1.0".to_string()),
             "v1.0".to_string(),
             user_id,
         );

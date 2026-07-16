@@ -4,7 +4,7 @@ import { useActivity } from "./useActivity";
 import { useRecordedRoute } from "./useRecordedRoute";
 import { RouteMap } from "./RouteMap";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
-import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import type { ActivityDetail } from "@/api/client";
 
 function formatDateTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -15,6 +15,10 @@ function formatDateTime(dateStr: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatDistanceKm(meters: number): string {
+  return `${(meters / 1000).toFixed(1)} km`;
 }
 
 interface ActivityDetailPageProps {
@@ -171,6 +175,9 @@ export function ActivityDetailPage({ activityId }: ActivityDetailPageProps) {
           <MetadataItem label="Updated" value={formatDateTime(activity.updatedAt)} />
         </dl>
       </section>
+
+      {/* Statistics */}
+      <StatisticsSection activity={activity} />
     </div>
   );
 }
@@ -181,5 +188,56 @@ function MetadataItem({ label, value }: { label: string; value: string }) {
       <dt className="text-xs font-medium text-gray-500">{label}</dt>
       <dd className="mt-0.5 text-sm text-gray-900">{value}</dd>
     </div>
+  );
+}
+
+function StatisticsSection({ activity }: { activity: ActivityDetail }) {
+  const recorded = activity.recordedSummary;
+  const corrected = activity.correctedSummary;
+
+  if (!recorded && !corrected) return null;
+
+  return (
+    <section aria-label="Statistics" className="mt-6">
+      <h2 className="mb-3 text-lg font-semibold text-gray-900">Statistics</h2>
+      <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+        {recorded?.distance_meters != null && (
+          <MetadataItem
+            label="Recorded distance"
+            value={formatDistanceKm(recorded.distance_meters)}
+          />
+        )}
+        {corrected?.distance_meters != null && (
+          <MetadataItem
+            label="Corrected distance"
+            value={formatDistanceKm(corrected.distance_meters)}
+          />
+        )}
+        {recorded?.point_count != null && (
+          <MetadataItem
+            label="Recorded points"
+            value={String(recorded.point_count)}
+          />
+        )}
+        {corrected?.point_count != null && (
+          <MetadataItem
+            label="Corrected points"
+            value={String(corrected.point_count)}
+          />
+        )}
+        {recorded?.elevation_gain_meters != null && (
+          <MetadataItem
+            label="Elevation gain"
+            value={`${Math.round(recorded.elevation_gain_meters)} m`}
+          />
+        )}
+        {recorded?.elevation_loss_meters != null && (
+          <MetadataItem
+            label="Elevation loss"
+            value={`${Math.round(recorded.elevation_loss_meters)} m`}
+          />
+        )}
+      </dl>
+    </section>
   );
 }

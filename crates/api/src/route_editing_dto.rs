@@ -315,4 +315,14 @@ pub struct PublicationResponse {
     pub route_version_id: Uuid,
     pub version_number: i32,
     pub draft_id: Uuid,
+    pub corrected_statistics: CorrectedStatisticsDto,
+}
+
+/// DTO for corrected statistics in the publication response.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CorrectedStatisticsDto {
+    pub distance_meters: f64,
+    pub point_count: u32,
+    pub calculation_version: String,
 }

@@ -178,6 +178,24 @@ fn export_error_to_api_error(err: ExportError) -> ApiError {
                 details: None,
             }
         }
+        ExportError::ChecksumMismatch { .. } => ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "INTERNAL_ERROR".to_string(),
+            message: "an unexpected error occurred".to_string(),
+            problem_type: Some("/problems/internal-error".to_string()),
+            title: Some("Internal Server Error".to_string()),
+            request_id: None,
+            details: None,
+        },
+        ExportError::ArtifactExpired => ApiError {
+            status: StatusCode::GONE,
+            code: "ARTIFACT_EXPIRED".to_string(),
+            message: "export artifact has expired and is no longer available".to_string(),
+            problem_type: Some("/problems/artifact-expired".to_string()),
+            title: Some("Artifact Expired".to_string()),
+            request_id: None,
+            details: None,
+        },
     }
 }
 
@@ -997,5 +1015,85 @@ mod tests {
                 "Internal reason should be sanitized: {reason}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn get_ready_export_does_not_include_object_storage_key() {
+        let repo = Arc::new(InMemoryExportRepository::new());
+
+        let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
+        let activity_id = ActivityId::new(Uuid::new_v4());
+        let route_version_id = RouteVersionId::new(Uuid::new_v4());
+
+        let mut export_job = ExportJob::new(
+            owner_id,
+            activity_id,
+            route_version_id,
+            ExportFormat::Gpx,
+            "ready-key-test".to_string(),
+            None,
+        )
+        .unwrap();
+        export_job.start_generating().unwrap();
+        let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+        export_job
+            .complete(
+                "exports/private/secret-key.gpx".to_string(),
+                "abc123def456".to_string(),
+                expires,
+            )
+            .unwrap();
+
+        repo.exports
+            .lock()
+            .unwrap()
+            .insert(export_job.id, export_job.clone());
+
+        let state = ExportAppState {
+            repo,
+            route_version_gateway: Arc::new(StubRouteVersionGateway),
+            job_queue: None,
+        };
+
+        let app = Router::new()
+            .route("/v1/exports/{exportId}", get(get_export_status))
+            .with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/v1/exports/{}", export_job.id.0))
+                    .header("Authorization", format!("Bearer {}", owner_id.0))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+
+        // Verify the response has expected Ready fields
+        assert_eq!(json["status"], "ready");
+        assert_eq!(json["checksum"], "abc123def456");
+        assert!(json["expiresAt"].is_string());
+
+        // CRITICAL: objectStorageKey must NOT be present in the response
+        assert!(
+            json.get("objectStorageKey").is_none(),
+            "objectStorageKey must not be exposed in the API response"
+        );
+        assert!(
+            json.get("object_storage_key").is_none(),
+            "object_storage_key must not be exposed in the API response"
+        );
+
+        // Also verify the entire JSON does not contain the storage key value
+        let json_str = serde_json::to_string(&json).unwrap();
+        assert!(
+            !json_str.contains("exports/private/secret-key.gpx"),
+            "storage key value must not appear anywhere in the response"
+        );
     }
 }

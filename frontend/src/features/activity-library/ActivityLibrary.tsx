@@ -15,30 +15,69 @@ function formatDate(dateStr: string): string {
   });
 }
 
+function formatDistanceKm(meters: number): string {
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
 function ActivityRow({ activity }: { activity: ActivitySummary }) {
+  const navigate = useNavigate();
+
+  const handleSelect = useCallback(() => {
+    void navigate({
+      to: "/activities/$activityId",
+      params: { activityId: activity.id },
+    });
+  }, [navigate, activity.id]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        handleSelect();
+      }
+    },
+    [handleSelect],
+  );
+
+  const recordedDistance = activity.recordedSummary?.distance_meters;
+  const correctedDistance = activity.correctedSummary?.distance_meters;
+
   return (
-    <li className="border-b border-gray-100">
-      <Link
-        to="/activities/$activityId"
-        params={{ activityId: activity.id }}
-        className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-gray-50 focus:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
-        aria-label={`View activity: ${activity.title}`}
-      >
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-medium text-gray-900">
-            {activity.title}
-          </h3>
+    <li
+      className="flex cursor-pointer items-center gap-4 border-b border-gray-100 px-4 py-3 transition-colors hover:bg-gray-50 focus:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+      role="button"
+      tabIndex={0}
+      onClick={handleSelect}
+      onKeyDown={handleKeyDown}
+      aria-label={`View activity: ${activity.title}`}
+    >
+      <div className="min-w-0 flex-1">
+        <h3 className="truncate text-sm font-medium text-gray-900">
+          {activity.title}
+        </h3>
+        <p className="mt-0.5 text-xs text-gray-500">
+          <span className="capitalize">{activity.activityType}</span>
+          {activity.startedAt && (
+            <>
+              {" \u00B7 "}
+              {formatDate(activity.startedAt)}
+            </>
+          )}
+        </p>
+        {(recordedDistance != null || correctedDistance != null) && (
           <p className="mt-0.5 text-xs text-gray-500">
-            <span className="capitalize">{activity.activityType}</span>
-            {activity.startedAt && (
+            {recordedDistance != null && (
+              <span>Recorded: {formatDistanceKm(recordedDistance)}</span>
+            )}
+            {correctedDistance != null && (
               <>
-                {" \u00B7 "}
-                {formatDate(activity.startedAt)}
+                {recordedDistance != null && <span>{" \u00B7 "}</span>}
+                <span>Corrected: {formatDistanceKm(correctedDistance)}</span>
               </>
             )}
           </p>
-        </div>
-      </Link>
+        )}
+      </div>
     </li>
   );
 }
