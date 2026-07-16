@@ -10,7 +10,9 @@ use crate::identity::UserId;
 use crate::route_versioning::RouteVersionId;
 
 use super::repository::ExportRepository;
-use super::{ExportError, ExportFormat, ExportJob, ExportJobId, RouteVersionGateway};
+use super::{
+    ArtifactStore, ExportError, ExportFormat, ExportJob, ExportJobId, RouteVersionGateway,
+};
 
 /// Command to request a new export.
 #[derive(Debug, Clone)]
@@ -114,6 +116,40 @@ pub async fn handle_get_export(
     }
 
     Ok(export_job)
+}
+
+/// Handle export expiration.
+///
+/// Loads the export, deletes the artifact from storage, transitions to Expired,
+/// and persists. This operation is idempotent: if the export is already expired,
+/// returns Ok without error.
+pub async fn handle_expire_export(
+    export_id: ExportJobId,
+    repo: &dyn ExportRepository,
+    artifact_store: &dyn ArtifactStore,
+) -> Result<(), ExportError> {
+    let mut export_job = repo
+        .find_by_id(export_id)
+        .await?
+        .ok_or(ExportError::NotFound)?;
+
+    // Idempotent: already expired, nothing to do
+    if export_job.status == super::state_machine::ExportStatus::Expired {
+        return Ok(());
+    }
+
+    // Delete the artifact from storage if a key is present
+    if let Some(ref key) = export_job.object_storage_key {
+        artifact_store.delete_artifact(key).await?;
+    }
+
+    // Transition to Expired
+    export_job.expire()?;
+
+    // Persist
+    repo.update(&export_job).await?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -235,6 +271,39 @@ mod tests {
             _owner_id: UserId,
         ) -> Result<(), ExportError> {
             Err(ExportError::Unauthorized)
+        }
+    }
+
+    /// In-memory ArtifactStore for tests.
+    struct InMemoryArtifactStore {
+        deleted_keys: Mutex<Vec<String>>,
+    }
+
+    impl InMemoryArtifactStore {
+        fn new() -> Self {
+            Self {
+                deleted_keys: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn deleted_keys(&self) -> Vec<String> {
+            self.deleted_keys.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl ArtifactStore for InMemoryArtifactStore {
+        async fn delete_artifact(&self, key: &str) -> Result<(), ExportError> {
+            self.deleted_keys.lock().unwrap().push(key.to_string());
+            Ok(())
+        }
+
+        async fn verify_artifact_checksum(
+            &self,
+            _key: &str,
+            _expected_checksum: &str,
+        ) -> Result<bool, ExportError> {
+            Ok(true)
         }
     }
 
@@ -460,5 +529,81 @@ mod tests {
         let hash1 = compute_payload_hash(activity_id, route_version_id1, &format);
         let hash2 = compute_payload_hash(activity_id, route_version_id2, &format);
         assert_ne!(hash1, hash2);
+    }
+
+    #[tokio::test]
+    async fn handle_expire_export_transitions_to_expired_and_deletes_artifact() {
+        let repo = InMemoryExportRepo::new();
+        let artifact_store = InMemoryArtifactStore::new();
+        let gateway = FakeGatewayOk;
+        let owner = UserId::new(Uuid::new_v4());
+
+        // Create and bring to Ready state
+        let cmd = make_cmd(owner, "expire-test-1");
+        let mut export_job = handle_request_export(cmd, &repo, &gateway).await.unwrap();
+        export_job.start_generating().unwrap();
+        let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+        export_job
+            .complete(
+                "exports/user/file.gpx".to_string(),
+                "somehash".to_string(),
+                expires,
+            )
+            .unwrap();
+        repo.update(&export_job).await.unwrap();
+
+        // Expire the export
+        let result = handle_expire_export(export_job.id, &repo, &artifact_store).await;
+        assert!(result.is_ok());
+
+        // Verify it's expired in the repo
+        let updated = repo.find_by_id(export_job.id).await.unwrap().unwrap();
+        assert_eq!(updated.status, ExportStatus::Expired);
+
+        // Verify artifact was deleted
+        let deleted = artifact_store.deleted_keys();
+        assert_eq!(deleted, vec!["exports/user/file.gpx"]);
+    }
+
+    #[tokio::test]
+    async fn handle_expire_export_is_idempotent_on_already_expired() {
+        let repo = InMemoryExportRepo::new();
+        let artifact_store = InMemoryArtifactStore::new();
+        let gateway = FakeGatewayOk;
+        let owner = UserId::new(Uuid::new_v4());
+
+        // Create, bring to Ready, then expire
+        let cmd = make_cmd(owner, "expire-idem-1");
+        let mut export_job = handle_request_export(cmd, &repo, &gateway).await.unwrap();
+        export_job.start_generating().unwrap();
+        let expires = chrono::Utc::now() + chrono::Duration::hours(24);
+        export_job
+            .complete(
+                "exports/user/file2.gpx".to_string(),
+                "hash2".to_string(),
+                expires,
+            )
+            .unwrap();
+        export_job.expire().unwrap();
+        repo.update(&export_job).await.unwrap();
+
+        // Call expire again - should be idempotent
+        let result = handle_expire_export(export_job.id, &repo, &artifact_store).await;
+        assert!(result.is_ok());
+
+        // No artifact deletion should have occurred (early return)
+        let deleted = artifact_store.deleted_keys();
+        assert!(deleted.is_empty());
+    }
+
+    #[tokio::test]
+    async fn handle_expire_export_returns_not_found_for_missing_export() {
+        let repo = InMemoryExportRepo::new();
+        let artifact_store = InMemoryArtifactStore::new();
+        let fake_id = ExportJobId::generate();
+
+        let result = handle_expire_export(fake_id, &repo, &artifact_store).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ExportError::NotFound));
     }
 }

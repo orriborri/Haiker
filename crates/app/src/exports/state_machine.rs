@@ -45,6 +45,10 @@ impl ExportStatus {
             if self == ExportStatus::Ready && target == ExportStatus::Expired {
                 return Ok(target);
             }
+            // Idempotent: Expired -> Expired is a no-op
+            if self == ExportStatus::Expired && target == ExportStatus::Expired {
+                return Ok(ExportStatus::Expired);
+            }
             return Err(ExportError::InvalidTransition {
                 from: self.to_string(),
                 to: target.to_string(),
@@ -134,7 +138,7 @@ mod tests {
 
     #[test]
     fn terminal_states_cannot_transition_except_ready_to_expired() {
-        let terminal = [ExportStatus::Failed, ExportStatus::Expired];
+        let terminal_no_self = [ExportStatus::Failed];
 
         let all_targets = [
             ExportStatus::Queued,
@@ -144,7 +148,7 @@ mod tests {
             ExportStatus::Expired,
         ];
 
-        for from in terminal {
+        for from in terminal_no_self {
             for to in all_targets {
                 let result = from.transition_to(to);
                 assert!(
@@ -153,6 +157,27 @@ mod tests {
                 );
             }
         }
+
+        // Expired rejects all targets except Expired->Expired (idempotent)
+        let expired_invalid_targets = [
+            ExportStatus::Queued,
+            ExportStatus::Generating,
+            ExportStatus::Ready,
+            ExportStatus::Failed,
+        ];
+        for to in expired_invalid_targets {
+            let result = ExportStatus::Expired.transition_to(to);
+            assert!(
+                result.is_err(),
+                "Transition from expired to {to} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn expired_to_expired_is_idempotent() {
+        let result = ExportStatus::Expired.transition_to(ExportStatus::Expired);
+        assert_eq!(result, Ok(ExportStatus::Expired));
     }
 
     #[test]
