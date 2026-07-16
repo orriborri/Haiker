@@ -8,11 +8,15 @@ use haiker_platform::database;
 use haiker_platform::import_persistence::PgImportRepository;
 use haiker_platform::object_storage::ObjectStorageClient;
 use haiker_platform::publication_commit::PgPublicationCommitter;
+use haiker_platform::rate_limit::{
+    rate_limit_middleware, RateLimitConfig, RateLimiter, RouteCategory, RouteCategoryExtension,
+};
 use haiker_platform::recorded_route_persistence::PgRecordedRouteRepository;
 use haiker_platform::request_id::request_id_middleware;
 use haiker_platform::route_editing_gateways::{PgActivityGateway, PgRouteVersionGateway};
 use haiker_platform::route_editing_persistence::PgRouteDraftRepository;
 use haiker_platform::telemetry::{self, TelemetryConfig};
+use haiker_platform::upload_quota::{UploadQuota, UploadQuotaConfig};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -66,6 +70,14 @@ async fn main() {
         .await
         .expect("failed to initialize object storage");
 
+    // Initialize rate limiter
+    let rate_limit_config = RateLimitConfig::from_env();
+    let rate_limiter = Arc::new(RateLimiter::new(rate_limit_config));
+
+    // Initialize upload quota
+    let upload_quota_config = UploadQuotaConfig::from_env();
+    let upload_quota = Arc::new(UploadQuota::new(&upload_quota_config));
+
     // Import subsystem state with real PostgreSQL repository
     let import_state = imports::ImportAppState {
         repo: Arc::new(PgImportRepository::new(pool.clone())),
@@ -74,6 +86,7 @@ async fn main() {
         }),
         upload_verifier: Arc::new(object_storage),
         job_queue: None,
+        upload_quota: Some(upload_quota),
     };
 
     let import_routes = Router::new()
@@ -83,6 +96,9 @@ async fn main() {
             post(imports::post_complete_upload),
         )
         .route("/v1/imports/{import_id}", get(imports::get_import_status))
+        .layer(axum::Extension(RouteCategoryExtension(
+            RouteCategory::Import,
+        )))
         .with_state(import_state);
 
     // Activity subsystem state with real PostgreSQL repository
@@ -104,6 +120,7 @@ async fn main() {
             "/v1/activities/{activityId}/title",
             patch(activities::patch_activity_title),
         )
+        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Read)))
         .with_state(activity_state);
 
     // Recorded route subsystem state
@@ -117,6 +134,7 @@ async fn main() {
             "/v1/activities/{activityId}/recorded-route",
             get(recorded_route::get_recorded_route_handler),
         )
+        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Read)))
         .with_state(recorded_route_state);
 
     // Route editing subsystem state with PostgreSQL persistence
@@ -160,6 +178,9 @@ async fn main() {
             "/v1/route-drafts/{draftId}/publication",
             post(route_editing::post_publish_draft),
         )
+        .layer(axum::Extension(RouteCategoryExtension(
+            RouteCategory::Mutation,
+        )))
         .with_state(route_editing_state);
 
     // Export subsystem state (placeholder - no real persistence impl yet)
@@ -176,21 +197,30 @@ async fn main() {
             post(exports::post_request_export),
         )
         .route("/v1/exports/{exportId}", get(exports::get_export_status))
+        .layer(axum::Extension(RouteCategoryExtension(
+            RouteCategory::Export,
+        )))
         .with_state(export_state);
 
-    let app = Router::new()
-        .route("/health", get(health::health))
-        .route("/ready", get(health::ready))
+    let auth_routes = Router::new()
         .route("/me", get(auth::me))
         .route("/auth/login", post(auth_handlers::post_login))
         .route("/auth/callback", get(auth_handlers::get_callback))
         .route("/auth/logout", post(auth_handlers::post_logout))
+        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Auth)));
+
+    let app = Router::new()
+        .route("/health", get(health::health))
+        .route("/ready", get(health::ready))
+        .merge(auth_routes)
         .merge(import_routes)
         .merge(activity_routes)
         .merge(recorded_route_routes)
         .merge(route_editing_routes)
         .merge(export_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .layer(axum::middleware::from_fn(rate_limit_middleware))
+        .layer(axum::Extension(rate_limiter))
         .layer(axum::middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http());
 
