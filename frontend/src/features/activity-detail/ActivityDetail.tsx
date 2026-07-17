@@ -4,6 +4,7 @@ import { useActivity } from "./useActivity";
 import { useRecordedRoute } from "./useRecordedRoute";
 import { RouteMap } from "./RouteMap";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import type { ActivityDetail } from "@/api/client";
 
 function formatDateTime(dateStr: string): string {

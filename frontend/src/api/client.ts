@@ -2,9 +2,26 @@ import { z } from "zod";
 
 const API_BASE = "/v1";
 
-function getAuthToken(): string | null {
-  return localStorage.getItem("auth_token");
+/** CSRF token storage key. */
+const CSRF_STORAGE_KEY = "haiker_csrf_token";
+
+/** Get the stored CSRF token. */
+export function getCsrfToken(): string | null {
+  return localStorage.getItem(CSRF_STORAGE_KEY);
 }
+
+/** Store the CSRF token received from the auth callback. */
+export function setCsrfToken(token: string): void {
+  localStorage.setItem(CSRF_STORAGE_KEY, token);
+}
+
+/** Clear the stored CSRF token (on logout). */
+export function clearCsrfToken(): void {
+  localStorage.removeItem(CSRF_STORAGE_KEY);
+}
+
+/** HTTP methods that require a CSRF token. */
+const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 class ApiError extends Error {
   constructor(
@@ -23,19 +40,24 @@ async function apiFetch<T>(
   schema: z.ZodType<T>,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = getAuthToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...((options.headers as Record<string, string>) ?? {}),
   };
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  // Add CSRF token for state-changing requests
+  const method = (options.method ?? "GET").toUpperCase();
+  if (STATE_CHANGING_METHODS.has(method)) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers["x-csrf-token"] = csrfToken;
+    }
   }
 
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
+    credentials: "include",
   });
 
   if (!response.ok) {

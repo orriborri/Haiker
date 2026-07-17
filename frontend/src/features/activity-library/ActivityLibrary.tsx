@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { useNavigate, Link } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useActivities } from "./useActivities";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { EmptyState } from "@/components/EmptyState";

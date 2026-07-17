@@ -13,9 +13,12 @@ import { RouteEditor } from "@/features/route-editor/RouteEditor";
 import { ImportActivity } from "@/features/import-activity";
 import { ExportRoute } from "@/features/export-route";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { AuthGuard, AuthCallback, LoginPage } from "@/auth";
 
 function getPageName(pathname: string): string {
   if (pathname === "/") return "Activities page";
+  if (pathname === "/login") return "Sign in page";
+  if (pathname === "/auth/callback") return "Completing sign in";
   if (pathname === "/import") return "Import Activity page";
   if (/^\/activities\/[^/]+\/edit$/.test(pathname)) return "Route Editor page";
   if (/^\/activities\/[^/]+\/export$/.test(pathname)) return "Export Route page";
@@ -60,27 +63,57 @@ const rootRoute = createRootRoute({
   component: RootLayout,
 });
 
+// --- Public routes (no auth required) ---
+
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/login",
+  component: LoginPage,
+});
+
+const authCallbackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/auth/callback",
+  component: AuthCallback,
+});
+
+// --- Protected routes (wrapped in AuthGuard) ---
+
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: ActivityLibrary,
+  component: function ProtectedActivityLibrary() {
+    return (
+      <AuthGuard>
+        <ActivityLibrary />
+      </AuthGuard>
+    );
+  },
 });
 
 const activityDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/activities/$activityId",
-  component: function ActivityDetailWrapper() {
+  component: function ProtectedActivityDetail() {
     const { activityId } = activityDetailRoute.useParams();
-    return <ActivityDetailPage activityId={activityId} />;
+    return (
+      <AuthGuard>
+        <ActivityDetailPage activityId={activityId} />
+      </AuthGuard>
+    );
   },
 });
 
 const activityEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/activities/$activityId/edit",
-  component: function ActivityEditWrapper() {
+  component: function ProtectedActivityEdit() {
     const { activityId } = activityEditRoute.useParams();
-    return <RouteEditor activityId={activityId} />;
+    return (
+      <AuthGuard>
+        <RouteEditor activityId={activityId} />
+      </AuthGuard>
+    );
   },
 });
 
@@ -92,7 +125,13 @@ const importRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/import",
   validateSearch: importSearchSchema,
-  component: ImportActivity,
+  component: function ProtectedImportActivity() {
+    return (
+      <AuthGuard>
+        <ImportActivity />
+      </AuthGuard>
+    );
+  },
 });
 
 const exportSearchSchema = z.object({
@@ -104,13 +143,19 @@ const exportRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/activities/$activityId/export",
   validateSearch: exportSearchSchema,
-  component: function ExportRouteWrapper() {
+  component: function ProtectedExportRoute() {
     const { activityId } = exportRoute.useParams();
-    return <ExportRoute activityId={activityId} />;
+    return (
+      <AuthGuard>
+        <ExportRoute activityId={activityId} />
+      </AuthGuard>
+    );
   },
 });
 
 const routeTree = rootRoute.addChildren([
+  loginRoute,
+  authCallbackRoute,
   indexRoute,
   activityDetailRoute,
   activityEditRoute,

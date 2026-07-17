@@ -139,9 +139,12 @@ describe("applyOperation integration", () => {
 
   beforeEach(() => {
     vi.stubGlobal("fetch", mockFetch);
-    // Mock localStorage so getAuthToken() returns a token
+    // Mock localStorage so getCsrfToken() returns a CSRF token
     vi.stubGlobal("localStorage", {
-      getItem: vi.fn(() => "test-token-abc"),
+      getItem: vi.fn((key: string) => {
+        if (key === "haiker_csrf_token") return "test-csrf-token";
+        return null;
+      }),
       setItem: vi.fn(),
       removeItem: vi.fn(),
     });
@@ -195,7 +198,8 @@ describe("applyOperation integration", () => {
     expect(options.headers["Idempotency-Key"]).toBe(
       "00000000-1111-2222-3333-444444444444",
     );
-    expect(options.headers["Authorization"]).toBe("Bearer test-token-abc");
+    expect(options.headers["x-csrf-token"]).toBe("test-csrf-token");
+    expect(options.credentials).toBe("include");
 
     // Verify body contains operation and expectedRevision
     const body = JSON.parse(options.body);

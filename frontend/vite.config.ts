@@ -56,6 +56,32 @@ export default defineConfig({
         target: "http://localhost:3000",
         changeOrigin: true,
       },
+      "/auth/login": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+      "/auth/logout": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+      // Proxy /auth/callback only for API fetch calls (not browser navigation).
+      // Browser navigations request text/html; fetch calls request application/json.
+      "/auth/callback": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        bypass(req) {
+          const accept = req.headers["accept"] ?? "";
+          if (accept.includes("text/html")) {
+            // Return index.html for browser navigation (SPA handles the route)
+            return "/index.html";
+          }
+          // Otherwise proxy to backend (API fetch calls)
+        },
+      },
+      "/me": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
     },
   },
 });
