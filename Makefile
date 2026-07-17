@@ -1,4 +1,4 @@
-.PHONY: build check test fmt lint run-api run-worker backend frontend infra infra-down clean
+.PHONY: build check test fmt lint run-api run-worker backend frontend migrate infra infra-down clean
 
 # Build the entire workspace
 build:
@@ -45,6 +45,10 @@ frontend:
 # Start local infrastructure (PostgreSQL + MinIO)
 infra:
 	docker compose up -d
+
+# Run database migrations
+migrate:
+	cargo sqlx migrate run
 
 # Stop local infrastructure
 infra-down:

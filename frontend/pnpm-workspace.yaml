@@ -1,2 +1,9 @@
 allowBuilds:
   esbuild: true
+
+overrides:
+  # tldts@7.4.9/tldts-core@7.4.9 (pulled in transitively via jsdom -> tough-cookie)
+  # were published within pnpm's minimumReleaseAge cooldown window. Pin to the
+  # prior release until 7.4.9 clears the 24h cooldown.
+  tldts: "7.4.8"
+  tldts-core: "7.4.8"
