@@ -14,6 +14,21 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tower::ServiceExt;
 
+/// Ensure DEV_AUTH_ENABLED is set so AuthSession accepts Bearer UUID tokens.
+fn ensure_dev_auth() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        std::env::set_var("DEV_AUTH_ENABLED", "true");
+    });
+}
+
+/// Create a dummy SessionStore for tests.
+fn dummy_session_store() -> SessionStore {
+    let pool = sqlx::PgPool::connect_lazy("postgres://test:test@localhost/test").unwrap();
+    SessionStore::new(pool)
+}
+
 /// In-memory route draft repository for testing.
 pub struct InMemoryRouteDraftRepository {
     drafts: Mutex<HashMap<RouteDraftId, RouteDraft>>,
@@ -257,11 +272,13 @@ impl RouteVersionGateway for InMemoryRouteVersionGateway {
 }
 
 fn test_app() -> Router {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     test_app_with_state(state)
 }
@@ -377,11 +394,13 @@ async fn create_draft_returns_201() {
 
 #[tokio::test]
 async fn get_draft_returns_200() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -414,11 +433,13 @@ async fn get_draft_returns_200() {
 
 #[tokio::test]
 async fn apply_operation_returns_200_with_new_revision() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -464,11 +485,13 @@ async fn apply_operation_returns_200_with_new_revision() {
 
 #[tokio::test]
 async fn apply_with_stale_revision_returns_409() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -534,11 +557,13 @@ async fn apply_with_stale_revision_returns_409() {
 
 #[tokio::test]
 async fn apply_with_duplicate_idempotency_key_replays_response() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -640,6 +665,7 @@ async fn undo_redo_reset_work() {
             vec![(version_id, activity_id, base_geometry)],
         )),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -819,11 +845,13 @@ async fn draft_not_found_returns_404() {
 
 #[tokio::test]
 async fn wrong_owner_returns_404() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -853,11 +881,13 @@ async fn wrong_owner_returns_404() {
 
 #[tokio::test]
 async fn idempotency_key_required_for_apply() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -896,11 +926,13 @@ async fn idempotency_key_required_for_apply() {
 
 #[tokio::test]
 async fn idempotency_key_required_for_undo() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -931,11 +963,13 @@ async fn idempotency_key_required_for_undo() {
 
 #[tokio::test]
 async fn delete_draft_returns_204() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -990,6 +1024,7 @@ async fn create_draft_missing_idempotency_key_returns_400() {
 
 #[tokio::test]
 async fn create_draft_activity_not_found_returns_404() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = Uuid::new_v4();
 
@@ -999,6 +1034,7 @@ async fn create_draft_activity_not_found_returns_404() {
         activity_gateway: Arc::new(InMemoryActivityGateway::with_activities(vec![])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -1030,6 +1066,7 @@ async fn create_draft_activity_not_found_returns_404() {
 
 #[tokio::test]
 async fn create_draft_deleted_activity_returns_422() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
 
@@ -1042,6 +1079,7 @@ async fn create_draft_deleted_activity_returns_422() {
         )])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -1073,6 +1111,7 @@ async fn create_draft_deleted_activity_returns_422() {
 
 #[tokio::test]
 async fn create_draft_cross_owner_activity_returns_404() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let other_user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
@@ -1087,6 +1126,7 @@ async fn create_draft_cross_owner_activity_returns_404() {
         )])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -1121,6 +1161,7 @@ async fn create_draft_cross_owner_activity_returns_404() {
 
 #[tokio::test]
 async fn create_draft_invalid_base_route_version_returns_422() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
     let invalid_version_id = Uuid::new_v4();
@@ -1134,6 +1175,7 @@ async fn create_draft_invalid_base_route_version_returns_422() {
         )])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::with_versions(vec![])),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -1166,6 +1208,7 @@ async fn create_draft_invalid_base_route_version_returns_422() {
 
 #[tokio::test]
 async fn create_draft_valid_base_route_version_succeeds() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
     let version_id = Uuid::new_v4();
@@ -1182,6 +1225,7 @@ async fn create_draft_valid_base_route_version_succeeds() {
             activity_id,
         )])),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -1215,6 +1259,7 @@ async fn create_draft_valid_base_route_version_succeeds() {
 
 #[tokio::test]
 async fn create_draft_idempotent_return_with_different_base_version_returns_409() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
     let version_id_1 = Uuid::new_v4();
@@ -1232,6 +1277,7 @@ async fn create_draft_idempotent_return_with_different_base_version_returns_409(
             (version_id_2, activity_id),
         ])),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -1289,6 +1335,7 @@ async fn create_draft_idempotent_return_with_different_base_version_returns_409(
 
 #[tokio::test]
 async fn get_draft_returns_base_route_version_id() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
     let version_id = Uuid::new_v4();
@@ -1305,6 +1352,7 @@ async fn get_draft_returns_base_route_version_id() {
             activity_id,
         )])),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -1363,11 +1411,13 @@ async fn get_draft_returns_base_route_version_id() {
 
 #[tokio::test]
 async fn apply_with_same_key_different_payload_returns_409() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1484,11 +1534,13 @@ async fn error_response_has_problem_details_shape() {
 
 #[tokio::test]
 async fn idempotent_replay_returns_snapshot_revision_not_current() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1595,11 +1647,13 @@ async fn idempotent_replay_returns_snapshot_revision_not_current() {
 
 #[tokio::test]
 async fn delete_section_returns_200_with_incremented_revision() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1645,11 +1699,13 @@ async fn delete_section_returns_200_with_incremented_revision() {
 
 #[tokio::test]
 async fn delete_section_reversed_range_returns_422_invalid_operation() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1694,11 +1750,13 @@ async fn delete_section_reversed_range_returns_422_invalid_operation() {
 
 #[tokio::test]
 async fn delete_section_out_of_bounds_returns_422_invalid_point_index() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1743,11 +1801,13 @@ async fn delete_section_out_of_bounds_returns_422_invalid_point_index() {
 
 #[tokio::test]
 async fn delete_section_topology_breaking_returns_422_insufficient_points() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1792,11 +1852,13 @@ async fn delete_section_topology_breaking_returns_422_insufficient_points() {
 
 #[tokio::test]
 async fn stale_revision_returns_409_with_problem_details() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1870,11 +1932,13 @@ async fn stale_revision_returns_409_with_problem_details() {
 
 #[tokio::test]
 async fn apply_move_point_invalid_coordinates_returns_422() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1915,11 +1979,13 @@ async fn apply_move_point_invalid_coordinates_returns_422() {
 
 #[tokio::test]
 async fn apply_add_point_returns_200_with_new_revision() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -1964,11 +2030,13 @@ async fn apply_add_point_returns_200_with_new_revision() {
 
 #[tokio::test]
 async fn apply_add_point_with_elevation_returns_200() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2013,11 +2081,13 @@ async fn apply_add_point_with_elevation_returns_200() {
 
 #[tokio::test]
 async fn apply_delete_point_returns_200_with_new_revision() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2062,11 +2132,13 @@ async fn apply_delete_point_returns_200_with_new_revision() {
 
 #[tokio::test]
 async fn apply_delete_point_minimum_violation_returns_422() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2137,11 +2209,13 @@ async fn apply_delete_point_minimum_violation_returns_422() {
 
 #[tokio::test]
 async fn apply_add_point_invalid_segment_returns_422() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2186,11 +2260,13 @@ async fn apply_add_point_invalid_segment_returns_422() {
 
 #[tokio::test]
 async fn apply_delete_point_invalid_index_returns_422() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2234,11 +2310,13 @@ async fn apply_delete_point_invalid_index_returns_422() {
 
 #[tokio::test]
 async fn apply_move_point_another_owner_returns_404() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -2313,6 +2391,7 @@ async fn reset_fetches_base_geometry_from_gateway() {
             vec![(version_id, activity_id, base_geometry.clone())],
         )),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -2426,11 +2505,13 @@ async fn reset_fetches_base_geometry_from_gateway() {
 
 #[tokio::test]
 async fn reset_without_base_version_returns_422() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2469,6 +2550,7 @@ async fn reset_without_base_version_returns_422() {
 
 #[tokio::test]
 async fn reset_with_stale_revision_returns_409() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
     let version_id = Uuid::new_v4();
@@ -2495,6 +2577,7 @@ async fn reset_with_stale_revision_returns_409() {
             vec![(version_id, activity_id, base_geometry)],
         )),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -2573,6 +2656,7 @@ async fn reset_with_stale_revision_returns_409() {
 
 #[tokio::test]
 async fn reset_cross_owner_returns_404() {
+    ensure_dev_auth();
     let user1 = Uuid::new_v4();
     let user2 = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
@@ -2600,6 +2684,7 @@ async fn reset_cross_owner_returns_404() {
             vec![(version_id, activity_id, base_geometry)],
         )),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -2653,6 +2738,7 @@ async fn reset_cross_owner_returns_404() {
 
 #[tokio::test]
 async fn reset_gateway_rejects_geometry_returns_422() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
     let version_id = Uuid::new_v4();
@@ -2672,6 +2758,7 @@ async fn reset_gateway_rejects_geometry_returns_422() {
             activity_id,
         )])),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -2744,12 +2831,14 @@ async fn publish_draft_in_repo(repo: &InMemoryRouteDraftRepository, draft_id: &s
 
 #[tokio::test]
 async fn apply_operation_to_published_draft_returns_409() {
+    ensure_dev_auth();
     let repo = Arc::new(InMemoryRouteDraftRepository::new());
     let state = RouteEditingAppState {
         repo: repo.clone(),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2797,11 +2886,13 @@ async fn apply_operation_to_published_draft_returns_409() {
 
 #[tokio::test]
 async fn apply_operation_to_discarded_draft_returns_409() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2861,12 +2952,14 @@ async fn apply_operation_to_discarded_draft_returns_409() {
 
 #[tokio::test]
 async fn undo_on_published_draft_returns_409() {
+    ensure_dev_auth();
     let repo = Arc::new(InMemoryRouteDraftRepository::new());
     let state = RouteEditingAppState {
         repo: repo.clone(),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -2930,11 +3023,13 @@ async fn undo_on_published_draft_returns_409() {
 
 #[tokio::test]
 async fn redo_on_discarded_draft_returns_409() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3177,11 +3272,13 @@ async fn contract_create_draft_response_matches_route_draft_response_schema() {
 
 #[tokio::test]
 async fn contract_get_draft_response_matches_route_draft_response_schema() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3213,11 +3310,13 @@ async fn contract_get_draft_response_matches_route_draft_response_schema() {
 
 #[tokio::test]
 async fn contract_apply_operation_response_matches_operation_result_schema() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3261,11 +3360,13 @@ async fn contract_apply_operation_response_matches_operation_result_schema() {
 
 #[tokio::test]
 async fn contract_undo_response_matches_operation_result_schema() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3324,11 +3425,13 @@ async fn contract_undo_response_matches_operation_result_schema() {
 
 #[tokio::test]
 async fn contract_redo_response_matches_operation_result_schema() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3403,11 +3506,13 @@ async fn contract_redo_response_matches_operation_result_schema() {
 
 #[tokio::test]
 async fn contract_all_error_codes_have_correct_problem_detail_structure() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3485,11 +3590,13 @@ async fn contract_all_error_codes_have_correct_problem_detail_structure() {
 
 #[tokio::test]
 async fn contract_insufficient_points_error_matches_problem_detail_schema() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3534,11 +3641,13 @@ async fn contract_insufficient_points_error_matches_problem_detail_schema() {
 
 #[tokio::test]
 async fn contract_invalid_operation_error_matches_problem_detail_schema() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3583,11 +3692,13 @@ async fn contract_invalid_operation_error_matches_problem_detail_schema() {
 
 #[tokio::test]
 async fn contract_revision_conflict_error_matches_problem_detail_schema() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3685,11 +3796,13 @@ async fn contract_not_found_error_matches_problem_detail_schema() {
 
 #[tokio::test]
 async fn contract_cross_owner_error_matches_problem_detail_schema() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -3723,12 +3836,14 @@ async fn contract_cross_owner_error_matches_problem_detail_schema() {
 
 #[tokio::test]
 async fn contract_draft_not_active_error_matches_problem_detail_schema() {
+    ensure_dev_auth();
     let repo = Arc::new(InMemoryRouteDraftRepository::new());
     let state = RouteEditingAppState {
         repo: repo.clone(),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3778,6 +3893,7 @@ async fn contract_draft_not_active_error_matches_problem_detail_schema() {
 
 #[tokio::test]
 async fn validate_valid_draft_returns_200_with_valid_true() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
     let version_id = Uuid::new_v4();
@@ -3794,6 +3910,7 @@ async fn validate_valid_draft_returns_200_with_valid_true() {
             activity_id,
         )])),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -3850,11 +3967,13 @@ async fn validate_valid_draft_returns_200_with_valid_true() {
 
 #[tokio::test]
 async fn validate_draft_not_found_returns_404() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3880,11 +3999,13 @@ async fn validate_draft_not_found_returns_404() {
 
 #[tokio::test]
 async fn validate_wrong_owner_returns_404() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -3914,12 +4035,14 @@ async fn validate_wrong_owner_returns_404() {
 
 #[tokio::test]
 async fn validate_published_draft_returns_409() {
+    ensure_dev_auth();
     let repo = Arc::new(InMemoryRouteDraftRepository::new());
     let state = RouteEditingAppState {
         repo: repo.clone(),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3955,11 +4078,13 @@ async fn validate_published_draft_returns_409() {
 
 #[tokio::test]
 async fn validate_revision_mismatch_returns_409() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -3994,11 +4119,13 @@ async fn validate_revision_mismatch_returns_409() {
 
 #[tokio::test]
 async fn validate_no_base_version_returns_200_with_valid_false() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user_id = Uuid::new_v4();
@@ -4035,6 +4162,7 @@ async fn validate_no_base_version_returns_200_with_valid_false() {
 
 #[tokio::test]
 async fn validate_does_not_modify_draft_state() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
     let version_id = Uuid::new_v4();
@@ -4051,6 +4179,7 @@ async fn validate_does_not_modify_draft_state() {
             activity_id,
         )])),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -4120,6 +4249,7 @@ async fn validate_does_not_modify_draft_state() {
 
 #[tokio::test]
 async fn validate_multiple_geometry_errors_returned_together_in_200() {
+    ensure_dev_auth();
     let user_id = Uuid::new_v4();
     let activity_id = ActivityId::new(Uuid::new_v4());
 
@@ -4133,6 +4263,7 @@ async fn validate_multiple_geometry_errors_returned_together_in_200() {
         )])),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
 
@@ -4297,6 +4428,7 @@ fn publication_test_app(
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: Some(Arc::new(committer)),
+        session_store: dummy_session_store(),
     };
     (test_app_with_state(state), repo)
 }
@@ -4830,11 +4962,13 @@ async fn publish_draft_without_auth_returns_401() {
 
 #[tokio::test]
 async fn undo_cross_owner_returns_404() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -4892,11 +5026,13 @@ async fn undo_cross_owner_returns_404() {
 
 #[tokio::test]
 async fn redo_cross_owner_returns_404() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();
@@ -4970,11 +5106,13 @@ async fn redo_cross_owner_returns_404() {
 
 #[tokio::test]
 async fn delete_draft_cross_owner_returns_404() {
+    ensure_dev_auth();
     let state = RouteEditingAppState {
         repo: Arc::new(InMemoryRouteDraftRepository::new()),
         activity_gateway: Arc::new(InMemoryActivityGateway::permissive()),
         route_version_gateway: Arc::new(InMemoryRouteVersionGateway::permissive()),
         publication_committer: None,
+        session_store: dummy_session_store(),
     };
     let app = test_app_with_state(state);
     let user1 = Uuid::new_v4();

@@ -21,12 +21,13 @@ use haiker_app::exports::{
 };
 use haiker_app::route_versioning::RouteVersionId;
 
-use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
 use crate::exports_dto::{
     ExportDownloadUrlResponse, ExportStatusResponse, RequestExportRequest, RequestExportResponse,
 };
 use crate::imports::JobEnqueuer;
+use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_platform::session::SessionStore;
 
 /// Shared application state for export handlers.
 #[derive(Clone)]
@@ -36,6 +37,13 @@ pub struct ExportAppState {
     pub job_queue: Option<Arc<dyn JobEnqueuer>>,
     pub download_url_generator: Option<Arc<dyn DownloadUrlGenerator>>,
     pub audit_sink: Option<Arc<dyn ExportAuditSink>>,
+    pub session_store: SessionStore,
+}
+
+impl HasSessionStore for ExportAppState {
+    fn session_store(&self) -> &SessionStore {
+        &self.session_store
+    }
 }
 
 /// Trait for audit logging within the export subsystem.
@@ -260,7 +268,7 @@ fn parse_export_format(format: &str) -> Result<ExportFormat, ApiError> {
 /// Returns 202 Accepted with the export ID and status.
 pub async fn post_request_export(
     State(state): State<ExportAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(activity_id): Path<Uuid>,
     headers: HeaderMap,
     Json(body): Json<RequestExportRequest>,
@@ -340,7 +348,7 @@ pub async fn post_request_export(
 /// Get the current status of an export.
 pub async fn get_export_status(
     State(state): State<ExportAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(export_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let export_job = handle_get_export(
@@ -413,7 +421,7 @@ fn sanitize_filename(name: &str, extension: &str) -> String {
 /// Authorize and return a short-lived presigned download URL for the export.
 pub async fn get_export_download(
     State(state): State<ExportAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(export_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Validate authorization, status, and expiry via domain command
@@ -653,13 +661,30 @@ mod tests {
     use axum::Router;
     use tower::ServiceExt;
 
+    /// Ensure DEV_AUTH_ENABLED is set so AuthSession accepts Bearer UUID tokens.
+    fn ensure_dev_auth() {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            std::env::set_var("DEV_AUTH_ENABLED", "true");
+        });
+    }
+
+    /// Create a dummy SessionStore for tests.
+    fn dummy_session_store() -> SessionStore {
+        let pool = sqlx::PgPool::connect_lazy("postgres://test:test@localhost/test").unwrap();
+        SessionStore::new(pool)
+    }
+
     fn test_app() -> Router {
+        ensure_dev_auth();
         let state = ExportAppState {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
             download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
             audit_sink: Some(Arc::new(FakeAuditSink::new())),
+            session_store: dummy_session_store(),
         };
 
         Router::new()
@@ -827,12 +852,14 @@ mod tests {
 
     #[tokio::test]
     async fn post_request_export_idempotency_replay_returns_same_export() {
+        ensure_dev_auth();
         let state = ExportAppState {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
             download_url_generator: None,
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -895,12 +922,14 @@ mod tests {
 
     #[tokio::test]
     async fn post_request_export_idempotency_mismatch_returns_409() {
+        ensure_dev_auth();
         let state = ExportAppState {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
             download_url_generator: None,
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -966,12 +995,14 @@ mod tests {
 
     #[tokio::test]
     async fn get_export_status_returns_200() {
+        ensure_dev_auth();
         let state = ExportAppState {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
             download_url_generator: None,
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1064,12 +1095,14 @@ mod tests {
 
     #[tokio::test]
     async fn get_export_wrong_owner_returns_404() {
+        ensure_dev_auth();
         let state = ExportAppState {
             repo: Arc::new(InMemoryExportRepository::new()),
             route_version_gateway: Arc::new(StubRouteVersionGateway),
             job_queue: None,
             download_url_generator: None,
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1129,6 +1162,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_failed_export_has_sanitized_failure_reason() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryExportRepository::new());
 
         // Create a failed export with internal error details
@@ -1160,6 +1194,7 @@ mod tests {
             job_queue: None,
             download_url_generator: None,
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1189,6 +1224,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_failed_export_passes_through_safe_failure_reason() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryExportRepository::new());
 
         let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
@@ -1219,6 +1255,7 @@ mod tests {
             job_queue: None,
             download_url_generator: None,
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1285,6 +1322,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_ready_export_does_not_include_object_storage_key() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryExportRepository::new());
 
         let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
@@ -1321,6 +1359,7 @@ mod tests {
             job_queue: None,
             download_url_generator: None,
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1405,6 +1444,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_export_happy_path_returns_200_with_expected_fields() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryExportRepository::new());
         let audit_sink = Arc::new(FakeAuditSink::new());
 
@@ -1416,6 +1456,7 @@ mod tests {
             job_queue: None,
             download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
             audit_sink: Some(audit_sink.clone()),
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1468,6 +1509,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_export_cross_owner_returns_404() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryExportRepository::new());
         let (export_job, _owner_id) = create_ready_export(&repo, "exports/user/file.gpx");
 
@@ -1477,6 +1519,7 @@ mod tests {
             job_queue: None,
             download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1504,6 +1547,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_export_non_ready_returns_409() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryExportRepository::new());
 
         let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
@@ -1532,6 +1576,7 @@ mod tests {
             job_queue: None,
             download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1558,6 +1603,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_export_expired_returns_410() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryExportRepository::new());
 
         let owner_id = haiker_app::identity::UserId::new(Uuid::new_v4());
@@ -1595,6 +1641,7 @@ mod tests {
             job_queue: None,
             download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1689,6 +1736,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_export_response_does_not_contain_object_storage_key() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryExportRepository::new());
         let storage_key = "exports/private/secret-internal-key.gpx";
         let (export_job, owner_id) = create_ready_export(&repo, storage_key);
@@ -1699,6 +1747,7 @@ mod tests {
             job_queue: None,
             download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
             audit_sink: None,
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()
@@ -1738,6 +1787,7 @@ mod tests {
 
     #[tokio::test]
     async fn download_export_audit_does_not_log_url() {
+        ensure_dev_auth();
         let repo = Arc::new(InMemoryExportRepository::new());
         let audit_sink = Arc::new(FakeAuditSink::new());
         let (export_job, owner_id) = create_ready_export(&repo, "exports/user/audit-test.gpx");
@@ -1748,6 +1798,7 @@ mod tests {
             job_queue: None,
             download_url_generator: Some(Arc::new(FakeDownloadUrlGenerator)),
             audit_sink: Some(audit_sink.clone()),
+            session_store: dummy_session_store(),
         };
 
         let app = Router::new()

@@ -13,18 +13,26 @@ use haiker_app::activity_catalog::repository::ActivityRepository;
 use haiker_app::recorded_activity::queries::{get_recorded_route, RecordedRouteResult};
 use haiker_app::recorded_activity::{RecordedActivityError, RecordedRouteRepository};
 
-use crate::auth::AuthenticatedActor;
 use crate::error::ApiError;
 use crate::recorded_route_dto::{
     GeoJsonFeature, GeoJsonGeometry, RecordedRouteParams, RecordedRoutePreviewResponse,
     RecordedRouteResponse, RouteDetail, RouteProperties, SegmentProperties,
 };
+use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_platform::session::SessionStore;
 
 /// Shared application state for recorded route handlers.
 #[derive(Clone)]
 pub struct RecordedRouteAppState {
     pub activity_repo: Arc<dyn ActivityRepository>,
     pub route_repo: Arc<dyn RecordedRouteRepository>,
+    pub session_store: SessionStore,
+}
+
+impl HasSessionStore for RecordedRouteAppState {
+    fn session_store(&self) -> &SessionStore {
+        &self.session_store
+    }
 }
 
 /// Convert a RecordedActivityError to an ApiError.
@@ -67,7 +75,7 @@ fn recorded_route_error_to_api_error(err: RecordedActivityError) -> ApiError {
 #[tracing::instrument(skip(state, actor))]
 pub async fn get_recorded_route_handler(
     State(state): State<RecordedRouteAppState>,
-    actor: AuthenticatedActor,
+    actor: AuthSession,
     Path(activity_id): Path<Uuid>,
     Query(params): Query<RecordedRouteParams>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -180,6 +188,21 @@ mod tests {
         RouteStatistics,
     };
     use haiker_app::recorded_activity::{BoundingBox, Coordinate, RecordedActivityError};
+
+    /// Ensure DEV_AUTH_ENABLED is set so AuthSession accepts Bearer UUID tokens.
+    fn ensure_dev_auth() {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            std::env::set_var("DEV_AUTH_ENABLED", "true");
+        });
+    }
+
+    /// Create a dummy SessionStore for tests.
+    fn dummy_session_store() -> SessionStore {
+        let pool = sqlx::PgPool::connect_lazy("postgres://test:test@localhost/test").unwrap();
+        SessionStore::new(pool)
+    }
 
     // --- In-memory ActivityRepository for tests ---
 
@@ -350,9 +373,11 @@ mod tests {
     }
 
     fn test_app(activities: Vec<Activity>, route_repo: Arc<dyn RecordedRouteRepository>) -> Router {
+        ensure_dev_auth();
         let state = RecordedRouteAppState {
             activity_repo: Arc::new(TestActivityRepository::with_activities(activities)),
             route_repo,
+            session_store: dummy_session_store(),
         };
 
         Router::new()
