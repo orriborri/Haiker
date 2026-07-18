@@ -53,7 +53,7 @@ becomes available.
 | Critical threshold                | 500      | Trigger scaling or shed load       |
 
 When the queue reaches the max of 1,000 pending jobs, the system applies
-backpressure by rejecting new import requests with HTTP 503 (Service Unavailable).
+backpressure by rejecting new import requests with HTTP 429 (Too Many Requests).
 
 ---
 

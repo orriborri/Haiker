@@ -89,11 +89,7 @@ jobs:
           sqlx migrate run --source migrations/
 
       - name: Generate test fixtures
-        run: |
-          mkdir -p tests/performance/fixtures
-          if [ ! -f tests/performance/fixtures/large_route.gpx ]; then
-            cp crates/test_support/fixtures/large_route.gpx tests/performance/fixtures/ 2>/dev/null || true
-          fi
+        run: bash tests/performance/fixtures/generate-fixtures.sh
 
       - name: Start API server
         run: |
@@ -115,20 +111,29 @@ jobs:
           sudo apt-get install -y k6
 
       - name: Run k6 performance tests
+        env:
+          # Placeholder token for CI. For full integration testing with
+          # authenticated endpoints, replace with a real token provisioned
+          # from the OIDC provider or test user creation step.
+          AUTH_TOKEN: "perf-test-token"
         run: |
           SCENARIO="${{ inputs.test_scenario }}"
           VUS="${{ inputs.vus }}"
           DURATION="${{ inputs.duration }}"
 
-          K6_OPTS="--vus ${VUS} --duration ${DURATION} --out json=tests/performance/results/output.json"
-
           run_test() {
             local script="$1"
+            local basename="${script%.js}"
+            local K6_OPTS="--vus ${VUS} --duration ${DURATION} --out json=tests/performance/results/${basename}.json"
             echo "Running: ${script}"
             k6 run ${K6_OPTS} "tests/performance/k6/${script}"
           }
 
           mkdir -p tests/performance/results
+
+          # Note: Test data seeding is not yet automated. Tests that reference
+          # ACTIVITY_IDS will exercise error/empty paths unless data is seeded
+          # in the database before running.
 
           case "${SCENARIO}" in
             all)
