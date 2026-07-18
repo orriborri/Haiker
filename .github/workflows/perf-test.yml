@@ -1,0 +1,185 @@
+name: Performance Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_scenario:
+        description: "Test scenario to run"
+        required: true
+        type: choice
+        options:
+          - all
+          - metadata
+          - preview
+          - mutations
+          - import
+          - export
+          - queue-pressure
+          - editor
+          - autosave
+          - map-failure
+          - worker-outage
+      vus:
+        description: "Number of virtual users"
+        required: false
+        type: number
+        default: 10
+      duration:
+        description: "Test duration (e.g. 1m, 5m, 30s)"
+        required: false
+        type: string
+        default: "1m"
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: "true"
+  DATABASE_URL: postgres://haiker:haiker_test_password@localhost:5432/haiker_test
+  MINIO_ENDPOINT: http://localhost:9000
+  MINIO_ACCESS_KEY: minioadmin
+  MINIO_SECRET_KEY: minioadmin
+
+jobs:
+  perf-test:
+    name: Run Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: haiker_test
+          POSTGRES_USER: haiker
+          POSTGRES_PASSWORD: haiker_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U haiker -d haiker_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 10s
+
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build API binary
+        run: cargo build --release --bin haiker-api
+
+      - name: Run database migrations
+        run: |
+          cargo install sqlx-cli --no-default-features --features postgres || true
+          sqlx migrate run --source migrations/
+
+      - name: Generate test fixtures
+        run: |
+          mkdir -p tests/performance/fixtures
+          if [ ! -f tests/performance/fixtures/large_route.gpx ]; then
+            cp crates/test_support/fixtures/large_route.gpx tests/performance/fixtures/ 2>/dev/null || true
+          fi
+
+      - name: Start API server
+        run: |
+          ./target/release/haiker-api &
+          echo "Waiting for API server to start..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/health > /dev/null 2>&1; then
+              echo "API server is ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Install k6
+        run: |
+          curl -sS https://dl.k6.io/key.gpg | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/k6.gpg > /dev/null
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run k6 performance tests
+        run: |
+          SCENARIO="${{ inputs.test_scenario }}"
+          VUS="${{ inputs.vus }}"
+          DURATION="${{ inputs.duration }}"
+
+          K6_OPTS="--vus ${VUS} --duration ${DURATION} --out json=tests/performance/results/output.json"
+
+          run_test() {
+            local script="$1"
+            echo "Running: ${script}"
+            k6 run ${K6_OPTS} "tests/performance/k6/${script}"
+          }
+
+          mkdir -p tests/performance/results
+
+          case "${SCENARIO}" in
+            all)
+              run_test "metadata-operations.js"
+              run_test "preview-rendering.js"
+              run_test "mutations.js"
+              run_test "import-large-file.js"
+              run_test "export.js"
+              run_test "queue-pressure.js"
+              run_test "editor-interaction.js"
+              run_test "autosave.js"
+              run_test "map-failure-recovery.js"
+              run_test "worker-outage.js"
+              ;;
+            metadata)
+              run_test "metadata-operations.js"
+              ;;
+            preview)
+              run_test "preview-rendering.js"
+              ;;
+            mutations)
+              run_test "mutations.js"
+              ;;
+            import)
+              run_test "import-large-file.js"
+              run_test "import-large-points.js"
+              ;;
+            export)
+              run_test "export.js"
+              ;;
+            queue-pressure)
+              run_test "queue-pressure.js"
+              ;;
+            editor)
+              run_test "editor-interaction.js"
+              ;;
+            autosave)
+              run_test "autosave.js"
+              ;;
+            map-failure)
+              run_test "map-failure-recovery.js"
+              ;;
+            worker-outage)
+              run_test "worker-outage.js"
+              ;;
+          esac
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results-${{ inputs.test_scenario }}-${{ github.run_id }}
+          path: tests/performance/results/
+          retention-days: 30
