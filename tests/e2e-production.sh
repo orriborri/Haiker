@@ -16,6 +16,9 @@
 #   API_URL=https://staging.haiker.app TEST_AUTH_TOKEN="tok_xxx" ./tests/e2e-production.sh
 # =============================================================================
 
+# Note: -e is intentionally omitted. Each test case handles errors individually via
+# assertion helpers and early returns, rather than aborting the entire suite on the
+# first non-zero exit code. This allows per-test pass/fail reporting.
 set -uo pipefail
 
 # ---------------------------------------------------------------------------

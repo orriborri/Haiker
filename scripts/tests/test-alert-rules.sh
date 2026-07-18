@@ -7,7 +7,7 @@ set -euo pipefail
 # Validates that deploy/backup/monitoring/alert-rules.yml:
 #   1. Is valid YAML
 #   2. Every rule has required fields (name, description, condition, severity, owner, runbook_link)
-#   3. Every runbook_link points to an existing file or a known planned file
+#   3. Every runbook_link points to an existing file in docs/runbooks/
 #   4. Owner values are from the allowed set (platform, backend, on-call)
 #   5. Severity values are from the allowed set (critical, warning, info)
 #   6. No duplicate rule names exist
@@ -76,15 +76,6 @@ required_fields = ["name", "description", "condition", "severity", "owner", "run
 allowed_severities = {"critical", "warning", "info"}
 allowed_owners = {"platform", "backend", "on-call"}
 
-# Known planned runbooks (being created in FEAT-002)
-planned_runbooks = {
-    "docs/runbooks/incident-response.md",
-    "docs/runbooks/rollback.md",
-    "docs/runbooks/secret-rotation.md",
-    "docs/runbooks/data-recovery.md",
-    "docs/runbooks/dependency-outage.md",
-}
-
 errors = []
 names_seen = []
 categories_found = set()
@@ -125,8 +116,8 @@ for i, rule in enumerate(rules):
     runbook_link = rule.get("runbook_link", "")
     if runbook_link:
         full_path = os.path.join(root_dir, runbook_link)
-        if not os.path.isfile(full_path) and runbook_link not in planned_runbooks:
-            errors.append(f"BAD_RUNBOOK:{rule_name}:runbook_link '{runbook_link}' does not exist and is not in the planned set")
+        if not os.path.isfile(full_path):
+            errors.append(f"BAD_RUNBOOK:{rule_name}:runbook_link '{runbook_link}' does not exist")
 
     # Track names for duplicate detection
     names_seen.append(rule_name)
@@ -172,7 +163,7 @@ if echo "$validation_output" | grep -q "^ALL_CLEAR"; then
   pass "All $rule_count rules have required fields (name, description, condition, severity, owner, runbook_link)"
   pass "All severity values are valid (critical, warning, info)"
   pass "All owner values are valid (platform, backend, on-call)"
-  pass "All runbook_link values point to existing or planned runbook files"
+  pass "All runbook_link values point to existing runbook files"
   pass "No duplicate rule names found"
   pass "All required subsystem categories covered ($category_count categories)"
 else
