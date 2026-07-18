@@ -87,8 +87,10 @@ pub async fn post_login(State(state): State<AuthAppState>) -> Response {
     };
 
     match provider.authorization_url().await {
-        Ok((url, csrf_state, nonce)) => {
-            state.state_store.store_state(csrf_state, nonce);
+        Ok((url, csrf_state, nonce, code_verifier)) => {
+            state
+                .state_store
+                .store_state(csrf_state, nonce, code_verifier);
             (
                 StatusCode::OK,
                 Json(LoginResponse {
@@ -190,9 +192,9 @@ pub async fn get_callback(
         }
     };
 
-    // Consume the state and retrieve the nonce
-    let nonce = match state.state_store.consume_state(callback_state) {
-        Some(n) => n,
+    // Consume the state and retrieve the nonce + code_verifier
+    let (nonce, code_verifier) = match state.state_store.consume_state(callback_state) {
+        Some(pair) => pair,
         None => {
             tracing::warn!(state = %callback_state, "Invalid or expired state parameter");
             return (
@@ -208,8 +210,8 @@ pub async fn get_callback(
         }
     };
 
-    // Exchange the code for claims
-    let claims = match provider.exchange_code(code, &nonce).await {
+    // Exchange the code for claims (with PKCE code_verifier)
+    let claims = match provider.exchange_code(code, &nonce, &code_verifier).await {
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Code exchange failed");
@@ -460,11 +462,14 @@ mod tests {
 
     #[async_trait::async_trait]
     impl OidcProvider for MockOidcProvider {
-        async fn authorization_url(&self) -> Result<(String, String, String), AuthenticationError> {
+        async fn authorization_url(
+            &self,
+        ) -> Result<(String, String, String, String), AuthenticationError> {
             Ok((
                 self.auth_url.clone(),
                 self.state.clone(),
                 self.nonce.clone(),
+                "mock-code-verifier".to_string(),
             ))
         }
 
@@ -472,6 +477,7 @@ mod tests {
             &self,
             _code: &str,
             _nonce: &str,
+            _code_verifier: &str,
         ) -> Result<OidcClaims, AuthenticationError> {
             Ok(self.claims.clone())
         }
@@ -482,7 +488,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl OidcProvider for FailingOidcProvider {
-        async fn authorization_url(&self) -> Result<(String, String, String), AuthenticationError> {
+        async fn authorization_url(
+            &self,
+        ) -> Result<(String, String, String, String), AuthenticationError> {
             Err(AuthenticationError::ProviderError(
                 "test failure".to_string(),
             ))
@@ -492,6 +500,7 @@ mod tests {
             &self,
             _code: &str,
             _nonce: &str,
+            _code_verifier: &str,
         ) -> Result<OidcClaims, AuthenticationError> {
             Err(AuthenticationError::CodeExchangeFailed(
                 "test failure".to_string(),
@@ -776,7 +785,7 @@ mod tests {
         // Simulate what POST /auth/login does: store the state
         state
             .state_store
-            .store_state("stored-state".to_string(), "stored-nonce".to_string());
+            .store_state("stored-state".to_string(), "stored-nonce".to_string(), "stored-verifier".to_string());
 
         let app = test_router(state);
 

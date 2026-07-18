@@ -254,17 +254,21 @@ async fn main() {
             .unwrap_or(true),
     };
 
-    // Warn loudly if both OIDC and dev auth are enabled simultaneously
+    // SECURITY: Refuse to start if both OIDC and DEV_AUTH_ENABLED are set.
+    // DEV_AUTH_ENABLED allows any caller to impersonate any user via a Bearer UUID,
+    // which completely bypasses real authentication. This must never be active
+    // when a real OIDC provider is configured.
     if app_config.oidc.is_some() {
         let dev_auth_enabled = std::env::var("DEV_AUTH_ENABLED")
             .map(|v| v == "true" || v == "1")
             .unwrap_or(false);
         if dev_auth_enabled {
             tracing::error!(
-                "SECURITY RISK: Both OIDC provider and DEV_AUTH_ENABLED=true are configured. \
-                 The dev auth bypass allows any caller to fabricate identity via a Bearer UUID. \
-                 This MUST NOT be used in production. Disable DEV_AUTH_ENABLED for production deployments."
+                "FATAL: Both OIDC provider and DEV_AUTH_ENABLED=true are configured. \
+                 This is a critical security misconfiguration. The server will not start. \
+                 Set DEV_AUTH_ENABLED=false or remove the OIDC configuration."
             );
+            std::process::exit(1);
         }
     }
 

@@ -15,6 +15,7 @@ const DEFAULT_TTL: Duration = Duration::from_secs(600);
 #[derive(Debug, Clone)]
 struct StateEntry {
     nonce: String,
+    code_verifier: String,
     expires_at: Instant,
 }
 
@@ -46,8 +47,8 @@ impl OidcStateStore {
         }
     }
 
-    /// Store a state/nonce pair. The entry will expire after the configured TTL.
-    pub fn store_state(&self, state: String, nonce: String) {
+    /// Store a state/nonce/code_verifier triple. The entry will expire after the configured TTL.
+    pub fn store_state(&self, state: String, nonce: String, code_verifier: String) {
         let mut entries = self.entries.lock().expect("state store lock poisoned");
         // Opportunistic cleanup of expired entries
         let now = Instant::now();
@@ -56,19 +57,20 @@ impl OidcStateStore {
             state,
             StateEntry {
                 nonce,
+                code_verifier,
                 expires_at: now + self.ttl,
             },
         );
     }
 
-    /// Consume a state entry, returning the associated nonce if found and not expired.
+    /// Consume a state entry, returning the associated (nonce, code_verifier) if found and not expired.
     ///
     /// The entry is removed from the store after consumption to prevent replay.
-    pub fn consume_state(&self, state: &str) -> Option<String> {
+    pub fn consume_state(&self, state: &str) -> Option<(String, String)> {
         let mut entries = self.entries.lock().expect("state store lock poisoned");
         let entry = entries.remove(state)?;
         if entry.expires_at > Instant::now() {
-            Some(entry.nonce)
+            Some((entry.nonce, entry.code_verifier))
         } else {
             None
         }
@@ -88,16 +90,27 @@ mod tests {
     #[test]
     fn store_and_consume_state() {
         let store = OidcStateStore::new();
-        store.store_state("state123".to_string(), "nonce456".to_string());
+        store.store_state(
+            "state123".to_string(),
+            "nonce456".to_string(),
+            "verifier789".to_string(),
+        );
 
-        let nonce = store.consume_state("state123");
-        assert_eq!(nonce, Some("nonce456".to_string()));
+        let result = store.consume_state("state123");
+        assert_eq!(
+            result,
+            Some(("nonce456".to_string(), "verifier789".to_string()))
+        );
     }
 
     #[test]
     fn consume_removes_entry() {
         let store = OidcStateStore::new();
-        store.store_state("state123".to_string(), "nonce456".to_string());
+        store.store_state(
+            "state123".to_string(),
+            "nonce456".to_string(),
+            "verifier789".to_string(),
+        );
 
         let _ = store.consume_state("state123");
         let second = store.consume_state("state123");
@@ -114,7 +127,11 @@ mod tests {
     #[test]
     fn expired_entry_returns_none() {
         let store = OidcStateStore::with_ttl(Duration::from_millis(1));
-        store.store_state("state123".to_string(), "nonce456".to_string());
+        store.store_state(
+            "state123".to_string(),
+            "nonce456".to_string(),
+            "verifier789".to_string(),
+        );
 
         // Wait for expiry
         std::thread::sleep(Duration::from_millis(10));
@@ -126,12 +143,20 @@ mod tests {
     #[test]
     fn store_cleans_up_expired_entries() {
         let store = OidcStateStore::with_ttl(Duration::from_millis(1));
-        store.store_state("old_state".to_string(), "old_nonce".to_string());
+        store.store_state(
+            "old_state".to_string(),
+            "old_nonce".to_string(),
+            "old_verifier".to_string(),
+        );
 
         std::thread::sleep(Duration::from_millis(10));
 
         // Storing a new entry should clean up the expired one
-        store.store_state("new_state".to_string(), "new_nonce".to_string());
+        store.store_state(
+            "new_state".to_string(),
+            "new_nonce".to_string(),
+            "new_verifier".to_string(),
+        );
 
         let entries = store.entries.lock().unwrap();
         assert_eq!(entries.len(), 1);

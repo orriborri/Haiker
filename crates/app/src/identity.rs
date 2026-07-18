@@ -98,17 +98,23 @@ pub struct OidcClaims {
 pub trait OidcProvider: Send + Sync {
     /// Generate an authorization URL for redirecting the user to the provider.
     ///
-    /// Returns a tuple of (authorization_url, state, nonce).
-    async fn authorization_url(&self) -> Result<(String, String, String), AuthenticationError>;
+    /// Returns a tuple of (authorization_url, state, nonce, code_verifier).
+    /// The `code_verifier` must be stored alongside state/nonce and passed
+    /// back to `exchange_code` for PKCE validation.
+    async fn authorization_url(
+        &self,
+    ) -> Result<(String, String, String, String), AuthenticationError>;
 
     /// Exchange an authorization code for user claims.
     ///
     /// The `nonce` parameter should be the nonce stored alongside the state
     /// when `authorization_url()` was called.
+    /// The `code_verifier` is the PKCE verifier from the same login flow.
     async fn exchange_code(
         &self,
         code: &str,
         nonce: &str,
+        code_verifier: &str,
     ) -> Result<OidcClaims, AuthenticationError>;
 }
 
