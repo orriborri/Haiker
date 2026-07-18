@@ -216,10 +216,6 @@ async fn main() {
         )))
         .with_state(export_state);
 
-    let auth_routes = Router::new()
-        .route("/me", get(auth::me))
-        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Auth)));
-
     // Construct OIDC provider if configured
     let oidc_provider: Option<Arc<dyn haiker_app::identity::OidcProvider>> = if let Some(
         ref oidc_config,
@@ -276,13 +272,13 @@ async fn main() {
         .route("/auth/login", post(auth_handlers::post_login))
         .route("/auth/callback", get(auth_handlers::get_callback))
         .route("/auth/logout", post(auth_handlers::post_logout))
+        .route("/me", get(auth_handlers::get_me))
         .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Auth)))
         .with_state(auth_app_state);
 
     let app = Router::new()
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
-        .merge(auth_routes)
         .merge(auth_flow_routes)
         .merge(import_routes)
         .merge(activity_routes)

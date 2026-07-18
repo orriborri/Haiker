@@ -50,6 +50,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (cancelled) return;
 
       if (user) {
+        // Recover CSRF token from session check (handles page refresh)
+        setCsrfToken(user.csrf_token);
         setAuth({ status: "authenticated", user });
       } else {
         setAuth({ status: "unauthenticated" });

@@ -30,5 +30,6 @@ tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 openidconnect.workspace = true
+jsonwebtoken.workspace = true
 url = "2"
 uuid.workspace = true

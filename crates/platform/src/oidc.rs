@@ -3,6 +3,9 @@
 //! Uses the `openidconnect` crate for discovery and authorization URL generation,
 //! but performs the token exchange manually to work around Auth0's non-standard
 //! `updated_at` timestamp format that breaks `openidconnect`'s strict parsing.
+//!
+//! JWT signature verification is performed using the `jsonwebtoken` crate against
+//! the provider's JWKS (fetched from the discovery document's `jwks_uri`).
 
 use async_trait::async_trait;
 use openidconnect::core::{CoreClient, CoreProviderMetadata, CoreResponseType};
@@ -29,6 +32,8 @@ pub struct Auth0OidcProvider {
     http_client: reqwest::Client,
     /// Token endpoint URL (cached from discovery).
     token_endpoint: String,
+    /// JWKS URI for fetching signing keys.
+    jwks_uri: String,
     /// Issuer URL for validating ID token claims.
     issuer: String,
     /// Redirect URI for token exchange.
@@ -87,6 +92,9 @@ impl Auth0OidcProvider {
                 )
             })?;
 
+        // Cache the JWKS URI for signature verification.
+        let jwks_uri = metadata.jwks_uri().to_string();
+
         let client = CoreClient::from_provider_metadata(
             metadata,
             ClientId::new(config.client_id.clone()),
@@ -100,6 +108,7 @@ impl Auth0OidcProvider {
             client,
             http_client,
             token_endpoint,
+            jwks_uri,
             issuer: normalized_issuer,
             redirect_uri: config.redirect_uri.clone(),
             client_id: config.client_id.clone(),
@@ -173,7 +182,6 @@ impl OidcProvider for Auth0OidcProvider {
                 CsrfToken::new_random,
                 Nonce::new_random,
             )
-            .add_scope(Scope::new("openid".to_string()))
             .add_scope(Scope::new("profile".to_string()))
             .add_scope(Scope::new("email".to_string()))
             .url();
@@ -194,34 +202,10 @@ impl OidcProvider for Auth0OidcProvider {
         // that fails on Auth0's non-standard `updated_at` timestamp format.
         let id_token_str = self.exchange_code_manual(code).await?;
 
-        // Decode the JWT payload manually to extract claims.
-        // The ID token is a JWS (3-part base64 dot-separated: header.payload.signature).
-        // We decode the payload to extract sub, email, name, nonce, and verify nonce.
-        //
-        // Note: In production, you should also verify the JWT signature against the
-        // provider's JWKS. For now, we trust the token because it came directly from
-        // the token endpoint over HTTPS (server-to-server), which is considered secure
-        // per the OIDC spec for confidential clients using the authorization code flow.
-        let parts: Vec<&str> = id_token_str.split('.').collect();
-        if parts.len() != 3 {
-            return Err(AuthenticationError::CodeExchangeFailed(
-                "ID token is not a valid JWT (expected 3 parts)".to_string(),
-            ));
-        }
-
-        // Decode the payload (second part) from base64url
-        let payload_bytes = base64_url_decode(parts[1]).map_err(|e| {
-            AuthenticationError::CodeExchangeFailed(format!(
-                "failed to decode ID token payload: {e}"
-            ))
-        })?;
-
-        let claims_json: serde_json::Value =
-            serde_json::from_slice(&payload_bytes).map_err(|e| {
-                AuthenticationError::CodeExchangeFailed(format!(
-                    "failed to parse ID token claims: {e}"
-                ))
-            })?;
+        // Verify the JWT signature against the provider's JWKS.
+        // This ensures the token was actually issued by the identity provider
+        // and has not been tampered with.
+        let claims_json = self.verify_and_decode_jwt(&id_token_str).await?;
 
         // Verify nonce to prevent replay attacks
         let token_nonce = claims_json
@@ -305,51 +289,95 @@ impl OidcProvider for Auth0OidcProvider {
     }
 }
 
-/// Decode a base64url-encoded string (no padding) into bytes.
-fn base64_url_decode(input: &str) -> Result<Vec<u8>, String> {
-    // base64url uses - instead of + and _ instead of /
-    let mut s = input.replace('-', "+").replace('_', "/");
-    // Add padding if needed
-    match s.len() % 4 {
-        2 => s.push_str("=="),
-        3 => s.push('='),
-        _ => {}
+impl Auth0OidcProvider {
+    /// Verify the JWT signature against the JWKS and decode the payload.
+    ///
+    /// Fetches the JWKS from the provider's `jwks_uri`, finds the key matching
+    /// the token's `kid` header, and verifies the RS256 signature.
+    /// Returns the decoded claims as a JSON value.
+    async fn verify_and_decode_jwt(
+        &self,
+        token: &str,
+    ) -> Result<serde_json::Value, AuthenticationError> {
+        // Fetch JWKS from the provider
+        let jwks_response = self
+            .http_client
+            .get(&self.jwks_uri)
+            .send()
+            .await
+            .map_err(|e| {
+                AuthenticationError::CodeExchangeFailed(format!(
+                    "failed to fetch JWKS: {e}"
+                ))
+            })?;
+
+        let jwks_text = jwks_response.text().await.map_err(|e| {
+            AuthenticationError::CodeExchangeFailed(format!(
+                "failed to read JWKS response: {e}"
+            ))
+        })?;
+
+        let jwks: jsonwebtoken::jwk::JwkSet =
+            serde_json::from_str(&jwks_text).map_err(|e| {
+                AuthenticationError::CodeExchangeFailed(format!(
+                    "failed to parse JWKS: {e}"
+                ))
+            })?;
+
+        // Decode the JWT header to get the key ID (kid)
+        let header = jsonwebtoken::decode_header(token).map_err(|e| {
+            AuthenticationError::CodeExchangeFailed(format!(
+                "failed to decode JWT header: {e}"
+            ))
+        })?;
+
+        let kid = header.kid.ok_or_else(|| {
+            AuthenticationError::CodeExchangeFailed(
+                "JWT header missing kid claim".to_string(),
+            )
+        })?;
+
+        // Find the matching key in the JWKS
+        let jwk = jwks
+            .find(&kid)
+            .ok_or_else(|| {
+                AuthenticationError::CodeExchangeFailed(format!(
+                    "no matching key found in JWKS for kid '{kid}'"
+                ))
+            })?;
+
+        // Build the decoding key from the JWK
+        let decoding_key =
+            jsonwebtoken::DecodingKey::from_jwk(jwk).map_err(|e| {
+                AuthenticationError::CodeExchangeFailed(format!(
+                    "failed to build decoding key from JWK: {e}"
+                ))
+            })?;
+
+        // Decode and verify the JWT signature.
+        // We disable all claim validation here because we do it manually
+        // (the standard validation doesn't handle Auth0's non-standard fields).
+        let mut validation = jsonwebtoken::Validation::new(header.alg);
+        validation.validate_exp = false;
+        validation.validate_aud = false;
+        // Set required claims to empty to avoid default validation
+        validation.set_required_spec_claims::<&str>(&[]);
+        // Set issuer to our expected value
+        validation.set_issuer(&[&self.issuer]);
+
+        let token_data = jsonwebtoken::decode::<serde_json::Value>(
+            token,
+            &decoding_key,
+            &validation,
+        )
+        .map_err(|e| {
+            AuthenticationError::CodeExchangeFailed(format!(
+                "JWT signature verification failed: {e}"
+            ))
+        })?;
+
+        Ok(token_data.claims)
     }
-    // Use a simple base64 decode
-    base64_decode(&s).map_err(|e| format!("base64 decode error: {e}"))
-}
-
-/// Simple base64 standard decode.
-fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
-    // We'll use a minimal decode since we don't have the `base64` crate directly.
-    // The `openidconnect` crate internally depends on base64, but doesn't re-export it.
-    // Use a manual implementation for the JWT payload decode.
-    let alphabet =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    let mut output = Vec::new();
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-
-    for &byte in input.as_bytes() {
-        if byte == b'=' {
-            break;
-        }
-        let val = alphabet
-            .iter()
-            .position(|&b| b == byte)
-            .ok_or_else(|| format!("invalid base64 character: {}", byte as char))?
-            as u32;
-        buf = (buf << 6) | val;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            output.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-
-    Ok(output)
 }
 
 #[cfg(test)]

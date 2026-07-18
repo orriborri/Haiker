@@ -72,7 +72,10 @@ impl IntoResponse for AuthError {
 
 /// Handler for GET /me endpoint.
 ///
-/// Returns the authenticated user's information.
+/// **Deprecated:** Use `auth_handlers::get_me` instead, which validates session cookies.
+/// This handler is retained only as a reference for the Bearer-token-based `/me`
+/// used during early development with DEV_AUTH_ENABLED.
+#[allow(dead_code)]
 #[utoipa::path(
     get,
     path = "/me",

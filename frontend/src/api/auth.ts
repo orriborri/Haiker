@@ -14,6 +14,7 @@ const CallbackResponseSchema = z.object({
 
 const SessionUserSchema = z.object({
   user_id: z.string(),
+  csrf_token: z.string(),
 });
 
 // --- Types ---

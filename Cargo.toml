@@ -68,6 +68,7 @@ tokio-util = { version = "0.7", features = ["rt"] }
 
 # OIDC
 openidconnect = "4"
+jsonwebtoken = "9"
 
 # Internal crates
 haiker-app = { path = "crates/app" }

@@ -44,7 +44,7 @@ export function AuthCallback() {
       try {
         const response = await exchangeCallback(code, state);
         setAuthenticated(
-          { user_id: response.user_id },
+          { user_id: response.user_id, csrf_token: response.csrf_token },
           response.csrf_token,
         );
         void navigate({ to: "/" });
