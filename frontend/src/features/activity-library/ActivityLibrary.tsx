@@ -121,6 +121,10 @@ export function ActivityLibrary() {
   const navigate = useNavigate();
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
+  const handleNavigateToImport = useCallback(() => {
+    void navigate({ to: "/import" });
+  }, [navigate]);
+
   useEffect(() => {
     if (!hasNextPage || isFetchingNextPage) return;
 
@@ -179,10 +183,6 @@ export function ActivityLibrary() {
   }
 
   const allActivities = data?.pages.flatMap((page) => page.items) ?? [];
-
-  const handleNavigateToImport = useCallback(() => {
-    void navigate({ to: "/import" });
-  }, [navigate]);
 
   return (
     <div className="mx-auto max-w-2xl">
