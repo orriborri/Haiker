@@ -183,15 +183,18 @@ impl From<DomainError> for ApiError {
                 request_id: None,
                 details: None,
             },
-            DomainError::Internal { message } => ApiError {
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-                code: "INTERNAL_ERROR".to_string(),
-                message,
-                problem_type: Some("/problems/internal-error".to_string()),
-                title: Some("Internal Server Error".to_string()),
-                request_id: None,
-                details: None,
-            },
+            DomainError::Internal { message } => {
+                tracing::error!(error = %message, "internal domain error");
+                ApiError {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    code: "INTERNAL_ERROR".to_string(),
+                    message: "an unexpected error occurred".to_string(),
+                    problem_type: Some("/problems/internal-error".to_string()),
+                    title: Some("Internal Server Error".to_string()),
+                    request_id: None,
+                    details: None,
+                }
+            }
         }
     }
 }
@@ -307,8 +310,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn domain_internal_maps_to_500_problem_details() {
-        let err: ApiError = DomainError::internal("oops").into();
+    async fn domain_internal_maps_to_500_with_sanitized_message() {
+        let err: ApiError = DomainError::internal("database pool exhausted").into();
         assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(err.code, "INTERNAL_ERROR");
         assert_eq!(
@@ -316,7 +319,8 @@ mod tests {
             Some("/problems/internal-error".to_string())
         );
         assert_eq!(err.title, Some("Internal Server Error".to_string()));
-        assert_eq!(err.message, "oops");
+        // Internal details must never leak to the client
+        assert_eq!(err.message, "an unexpected error occurred");
     }
 
     #[tokio::test]

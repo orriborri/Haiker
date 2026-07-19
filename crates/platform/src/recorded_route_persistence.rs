@@ -40,8 +40,53 @@ type RecordedTrackRow = (
 
 /// Parse the geometry JSON into route segments.
 ///
-/// Expected format: { "segments": [ [ [lng, lat], ... ], ... ] }
+/// The geometry is stored as a JSON array of segments, where each segment has a
+/// `points` array containing objects with `coordinate` (latitude/longitude),
+/// optional `elevation`, and optional `timestamp`:
+///
+/// ```json
+/// [
+///   {
+///     "points": [
+///       { "coordinate": { "latitude": 66.38, "longitude": 29.04 }, "elevation": 220.0, "timestamp": "..." },
+///       ...
+///     ]
+///   }
+/// ]
+/// ```
 fn parse_geometry(geometry_json: &serde_json::Value) -> Vec<RouteSegment> {
+    let segments = match geometry_json.as_array() {
+        Some(segs) => segs,
+        None => {
+            // Fallback: try the old { "segments": [[lng, lat], ...] } format
+            return parse_geometry_legacy(geometry_json);
+        }
+    };
+
+    segments
+        .iter()
+        .filter_map(|seg| {
+            let points = seg.get("points")?.as_array()?;
+            let coords: Vec<Coordinate> = points
+                .iter()
+                .filter_map(|p| {
+                    let coord = p.get("coordinate")?;
+                    let lat = coord.get("latitude")?.as_f64()?;
+                    let lng = coord.get("longitude")?.as_f64()?;
+                    Coordinate::new(lat, lng).ok()
+                })
+                .collect();
+            if coords.is_empty() {
+                None
+            } else {
+                Some(RouteSegment { points: coords })
+            }
+        })
+        .collect()
+}
+
+/// Legacy format parser for geometry stored as `{ "segments": [ [ [lng, lat], ... ] ] }`.
+fn parse_geometry_legacy(geometry_json: &serde_json::Value) -> Vec<RouteSegment> {
     let segments = match geometry_json.get("segments").and_then(|s| s.as_array()) {
         Some(segs) => segs,
         None => return Vec::new(),

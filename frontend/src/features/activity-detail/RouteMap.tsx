@@ -46,12 +46,21 @@ export function RouteMap({ route }: RouteMapProps) {
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
     map.on("load", () => {
+      const geojsonData = {
+        type: "FeatureCollection" as const,
+        features: route.features.map((f) => ({
+          type: "Feature" as const,
+          geometry: {
+            type: f.geometry.type as "LineString",
+            coordinates: f.geometry.coordinates,
+          },
+          properties: f.properties,
+        })),
+      };
+
       map.addSource("route", {
         type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features: route.features,
-        } as GeoJSON.FeatureCollection,
+        data: geojsonData,
       });
 
       map.addLayer({
