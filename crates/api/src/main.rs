@@ -88,7 +88,9 @@ async fn main() {
             client: object_storage.clone(),
         }),
         upload_verifier: Arc::new(object_storage),
-        job_queue: None,
+        job_queue: Some(Arc::new(PgJobEnqueuer {
+            queue: haiker_platform::job_queue::JobQueue::new(pool.clone()),
+        })),
         upload_quota: Some(upload_quota),
         session_store: haiker_platform::session::SessionStore::new(pool.clone()),
     };
@@ -319,6 +321,26 @@ impl haiker_app::imports::commands::UploadUrlGenerator for PresignedUrlGenerator
             .map_err(|e| haiker_app::imports::ImportError::StorageError {
                 message: format!("failed to generate presigned URL: {e}"),
             })
+    }
+}
+
+/// Job enqueuer adapter backed by the platform JobQueue.
+struct PgJobEnqueuer {
+    queue: haiker_platform::job_queue::JobQueue,
+}
+
+#[async_trait::async_trait]
+impl imports::JobEnqueuer for PgJobEnqueuer {
+    async fn enqueue(
+        &self,
+        job_type: &str,
+        payload: serde_json::Value,
+        correlation_id: uuid::Uuid,
+    ) -> Result<uuid::Uuid, String> {
+        self.queue
+            .enqueue_idempotent(job_type, payload, correlation_id)
+            .await
+            .map_err(|e| format!("failed to enqueue job: {e}"))
     }
 }
 

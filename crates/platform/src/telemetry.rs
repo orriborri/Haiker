@@ -42,6 +42,12 @@ pub struct TelemetryConfig {
     pub otlp_endpoint: Option<String>,
     /// The version of the service, used as a resource attribute in telemetry.
     pub service_version: String,
+    /// Optional directory for log file output.
+    /// When set, logs are written to daily-rotating files in this directory.
+    /// Logs are still emitted to stdout as well.
+    pub log_file_dir: Option<String>,
+    /// Optional file name prefix for log files (default: "haiker").
+    pub log_file_prefix: String,
 }
 
 impl TelemetryConfig {
@@ -50,6 +56,8 @@ impl TelemetryConfig {
     /// - `RUST_LOG`: filter directives (default: "info")
     /// - `LOG_FORMAT`: "pretty" or "json" (default: "pretty")
     /// - `SERVICE_NAME`: the service name (default: "haiker")
+    /// - `LOG_FILE_DIR`: directory for log file output (optional; if unset, no file logging)
+    /// - `LOG_FILE_PREFIX`: file name prefix (default: "haiker")
     pub fn from_env() -> Self {
         let log_level = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
         let log_format =
@@ -58,6 +66,9 @@ impl TelemetryConfig {
         let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok();
         let service_version =
             std::env::var("SERVICE_VERSION").unwrap_or_else(|_| "0.1.0".to_string());
+        let log_file_dir = std::env::var("LOG_FILE_DIR").ok();
+        let log_file_prefix =
+            std::env::var("LOG_FILE_PREFIX").unwrap_or_else(|_| "haiker".to_string());
 
         Self {
             log_format,
@@ -65,6 +76,8 @@ impl TelemetryConfig {
             service_name,
             otlp_endpoint,
             service_version,
+            log_file_dir,
+            log_file_prefix,
         }
     }
 }
@@ -72,13 +85,27 @@ impl TelemetryConfig {
 /// Initialize the global tracing subscriber based on the provided configuration.
 ///
 /// This should be called once at application startup. It sets up an `EnvFilter`
-/// and either a pretty or JSON formatter layer.
+/// and either a pretty or JSON formatter layer. When `LOG_FILE_DIR` is configured,
+/// an additional file logging layer writes JSON logs to daily-rotating files.
 pub fn init_telemetry(config: &TelemetryConfig) {
     let env_filter =
         EnvFilter::try_new(&config.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
 
+    // Optional file appender for daily-rotating log files
+    let file_appender = config.log_file_dir.as_ref().map(|dir| {
+        tracing_appender::rolling::daily(dir, &config.log_file_prefix)
+    });
+
     match config.log_format {
         LogFormat::Pretty => {
+            let file_layer = file_appender.map(|appender| {
+                fmt::layer()
+                    .json()
+                    .with_target(true)
+                    .with_current_span(true)
+                    .with_writer(appender)
+            });
+
             tracing_subscriber::registry()
                 .with(env_filter)
                 .with(
@@ -87,9 +114,18 @@ pub fn init_telemetry(config: &TelemetryConfig) {
                         .with_thread_ids(false)
                         .with_file(false),
                 )
+                .with(file_layer)
                 .init();
         }
         LogFormat::Json => {
+            let file_layer = file_appender.map(|appender| {
+                fmt::layer()
+                    .json()
+                    .with_target(true)
+                    .with_current_span(true)
+                    .with_writer(appender)
+            });
+
             tracing_subscriber::registry()
                 .with(env_filter)
                 .with(
@@ -99,11 +135,16 @@ pub fn init_telemetry(config: &TelemetryConfig) {
                         .with_span_events(fmt::format::FmtSpan::NEW | fmt::format::FmtSpan::CLOSE)
                         .with_current_span(true),
                 )
+                .with(file_layer)
                 .init();
         }
     }
 
     tracing::info!(service = %config.service_name, version = %config.service_version, "Telemetry initialized");
+
+    if let Some(ref dir) = config.log_file_dir {
+        tracing::info!(log_dir = %dir, prefix = %config.log_file_prefix, "File logging enabled (daily rotation)");
+    }
 
     if let Some(ref endpoint) = config.otlp_endpoint {
         tracing::info!(
