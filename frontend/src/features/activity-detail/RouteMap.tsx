@@ -48,7 +48,10 @@ export function RouteMap({ route }: RouteMapProps) {
     map.on("load", () => {
       map.addSource("route", {
         type: "geojson",
-        data: route as unknown as GeoJSON.FeatureCollection,
+        data: {
+          type: "FeatureCollection",
+          features: route.features,
+        } as GeoJSON.FeatureCollection,
       });
 
       map.addLayer({
@@ -67,13 +70,12 @@ export function RouteMap({ route }: RouteMapProps) {
       });
 
       // Fit bounds to route
-      const coordinates = extractCoordinates(route);
-      if (coordinates.length > 0) {
-        const bounds = new maplibregl.LngLatBounds();
-        for (const coord of coordinates) {
-          bounds.extend(coord as [number, number]);
-        }
-        map.fitBounds(bounds, { padding: 50 });
+      if (route.bbox.length === 4) {
+        const [west, south, east, north] = route.bbox;
+        map.fitBounds(
+          [[west!, south!], [east!, north!]],
+          { padding: 50 },
+        );
       }
     });
 
@@ -94,23 +96,4 @@ export function RouteMap({ route }: RouteMapProps) {
       tabIndex={0}
     />
   );
-}
-
-function extractCoordinates(route: RecordedRoute): [number, number][] {
-  const coords: [number, number][] = [];
-  for (const feature of route.features) {
-    const geom = feature.geometry;
-    if (geom.type === "LineString") {
-      for (const coord of geom.coordinates) {
-        coords.push(coord as unknown as [number, number]);
-      }
-    } else if (geom.type === "MultiLineString") {
-      for (const line of geom.coordinates as unknown as number[][][]) {
-        for (const coord of line) {
-          coords.push(coord as unknown as [number, number]);
-        }
-      }
-    }
-  }
-  return coords;
 }
