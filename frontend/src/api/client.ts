@@ -389,8 +389,8 @@ const ImportStatusResponseSchema = z.object({
     "failed",
     "cancelled",
   ]),
-  failureReason: z.string().nullable(),
-  activityId: z.string().nullable(),
+  failureReason: z.string().nullable().optional(),
+  activityId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
