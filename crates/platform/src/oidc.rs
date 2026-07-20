@@ -14,13 +14,13 @@ use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use haiker_app::identity::{AuthenticationError, OidcClaims, OidcConfig, OidcProvider};
 use openidconnect::core::{CoreClient, CoreProviderMetadata, CoreResponseType};
 use openidconnect::reqwest;
 use openidconnect::{
     ClientId, ClientSecret, CsrfToken, EndpointMaybeSet, EndpointNotSet, EndpointSet, IssuerUrl,
     Nonce, PkceCodeChallenge, RedirectUrl, Scope,
 };
-use haiker_app::identity::{AuthenticationError, OidcClaims, OidcConfig, OidcProvider};
 
 /// Maximum allowed clock skew for `iat` validation (5 minutes).
 const MAX_CLOCK_SKEW_SECS: i64 = 300;
@@ -90,11 +90,9 @@ impl Auth0OidcProvider {
         let issuer_url = IssuerUrl::new(normalized_issuer.clone())
             .map_err(|e| AuthenticationError::ProviderError(format!("invalid issuer URL: {e}")))?;
 
-        let http_client = reqwest::ClientBuilder::new()
-            .build()
-            .map_err(|e| {
-                AuthenticationError::ProviderError(format!("failed to build HTTP client: {e}"))
-            })?;
+        let http_client = reqwest::ClientBuilder::new().build().map_err(|e| {
+            AuthenticationError::ProviderError(format!("failed to build HTTP client: {e}"))
+        })?;
 
         let metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client)
             .await
@@ -181,18 +179,14 @@ impl Auth0OidcProvider {
         })?;
 
         let body: serde_json::Value = serde_json::from_str(&body_text).map_err(|e| {
-            AuthenticationError::CodeExchangeFailed(format!(
-                "failed to parse token response: {e}"
-            ))
+            AuthenticationError::CodeExchangeFailed(format!("failed to parse token response: {e}"))
         })?;
 
         body.get("id_token")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .ok_or_else(|| {
-                AuthenticationError::CodeExchangeFailed(
-                    "no id_token in token response".to_string(),
-                )
+                AuthenticationError::CodeExchangeFailed("no id_token in token response".to_string())
             })
     }
 
@@ -223,15 +217,12 @@ impl Auth0OidcProvider {
             })?;
 
         let jwks_text = jwks_response.text().await.map_err(|e| {
-            AuthenticationError::CodeExchangeFailed(format!(
-                "failed to read JWKS response: {e}"
-            ))
+            AuthenticationError::CodeExchangeFailed(format!("failed to read JWKS response: {e}"))
         })?;
 
-        let jwks: jsonwebtoken::jwk::JwkSet =
-            serde_json::from_str(&jwks_text).map_err(|e| {
-                AuthenticationError::CodeExchangeFailed(format!("failed to parse JWKS: {e}"))
-            })?;
+        let jwks: jsonwebtoken::jwk::JwkSet = serde_json::from_str(&jwks_text).map_err(|e| {
+            AuthenticationError::CodeExchangeFailed(format!("failed to parse JWKS: {e}"))
+        })?;
 
         // Update cache
         let mut cache = self.jwks_cache.write().expect("jwks cache lock poisoned");
@@ -253,9 +244,7 @@ impl Auth0OidcProvider {
     ) -> Result<serde_json::Value, AuthenticationError> {
         // Decode the JWT header to get the key ID (kid) and algorithm
         let header = jsonwebtoken::decode_header(token).map_err(|e| {
-            AuthenticationError::CodeExchangeFailed(format!(
-                "failed to decode JWT header: {e}"
-            ))
+            AuthenticationError::CodeExchangeFailed(format!("failed to decode JWT header: {e}"))
         })?;
 
         // SECURITY: Reject any algorithm other than RS256 to prevent
@@ -268,9 +257,7 @@ impl Auth0OidcProvider {
         }
 
         let kid = header.kid.ok_or_else(|| {
-            AuthenticationError::CodeExchangeFailed(
-                "JWT header missing kid claim".to_string(),
-            )
+            AuthenticationError::CodeExchangeFailed("JWT header missing kid claim".to_string())
         })?;
 
         // Try cached JWKS first
@@ -291,12 +278,11 @@ impl Auth0OidcProvider {
         };
 
         // Build the decoding key from the JWK
-        let decoding_key =
-            jsonwebtoken::DecodingKey::from_jwk(jwk).map_err(|e| {
-                AuthenticationError::CodeExchangeFailed(format!(
-                    "failed to build decoding key from JWK: {e}"
-                ))
-            })?;
+        let decoding_key = jsonwebtoken::DecodingKey::from_jwk(jwk).map_err(|e| {
+            AuthenticationError::CodeExchangeFailed(format!(
+                "failed to build decoding key from JWK: {e}"
+            ))
+        })?;
 
         // SECURITY: Only allow RS256, disable default exp/aud validation
         // (we validate claims manually with proper error messages).
@@ -306,16 +292,14 @@ impl Auth0OidcProvider {
         validation.set_required_spec_claims::<&str>(&[]);
         validation.set_issuer(&[&self.issuer]);
 
-        let token_data = jsonwebtoken::decode::<serde_json::Value>(
-            token,
-            &decoding_key,
-            &validation,
-        )
-        .map_err(|e| {
-            AuthenticationError::CodeExchangeFailed(format!(
-                "JWT signature verification failed: {e}"
-            ))
-        })?;
+        let token_data =
+            jsonwebtoken::decode::<serde_json::Value>(token, &decoding_key, &validation).map_err(
+                |e| {
+                    AuthenticationError::CodeExchangeFailed(format!(
+                        "JWT signature verification failed: {e}"
+                    ))
+                },
+            )?;
 
         Ok(token_data.claims)
     }
@@ -366,9 +350,7 @@ impl OidcProvider for Auth0OidcProvider {
             .get("nonce")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                AuthenticationError::CodeExchangeFailed(
-                    "ID token missing nonce claim".to_string(),
-                )
+                AuthenticationError::CodeExchangeFailed("ID token missing nonce claim".to_string())
             })?;
 
         if token_nonce != nonce {
@@ -392,9 +374,9 @@ impl OidcProvider for Auth0OidcProvider {
         // Verify audience contains our client_id
         let valid_audience = match claims_json.get("aud") {
             Some(serde_json::Value::String(aud)) => aud == &self.client_id,
-            Some(serde_json::Value::Array(auds)) => auds
-                .iter()
-                .any(|a| a.as_str() == Some(&self.client_id)),
+            Some(serde_json::Value::Array(auds)) => {
+                auds.iter().any(|a| a.as_str() == Some(&self.client_id))
+            }
             _ => false,
         };
         if !valid_audience {
@@ -427,9 +409,7 @@ impl OidcProvider for Auth0OidcProvider {
             .get("sub")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                AuthenticationError::CodeExchangeFailed(
-                    "ID token missing sub claim".to_string(),
-                )
+                AuthenticationError::CodeExchangeFailed("ID token missing sub claim".to_string())
             })?
             .to_string();
 

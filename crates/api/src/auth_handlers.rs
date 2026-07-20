@@ -393,10 +393,7 @@ fn extract_session_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
 /// Uses session cookie authentication (not Bearer token).
 /// The CSRF token is included so the frontend can recover it after a page refresh
 /// without needing to re-authenticate.
-pub async fn get_me(
-    State(state): State<AuthAppState>,
-    headers: axum::http::HeaderMap,
-) -> Response {
+pub async fn get_me(State(state): State<AuthAppState>, headers: axum::http::HeaderMap) -> Response {
     let raw_token = match extract_session_cookie(&headers) {
         Some(t) => t,
         None => {
@@ -415,29 +412,25 @@ pub async fn get_me(
     };
 
     match state.session_store.validate_session(&raw_token).await {
-        Ok(Some(session_info)) => {
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "user_id": session_info.user_id.to_string(),
-                    "csrf_token": session_info.csrf_token
-                })),
-            )
-                .into_response()
-        }
-        _ => {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({
-                    "type": "/problems/unauthorized",
-                    "title": "Unauthorized",
-                    "status": 401,
-                    "code": "UNAUTHORIZED",
-                    "detail": "invalid or expired session"
-                })),
-            )
-                .into_response()
-        }
+        Ok(Some(session_info)) => (
+            StatusCode::OK,
+            Json(json!({
+                "user_id": session_info.user_id.to_string(),
+                "csrf_token": session_info.csrf_token
+            })),
+        )
+            .into_response(),
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "type": "/problems/unauthorized",
+                "title": "Unauthorized",
+                "status": 401,
+                "code": "UNAUTHORIZED",
+                "detail": "invalid or expired session"
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -783,9 +776,11 @@ mod tests {
         let state = make_test_state(Some(Arc::new(provider)));
 
         // Simulate what POST /auth/login does: store the state
-        state
-            .state_store
-            .store_state("stored-state".to_string(), "stored-nonce".to_string(), "stored-verifier".to_string());
+        state.state_store.store_state(
+            "stored-state".to_string(),
+            "stored-nonce".to_string(),
+            "stored-verifier".to_string(),
+        );
 
         let app = test_router(state);
 

@@ -37,6 +37,8 @@ mod exports_dto;
 mod health;
 mod imports;
 mod imports_dto;
+mod legs;
+mod legs_dto;
 mod recorded_route;
 mod recorded_route_dto;
 mod route_editing;
@@ -111,6 +113,9 @@ async fn main() {
     let audit_log = AuditLog::new(pool.clone());
     let activity_state = activities::ActivityAppState {
         repo: Arc::new(PgActivityRepository::new(pool.clone())),
+        leg_repo: Arc::new(haiker_platform::leg_persistence::PgLegRepository::new(
+            pool.clone(),
+        )),
         audit: Arc::new(AuditSinkAdapter {
             audit_log: audit_log.clone(),
         }),
@@ -144,6 +149,31 @@ async fn main() {
         )
         .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Read)))
         .with_state(recorded_route_state);
+
+    // Leg subsystem state
+    let leg_state = legs::LegAppState {
+        activity_repo: Arc::new(PgActivityRepository::new(pool.clone())),
+        leg_repo: Arc::new(haiker_platform::leg_persistence::PgLegRepository::new(
+            pool.clone(),
+        )),
+        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+    };
+
+    let leg_routes = Router::new()
+        .route(
+            "/v1/activities/{activityId}/legs",
+            get(legs::get_legs).post(legs::post_add_leg),
+        )
+        .route(
+            "/v1/activities/{activityId}/legs/{legId}",
+            get(legs::get_leg_detail_handler)
+                .patch(legs::patch_leg)
+                .delete(legs::delete_leg_handler),
+        )
+        .layer(axum::Extension(RouteCategoryExtension(
+            RouteCategory::Mutation,
+        )))
+        .with_state(leg_state);
 
     // Route editing subsystem state with PostgreSQL persistence
     let route_editing_state = route_editing::RouteEditingAppState {
@@ -289,6 +319,7 @@ async fn main() {
         .merge(import_routes)
         .merge(activity_routes)
         .merge(recorded_route_routes)
+        .merge(leg_routes)
         .merge(route_editing_routes)
         .merge(export_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))

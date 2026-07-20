@@ -1,6 +1,6 @@
 //! Request and response DTOs for activity endpoints.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -75,6 +75,34 @@ pub struct ActivityDetailResponse {
     pub recorded_summary: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corrected_summary: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legs: Option<Vec<ActivityLegSummary>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregated_stats: Option<ActivityAggregatedStats>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Summary of a leg within the activity detail response.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityLegSummary {
+    pub id: Uuid,
+    pub leg_number: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub date: NaiveDate,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded_summary: Option<serde_json::Value>,
+}
+
+/// Aggregated statistics across all legs in an activity.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityAggregatedStats {
+    pub total_distance: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_elevation_gain: Option<f64>,
+    pub total_days: u32,
+    pub total_legs: u32,
 }

@@ -92,9 +92,10 @@ pub fn init_telemetry(config: &TelemetryConfig) {
         EnvFilter::try_new(&config.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
 
     // Optional file appender for daily-rotating log files
-    let file_appender = config.log_file_dir.as_ref().map(|dir| {
-        tracing_appender::rolling::daily(dir, &config.log_file_prefix)
-    });
+    let file_appender = config
+        .log_file_dir
+        .as_ref()
+        .map(|dir| tracing_appender::rolling::daily(dir, &config.log_file_prefix));
 
     match config.log_format {
         LogFormat::Pretty => {

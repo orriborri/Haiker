@@ -1,8 +1,12 @@
 //! Recorded Activity bounded context.
 //!
 //! Owns source artifacts, source revisions, recorded tracks, segments,
-//! point streams, and sensor samples.
+//! point streams, sensor samples, and multi-leg activity management.
 
+pub mod leg_commands;
+pub mod leg_queries;
+pub mod leg_repository;
+pub mod legs;
 pub mod normalization;
 pub mod queries;
 pub mod repository;
@@ -17,11 +21,16 @@ pub use self::repository::{
     RecordedRouteData, RecordedRoutePreview, RecordedRouteRepository, RouteSegment, RouteStatistics,
 };
 
+// Re-export leg types for consumers.
+pub use self::leg_repository::LegRepository;
+pub use self::legs::{Leg, LegId, LegSummary, LegTitle};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::activity_catalog::ActivityId;
 use crate::identity::UserId;
 
 /// A strongly-typed source artifact identifier wrapping a UUID.
@@ -329,6 +338,26 @@ pub enum RecordedActivityError {
     /// A persistence error occurred.
     #[error("persistence error: {message}")]
     Persistence { message: String },
+
+    /// The requested leg was not found.
+    #[error("leg not found: {leg_id}")]
+    LegNotFound { leg_id: legs::LegId },
+
+    /// The leg number is invalid.
+    #[error("invalid leg number {leg_number}: {reason}")]
+    InvalidLegNumber { leg_number: u32, reason: String },
+
+    /// A duplicate leg number was detected within an activity.
+    #[error("duplicate leg number: {leg_number}")]
+    DuplicateLegNumber { leg_number: u32 },
+
+    /// The maximum number of legs per activity has been exceeded.
+    #[error("maximum legs exceeded for activity {activity_id}: limit is {max}")]
+    MaxLegsExceeded { activity_id: ActivityId, max: u32 },
+
+    /// The leg title is invalid.
+    #[error("invalid leg title: {message}")]
+    InvalidLegTitle { message: String },
 }
 
 #[cfg(test)]
