@@ -221,7 +221,7 @@ describe("RouteComparison accessibility", () => {
       '[aria-label="Route line styles"]',
     );
     expect(legendList).not.toBeNull();
-    expect(legendList?.querySelectorAll("li").length).toBe(2);
+    expect(legendList?.querySelectorAll("li").length).toBe(4);
   });
 
   it("recorded and corrected routes are labeled distinctly", async () => {

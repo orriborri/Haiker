@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { RouteComparisonResponse } from "@/api/client";
@@ -10,8 +10,11 @@ interface RouteComparisonMapProps {
 export function RouteComparisonMap({ comparison }: RouteComparisonMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const markersRef = useRef<maplibregl.Marker[]>([]);
+  const mapLoadedRef = useRef(false);
   const [tileError, setTileError] = useState(false);
 
+  // Effect 1: Create the map instance once
   useEffect(() => {
     const container = mapContainerRef.current;
     if (!container) return;
@@ -54,36 +57,10 @@ export function RouteComparisonMap({ comparison }: RouteComparisonMapProps) {
     });
 
     map.on("load", () => {
-      // Build GeoJSON for recorded route
-      const recordedGeoJson = {
-        type: "FeatureCollection" as const,
-        features: comparison.recorded.geometry.features.map((f) => ({
-          type: "Feature" as const,
-          geometry: {
-            type: f.geometry.type as "LineString",
-            coordinates: f.geometry.coordinates,
-          },
-          properties: f.properties,
-        })),
-      };
-
-      // Build GeoJSON for corrected route
-      const correctedGeoJson = {
-        type: "FeatureCollection" as const,
-        features: comparison.corrected.geometry.features.map((f) => ({
-          type: "Feature" as const,
-          geometry: {
-            type: f.geometry.type as "LineString",
-            coordinates: f.geometry.coordinates,
-          },
-          properties: f.properties,
-        })),
-      };
-
-      // Add recorded route source and layer (solid blue)
+      // Add empty sources and layers on first load so they can be updated later
       map.addSource("recorded-route", {
         type: "geojson",
-        data: recordedGeoJson,
+        data: { type: "FeatureCollection", features: [] },
       });
 
       map.addLayer({
@@ -101,10 +78,9 @@ export function RouteComparisonMap({ comparison }: RouteComparisonMapProps) {
         },
       });
 
-      // Add corrected route source and layer (dashed orange)
       map.addSource("corrected-route", {
         type: "geojson",
-        data: correctedGeoJson,
+        data: { type: "FeatureCollection", features: [] },
       });
 
       map.addLayer({
@@ -123,64 +99,142 @@ export function RouteComparisonMap({ comparison }: RouteComparisonMapProps) {
         },
       });
 
-      // Add start/end markers for recorded route
-      const recordedCoords = getAllCoordinates(
-        comparison.recorded.geometry.features,
-      );
-      if (recordedCoords.length > 0) {
-        const startCoord = recordedCoords[0]!;
-        const endCoord = recordedCoords[recordedCoords.length - 1]!;
-
-        const startEl = createMarkerElement("recorded-start");
-        new maplibregl.Marker({ element: startEl })
-          .setLngLat(startCoord)
-          .addTo(map);
-
-        const endEl = createMarkerElement("recorded-end");
-        new maplibregl.Marker({ element: endEl })
-          .setLngLat(endCoord)
-          .addTo(map);
-      }
-
-      // Add start/end markers for corrected route
-      const correctedCoords = getAllCoordinates(
-        comparison.corrected.geometry.features,
-      );
-      if (correctedCoords.length > 0) {
-        const startCoord = correctedCoords[0]!;
-        const endCoord = correctedCoords[correctedCoords.length - 1]!;
-
-        const startEl = createMarkerElement("corrected-start");
-        new maplibregl.Marker({ element: startEl })
-          .setLngLat(startCoord)
-          .addTo(map);
-
-        const endEl = createMarkerElement("corrected-end");
-        new maplibregl.Marker({ element: endEl })
-          .setLngLat(endCoord)
-          .addTo(map);
-      }
-
-      // Fit bounds to shared bbox
-      if (comparison.sharedBbox.length === 4) {
-        const [west, south, east, north] = comparison.sharedBbox;
-        map.fitBounds(
-          [
-            [west!, south!],
-            [east!, north!],
-          ],
-          { padding: 50 },
-        );
-      }
+      mapLoadedRef.current = true;
     });
 
     mapRef.current = map;
 
     return () => {
+      mapLoadedRef.current = false;
       map.remove();
       mapRef.current = null;
     };
+  }, []);
+
+  const updateMapData = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoadedRef.current) return;
+
+    // Update recorded route source data
+    const recordedGeoJson = {
+      type: "FeatureCollection" as const,
+      features: comparison.recorded.geometry.features.map((f) => ({
+        type: "Feature" as const,
+        geometry: {
+          type: f.geometry.type as "LineString",
+          coordinates: f.geometry.coordinates,
+        },
+        properties: f.properties,
+      })),
+    };
+
+    const recordedSource = map.getSource(
+      "recorded-route",
+    ) as maplibregl.GeoJSONSource | undefined;
+    if (recordedSource) {
+      recordedSource.setData(recordedGeoJson);
+    }
+
+    // Update corrected route source data
+    const correctedGeoJson = {
+      type: "FeatureCollection" as const,
+      features: comparison.corrected.geometry.features.map((f) => ({
+        type: "Feature" as const,
+        geometry: {
+          type: f.geometry.type as "LineString",
+          coordinates: f.geometry.coordinates,
+        },
+        properties: f.properties,
+      })),
+    };
+
+    const correctedSource = map.getSource(
+      "corrected-route",
+    ) as maplibregl.GeoJSONSource | undefined;
+    if (correctedSource) {
+      correctedSource.setData(correctedGeoJson);
+    }
+
+    // Remove existing markers
+    for (const marker of markersRef.current) {
+      marker.remove();
+    }
+    markersRef.current = [];
+
+    // Add start/end markers for recorded route (blue)
+    const recordedCoords = getAllCoordinates(
+      comparison.recorded.geometry.features,
+    );
+    if (recordedCoords.length > 0) {
+      const startCoord = recordedCoords[0]!;
+      const endCoord = recordedCoords[recordedCoords.length - 1]!;
+
+      const startEl = createMarkerElement("recorded-start");
+      const startMarker = new maplibregl.Marker({ element: startEl })
+        .setLngLat(startCoord)
+        .addTo(map);
+      markersRef.current.push(startMarker);
+
+      const endEl = createMarkerElement("recorded-end");
+      const endMarker = new maplibregl.Marker({ element: endEl })
+        .setLngLat(endCoord)
+        .addTo(map);
+      markersRef.current.push(endMarker);
+    }
+
+    // Add start/end markers for corrected route (orange)
+    const correctedCoords = getAllCoordinates(
+      comparison.corrected.geometry.features,
+    );
+    if (correctedCoords.length > 0) {
+      const startCoord = correctedCoords[0]!;
+      const endCoord = correctedCoords[correctedCoords.length - 1]!;
+
+      const startEl = createMarkerElement("corrected-start");
+      const startMarker = new maplibregl.Marker({ element: startEl })
+        .setLngLat(startCoord)
+        .addTo(map);
+      markersRef.current.push(startMarker);
+
+      const endEl = createMarkerElement("corrected-end");
+      const endMarker = new maplibregl.Marker({ element: endEl })
+        .setLngLat(endCoord)
+        .addTo(map);
+      markersRef.current.push(endMarker);
+    }
+
+    // Fit bounds to shared bbox
+    if (comparison.sharedBbox.length === 4) {
+      const [west, south, east, north] = comparison.sharedBbox;
+      map.fitBounds(
+        [
+          [west!, south!],
+          [east!, north!],
+        ],
+        { padding: 50 },
+      );
+    }
   }, [comparison]);
+
+  // Effect 2: Update GeoJSON sources and markers when comparison data changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (mapLoadedRef.current) {
+      // Map is already loaded, update immediately
+      updateMapData();
+    } else {
+      // Map is still loading, wait for load event
+      const onLoad = () => {
+        updateMapData();
+      };
+      map.on("load", onLoad);
+      return () => {
+        map.off("load", onLoad);
+      };
+    }
+  }, [updateMapData]);
 
   return (
     <div>
@@ -228,10 +282,11 @@ function createMarkerElement(type: MarkerType): HTMLElement {
   const el = document.createElement("div");
   el.className = "route-comparison-marker";
 
+  // Markers use the same colors as lines: blue for recorded, orange for corrected
   const colorMap: Record<MarkerType, string> = {
-    "recorded-start": "#22c55e",
+    "recorded-start": "#3b82f6",
     "recorded-end": "#3b82f6",
-    "corrected-start": "#84cc16",
+    "corrected-start": "#f97316",
     "corrected-end": "#f97316",
   };
 
