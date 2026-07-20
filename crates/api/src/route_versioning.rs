@@ -22,18 +22,25 @@ use haiker_app::route_versioning::{RouteVersionId, RouteVersioningError};
 
 use crate::error::ApiError;
 use crate::route_versioning_dto::{
-    GeoJsonFeature, GeoJsonGeometry, PaginationMeta, RouteVersionDetailResponse,
-    RouteVersionFeatureProperties, RouteVersionGeometryResponse, RouteVersionListParams,
-    RouteVersionListResponse, RouteVersionSummaryResponse,
+    CorrectedRouteGeometry, CorrectedRouteSection, CorrectedRouteSectionStatistics,
+    GeoJsonFeature, GeoJsonGeometry, PaginationMeta, RecordedRouteFeature,
+    RecordedRouteFeatureProperties, RecordedRouteGeometry, RecordedRouteSection,
+    RecordedRouteSectionStatistics, RouteComparisonParams, RouteComparisonResponse,
+    RouteVersionDetailResponse, RouteVersionFeatureProperties, RouteVersionGeometryResponse,
+    RouteVersionListParams, RouteVersionListResponse, RouteVersionSummaryResponse,
 };
 use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
 use haiker_platform::session::SessionStore;
+
+use haiker_app::recorded_activity::RecordedRouteRepository;
+use haiker_app::route_versioning::comparison_query::get_route_comparison;
 
 /// Shared application state for route versioning handlers.
 #[derive(Clone)]
 pub struct RouteVersioningAppState {
     pub activity_repo: Arc<dyn ActivityRepository>,
     pub version_repo: Arc<dyn RouteVersionRepository>,
+    pub recorded_route_repo: Arc<dyn RecordedRouteRepository>,
     pub session_store: SessionStore,
 }
 
@@ -222,4 +229,113 @@ pub async fn get_route_version_geometry_handler(
         [(header::CONTENT_TYPE, "application/geo+json")],
         Json(response),
     ))
+}
+
+/// GET /v1/activities/{activityId}/route-comparison
+///
+/// Get a comparison between the recorded route and a corrected route version.
+/// Returns both geometries, both statistics, and a shared bounding box.
+/// Returns 404 for missing, cross-owner, or deleted activity (non-disclosing).
+#[tracing::instrument(skip(state, actor))]
+pub async fn get_route_comparison_handler(
+    State(state): State<RouteVersioningAppState>,
+    actor: AuthSession,
+    Path(activity_id): Path<Uuid>,
+    Query(params): Query<RouteComparisonParams>,
+) -> Result<impl IntoResponse, ApiError> {
+    use haiker_app::activity_catalog::ActivityId;
+
+    let comparison = get_route_comparison(
+        ActivityId(activity_id),
+        RouteVersionId(params.route_version_id),
+        actor.0.user_id,
+        state.activity_repo.as_ref(),
+        state.version_repo.as_ref(),
+        state.recorded_route_repo.as_ref(),
+    )
+    .await
+    .map_err(versioning_error_to_api_error)?;
+
+    // Build recorded route GeoJSON FeatureCollection
+    let recorded_bbox = comparison.recorded_bounding_box.as_geojson_bbox();
+    let recorded_features: Vec<RecordedRouteFeature> = comparison
+        .recorded_geometry
+        .iter()
+        .enumerate()
+        .map(|(i, segment)| RecordedRouteFeature {
+            feature_type: "Feature".to_string(),
+            geometry: GeoJsonGeometry {
+                geometry_type: "LineString".to_string(),
+                coordinates: segment
+                    .iter()
+                    .map(|c| [c.longitude, c.latitude])
+                    .collect(),
+            },
+            properties: RecordedRouteFeatureProperties {
+                segment_index: i,
+                point_count: segment.len(),
+            },
+        })
+        .collect();
+
+    let recorded_section = RecordedRouteSection {
+        geometry: RecordedRouteGeometry {
+            geojson_type: "FeatureCollection".to_string(),
+            bbox: recorded_bbox,
+            features: recorded_features,
+        },
+        statistics: RecordedRouteSectionStatistics {
+            distance_meters: comparison.recorded_statistics.distance_meters,
+            elevation_gain_meters: comparison.recorded_statistics.elevation_gain_meters,
+            elevation_loss_meters: comparison.recorded_statistics.elevation_loss_meters,
+            point_count: comparison.recorded_statistics.point_count,
+            segment_count: comparison.recorded_statistics.segment_count,
+        },
+    };
+
+    // Build corrected route GeoJSON FeatureCollection
+    let corrected_bbox = comparison.corrected_bounding_box.as_geojson_bbox();
+    let corrected_coordinates: Vec<[f64; 2]> = comparison
+        .corrected_geometry
+        .iter()
+        .map(|c| [c.longitude, c.latitude])
+        .collect();
+
+    let corrected_feature = GeoJsonFeature {
+        feature_type: "Feature".to_string(),
+        geometry: GeoJsonGeometry {
+            geometry_type: "LineString".to_string(),
+            coordinates: corrected_coordinates.clone(),
+        },
+        properties: RouteVersionFeatureProperties {
+            point_count: corrected_coordinates.len(),
+            distance_meters: Some(comparison.corrected_statistics.distance_meters),
+        },
+    };
+
+    let corrected_section = CorrectedRouteSection {
+        geometry: CorrectedRouteGeometry {
+            geojson_type: "FeatureCollection".to_string(),
+            bbox: corrected_bbox,
+            features: vec![corrected_feature],
+        },
+        statistics: CorrectedRouteSectionStatistics {
+            distance_meters: comparison.corrected_statistics.distance_meters,
+            point_count: comparison.corrected_statistics.point_count,
+            calculation_version: comparison.corrected_statistics.calculation_version,
+        },
+        version_number: comparison.version_number,
+        edit_summary: comparison.edit_summary,
+    };
+
+    // Build shared bounding box
+    let shared_bbox = comparison.shared_bounding_box.as_geojson_bbox();
+
+    let response = RouteComparisonResponse {
+        recorded: recorded_section,
+        corrected: corrected_section,
+        shared_bbox,
+    };
+
+    Ok((StatusCode::OK, Json(response)))
 }

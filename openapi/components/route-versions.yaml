@@ -229,3 +229,193 @@ RouteVersionFeatureProperties:
       format: double
       description: Total distance in meters from corrected statistics.
       example: 12345.67
+
+RouteComparisonResponse:
+  type: object
+  description: |
+    Comparison between a recorded route and a corrected route version.
+    Clearly distinguishes recorded vs corrected data.
+  required:
+    - recorded
+    - corrected
+    - sharedBbox
+  properties:
+    recorded:
+      $ref: "#/RecordedRouteComparisonSection"
+    corrected:
+      $ref: "#/CorrectedRouteComparisonSection"
+    sharedBbox:
+      type: array
+      description: Union bounding box encompassing both routes as [west, south, east, north].
+      items:
+        type: number
+        format: double
+      minItems: 4
+      maxItems: 4
+      example: [10.2, 47.0, 11.5, 47.8]
+
+RecordedRouteComparisonSection:
+  type: object
+  description: The recorded route section of the comparison response.
+  required:
+    - geometry
+    - statistics
+  properties:
+    geometry:
+      $ref: "#/RecordedRouteComparisonGeometry"
+    statistics:
+      $ref: "#/RecordedRouteComparisonStatistics"
+
+RecordedRouteComparisonGeometry:
+  type: object
+  description: GeoJSON FeatureCollection for the recorded route (one Feature per segment).
+  required:
+    - type
+    - bbox
+    - features
+  properties:
+    type:
+      type: string
+      enum:
+        - FeatureCollection
+      description: Always "FeatureCollection".
+    bbox:
+      type: array
+      description: Bounding box as [west, south, east, north].
+      items:
+        type: number
+        format: double
+      minItems: 4
+      maxItems: 4
+    features:
+      type: array
+      description: One GeoJSON Feature per segment of the recorded route.
+      items:
+        $ref: "#/RecordedRouteComparisonFeature"
+
+RecordedRouteComparisonFeature:
+  type: object
+  description: A GeoJSON Feature representing one segment of the recorded route.
+  required:
+    - type
+    - geometry
+    - properties
+  properties:
+    type:
+      type: string
+      enum:
+        - Feature
+      description: Always "Feature".
+    geometry:
+      $ref: "#/RouteLineString"
+    properties:
+      type: object
+      required:
+        - segmentIndex
+        - pointCount
+      properties:
+        segmentIndex:
+          type: integer
+          description: Index of this segment (0-based).
+        pointCount:
+          type: integer
+          description: Number of points in this segment.
+
+RecordedRouteComparisonStatistics:
+  type: object
+  description: Statistics for the recorded route.
+  required:
+    - distanceMeters
+    - pointCount
+    - segmentCount
+  properties:
+    distanceMeters:
+      type: number
+      format: double
+      description: Total distance in meters.
+    elevationGainMeters:
+      type:
+        - number
+        - "null"
+      format: double
+      description: Total elevation gain in meters.
+    elevationLossMeters:
+      type:
+        - number
+        - "null"
+      format: double
+      description: Total elevation loss in meters.
+    pointCount:
+      type: integer
+      description: Total number of points across all segments.
+    segmentCount:
+      type: integer
+      description: Number of segments.
+
+CorrectedRouteComparisonSection:
+  type: object
+  description: The corrected route version section of the comparison response.
+  required:
+    - geometry
+    - statistics
+    - versionNumber
+  properties:
+    geometry:
+      $ref: "#/CorrectedRouteComparisonGeometry"
+    statistics:
+      $ref: "#/CorrectedRouteComparisonStatistics"
+    versionNumber:
+      type: integer
+      description: Version number of the corrected route version.
+      minimum: 1
+    editSummary:
+      type:
+        - string
+        - "null"
+      description: Optional human-readable summary of edits in this version.
+
+CorrectedRouteComparisonGeometry:
+  type: object
+  description: GeoJSON FeatureCollection for the corrected route (single LineString feature).
+  required:
+    - type
+    - bbox
+    - features
+  properties:
+    type:
+      type: string
+      enum:
+        - FeatureCollection
+      description: Always "FeatureCollection".
+    bbox:
+      type: array
+      description: Bounding box as [west, south, east, north].
+      items:
+        type: number
+        format: double
+      minItems: 4
+      maxItems: 4
+    features:
+      type: array
+      description: A single Feature containing the corrected route LineString geometry.
+      items:
+        $ref: "#/RouteVersionFeature"
+
+CorrectedRouteComparisonStatistics:
+  type: object
+  description: Statistics for the corrected route version.
+  required:
+    - distanceMeters
+    - pointCount
+    - calculationVersion
+  properties:
+    distanceMeters:
+      type: number
+      format: double
+      description: Total distance in meters.
+    pointCount:
+      type: integer
+      description: Number of coordinate points in the geometry.
+    calculationVersion:
+      type: string
+      description: Algorithm version used to compute these statistics.
