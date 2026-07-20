@@ -485,8 +485,56 @@ mod tests {
     use axum::Router;
     use chrono::{Duration, Utc};
     use haiker_app::activity_catalog::{ActivityTitle, ActivityType};
+    use haiker_app::recorded_activity::leg_repository::LegRepository as LegRepoTrait;
+    use haiker_app::recorded_activity::legs::{Leg, LegId, LegSummary};
+    use haiker_app::recorded_activity::RecordedActivityError;
     use tower::ServiceExt;
     use uuid::Uuid;
+
+    /// Stub leg repository that always returns empty results (for activity handler tests).
+    struct StubLegRepository;
+
+    #[async_trait]
+    impl LegRepoTrait for StubLegRepository {
+        async fn list_legs(
+            &self,
+            _activity_id: ActivityId,
+        ) -> Result<Vec<Leg>, RecordedActivityError> {
+            Ok(vec![])
+        }
+        async fn find_leg(&self, _leg_id: LegId) -> Result<Option<Leg>, RecordedActivityError> {
+            Ok(None)
+        }
+        async fn save_leg(&self, _leg: &Leg) -> Result<(), RecordedActivityError> {
+            Ok(())
+        }
+        async fn update_leg(&self, _leg: &Leg) -> Result<(), RecordedActivityError> {
+            Ok(())
+        }
+        async fn delete_leg(&self, _leg_id: LegId) -> Result<(), RecordedActivityError> {
+            Ok(())
+        }
+        async fn next_leg_number(
+            &self,
+            _activity_id: ActivityId,
+        ) -> Result<u32, RecordedActivityError> {
+            Ok(1)
+        }
+        async fn reorder_legs(
+            &self,
+            _activity_id: ActivityId,
+            _leg_id: LegId,
+            _new_position: u32,
+        ) -> Result<(), RecordedActivityError> {
+            Ok(())
+        }
+        async fn get_leg_summary(
+            &self,
+            _leg_id: LegId,
+        ) -> Result<Option<LegSummary>, RecordedActivityError> {
+            Ok(None)
+        }
+    }
 
     /// Ensure DEV_AUTH_ENABLED is set so AuthSession accepts Bearer UUID tokens.
     fn ensure_dev_auth() {
@@ -508,6 +556,7 @@ mod tests {
         ensure_dev_auth();
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::new()),
+            leg_repo: Arc::new(StubLegRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };
@@ -529,6 +578,7 @@ mod tests {
         ensure_dev_auth();
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
+            leg_repo: Arc::new(StubLegRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };
@@ -655,6 +705,7 @@ mod tests {
         ensure_dev_auth();
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
+            leg_repo: Arc::new(StubLegRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };
@@ -764,6 +815,7 @@ mod tests {
         ensure_dev_auth();
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
+            leg_repo: Arc::new(StubLegRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };
@@ -1377,6 +1429,7 @@ mod tests {
             repo: Arc::new(InMemoryActivityRepository::with_activities(vec![
                 activity1, activity2,
             ])),
+            leg_repo: Arc::new(StubLegRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };

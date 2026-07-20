@@ -6,7 +6,6 @@
 
 pub mod activity_persistence;
 pub mod audit;
-pub mod leg_persistence;
 pub mod auth_middleware;
 pub mod backpressure;
 pub mod clock;
@@ -19,6 +18,7 @@ pub mod import_commit;
 pub mod import_persistence;
 pub mod import_worker;
 pub mod job_queue;
+pub mod leg_persistence;
 pub mod metrics;
 pub mod object_storage;
 pub mod oidc;

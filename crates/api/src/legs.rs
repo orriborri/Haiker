@@ -20,17 +20,15 @@ use haiker_app::activity_catalog::ActivityId;
 use haiker_app::recorded_activity::leg_commands::{
     add_leg, remove_leg, rename_leg, reorder_leg, update_leg_date,
 };
-use haiker_app::recorded_activity::leg_queries::{
-    get_leg_detail, list_legs_for_activity,
-};
+use haiker_app::recorded_activity::leg_queries::{get_leg_detail, list_legs_for_activity};
 use haiker_app::recorded_activity::leg_repository::LegRepository;
 use haiker_app::recorded_activity::legs::LegId;
 use haiker_app::recorded_activity::RecordedActivityError;
 
 use crate::error::ApiError;
 use crate::legs_dto::{
-    CreateLegRequest, LegDetailResponse, LegListResponse,
-    LegSummaryResponse, LegSummaryStatsResponse, UpdateLegRequest,
+    CreateLegRequest, LegDetailResponse, LegListResponse, LegSummaryResponse,
+    LegSummaryStatsResponse, UpdateLegRequest,
 };
 use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
 use haiker_platform::session::SessionStore;

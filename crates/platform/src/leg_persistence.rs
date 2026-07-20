@@ -28,15 +28,15 @@ impl PgLegRepository {
 
 /// Row type returned by leg queries.
 type LegRow = (
-    Uuid,              // id
-    Uuid,              // activity_id
-    i32,               // leg_number
-    Option<String>,    // title
-    NaiveDate,         // date
-    Option<Uuid>,      // source_revision_id
-    Option<Uuid>,      // recorded_track_id
-    DateTime<Utc>,     // created_at
-    DateTime<Utc>,     // updated_at
+    Uuid,           // id
+    Uuid,           // activity_id
+    i32,            // leg_number
+    Option<String>, // title
+    NaiveDate,      // date
+    Option<Uuid>,   // source_revision_id
+    Option<Uuid>,   // recorded_track_id
+    DateTime<Utc>,  // created_at
+    DateTime<Utc>,  // updated_at
 );
 
 /// Map a row tuple to a Leg domain object.
@@ -183,10 +183,7 @@ impl LegRepository for PgLegRepository {
         Ok(())
     }
 
-    async fn next_leg_number(
-        &self,
-        activity_id: ActivityId,
-    ) -> Result<u32, RecordedActivityError> {
+    async fn next_leg_number(&self, activity_id: ActivityId) -> Result<u32, RecordedActivityError> {
         let row: (Option<i32>,) = sqlx::query_as(
             r#"
             SELECT MAX(leg_number) as max_num
@@ -304,7 +301,14 @@ impl LegRepository for PgLegRepository {
     ) -> Result<Option<LegSummary>, RecordedActivityError> {
         // Join with recorded tracks to get statistics for this leg.
         // Duration is calculated from started_at and ended_at timestamps.
-        let row: Option<(f64, Option<f64>, Option<f64>, i32, Option<DateTime<Utc>>, Option<DateTime<Utc>>)> = sqlx::query_as(
+        let row: Option<(
+            f64,
+            Option<f64>,
+            Option<f64>,
+            i32,
+            Option<DateTime<Utc>>,
+            Option<DateTime<Utc>>,
+        )> = sqlx::query_as(
             r#"
             SELECT rt.distance_meters, rt.elevation_gain_meters, rt.elevation_loss_meters,
                    rt.point_count, rt.started_at, rt.ended_at
@@ -320,15 +324,21 @@ impl LegRepository for PgLegRepository {
             message: e.to_string(),
         })?;
 
-        Ok(row.map(|(distance, gain, loss, points, started_at, ended_at)| {
-            let duration = match (started_at, ended_at) {
-                (Some(start), Some(end)) => {
-                    let secs = (end - start).num_seconds() as f64;
-                    if secs > 0.0 { Some(secs) } else { None }
-                }
-                _ => None,
-            };
-            LegSummary::new(distance, gain, loss, points as u32, duration)
-        }))
+        Ok(
+            row.map(|(distance, gain, loss, points, started_at, ended_at)| {
+                let duration = match (started_at, ended_at) {
+                    (Some(start), Some(end)) => {
+                        let secs = (end - start).num_seconds() as f64;
+                        if secs > 0.0 {
+                            Some(secs)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                LegSummary::new(distance, gain, loss, points as u32, duration)
+            }),
+        )
     }
 }

@@ -362,7 +362,7 @@ mod tests {
 
         // Add max legs
         for i in 1..=MAX_LEGS_PER_ACTIVITY {
-            let date = NaiveDate::from_ymd_opt(2024, 7, i as u32).unwrap();
+            let date = NaiveDate::from_ymd_opt(2024, 7, i).unwrap();
             add_leg(activity_id, None, date, None, None, &repo)
                 .await
                 .unwrap();
