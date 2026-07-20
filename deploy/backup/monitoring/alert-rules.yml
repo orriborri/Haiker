@@ -1,64 +1,297 @@
 # =============================================================================
-# Backup Monitoring Alert Rules - REFERENCE DOCUMENTATION ONLY
+# Alert Rules - REFERENCE DOCUMENTATION
 #
-# NOTE: This file is NOT machine-consumed by backup-monitor.sh. The monitoring
-# script reads alert thresholds from environment variables:
-#   - BACKUP_RPO_WAL_MINUTES (default: 15)
-#   - BACKUP_RPO_BASE_HOURS  (default: 24)
-#   - CAPACITY_WARNING_PERCENT (default: 80)
-#   - CAPACITY_CRITICAL_PERCENT (default: 90)
+# NOTE: This file is NOT machine-consumed directly. It documents the alerting
+# logic for all MVP subsystems. The monitoring scripts read thresholds from
+# environment variables. This YAML serves as:
+#   1. Human-readable documentation of alerting logic
+#   2. A validation target for scripts/tests/test-alert-rules.sh
 #
-# This YAML serves as human-readable documentation of the alerting logic
-# implemented in scripts/backup-monitor.sh. To change thresholds, update the
-# environment variables in env.backup (see deploy/backup/env.backup.example).
-#
-# If you need machine-parseable alert configuration, consider extending
-# backup-monitor.sh to read this file with yq or python3 yaml.safe_load.
+# Each rule specifies:
+#   - name: unique identifier
+#   - description: human-readable explanation
+#   - condition: triggering expression
+#   - threshold: numeric trigger value (where applicable)
+#   - severity: critical | warning | info
+#   - owner: platform | backend | on-call
+#   - runbook_link: path to the relevant runbook in docs/runbooks/
 # =============================================================================
 
 rules:
+  # ---------------------------------------------------------------------------
+  # Backup Alerts
+  # ---------------------------------------------------------------------------
   - name: backup_age_critical
     description: "PostgreSQL WAL archive is older than expected RPO threshold"
     condition: "wal_archive_age_minutes > threshold"
-    threshold_minutes: 15
+    threshold: 15
     severity: critical
-    source: postgresql
-    check: wal_archive_age
+    owner: platform
+    runbook_link: docs/runbooks/backup-operations.md
 
   - name: backup_age_warning
     description: "PostgreSQL base backup is older than expected schedule"
     condition: "base_backup_age_hours > threshold"
-    threshold_hours: 24
+    threshold: 24
     severity: warning
-    source: postgresql
-    check: base_backup_age
+    owner: platform
+    runbook_link: docs/runbooks/backup-operations.md
 
   - name: backup_failure
     description: "Backup verification script returned a non-zero exit code"
     condition: "verify_exit_code != 0"
+    threshold: 0
     severity: critical
-    source: any
-    check: script_exit_code
+    owner: on-call
+    runbook_link: docs/runbooks/backup-operations.md
 
   - name: capacity_warning
     description: "Backup storage utilization exceeds warning threshold"
     condition: "storage_used_percent >= threshold"
-    threshold_percent: 80
+    threshold: 80
     severity: warning
-    source: any
-    check: storage_capacity
+    owner: platform
+    runbook_link: docs/runbooks/backup-operations.md
 
   - name: capacity_critical
     description: "Backup storage utilization exceeds critical threshold"
     condition: "storage_used_percent >= threshold"
-    threshold_percent: 90
+    threshold: 90
     severity: critical
-    source: any
-    check: storage_capacity
+    owner: on-call
+    runbook_link: docs/runbooks/backup-operations.md
 
   - name: retention_violation
-    description: "Backup older than retention policy still exists, or the newest backup is missing"
+    description: "Backup older than retention policy still exists, or newest backup is missing"
     condition: "retention_policy_violated == true"
+    threshold: 1
     severity: warning
-    source: any
-    check: retention_compliance
+    owner: platform
+    runbook_link: docs/runbooks/backup-operations.md
+
+  # ---------------------------------------------------------------------------
+  # API Alerts
+  # ---------------------------------------------------------------------------
+  - name: api_high_error_rate
+    description: "API 5xx error rate exceeds acceptable threshold"
+    condition: "http_5xx_rate_percent > threshold"
+    threshold: 5
+    severity: critical
+    owner: backend
+    runbook_link: docs/runbooks/incident-response.md
+
+  - name: api_high_latency
+    description: "API p99 latency exceeds acceptable response time"
+    condition: "http_p99_latency_ms > threshold"
+    threshold: 2000
+    severity: warning
+    owner: backend
+    runbook_link: docs/runbooks/incident-response.md
+
+  - name: api_auth_failures
+    description: "Spike in authentication failures indicating brute force or misconfiguration"
+    condition: "auth_failure_count_per_minute > threshold"
+    threshold: 50
+    severity: warning
+    owner: on-call
+    runbook_link: docs/runbooks/incident-response.md
+
+  - name: api_rate_limit_exhaustion
+    description: "Rate limiter is rejecting a high volume of requests"
+    condition: "rate_limited_requests_per_minute > threshold"
+    threshold: 100
+    severity: warning
+    owner: backend
+    runbook_link: docs/runbooks/incident-response.md
+
+  # ---------------------------------------------------------------------------
+  # Database Alerts
+  # ---------------------------------------------------------------------------
+  - name: db_connection_pool_exhaustion
+    description: "Database connection pool utilization is critically high"
+    condition: "pool_used_percent >= threshold"
+    threshold: 90
+    severity: critical
+    owner: platform
+    runbook_link: docs/runbooks/data-recovery.md
+
+  - name: db_slow_queries
+    description: "Number of queries exceeding slow query threshold is elevated"
+    condition: "slow_query_count_per_minute > threshold"
+    threshold: 10
+    severity: warning
+    owner: backend
+    runbook_link: docs/runbooks/data-recovery.md
+
+  - name: db_replication_lag
+    description: "Database replication lag exceeds acceptable threshold"
+    condition: "replication_lag_seconds > threshold"
+    threshold: 30
+    severity: critical
+    owner: platform
+    runbook_link: docs/runbooks/data-recovery.md
+
+  - name: db_migration_failure
+    description: "Database migration failed during deployment"
+    condition: "migration_exit_code != 0"
+    threshold: 0
+    severity: critical
+    owner: on-call
+    runbook_link: docs/runbooks/migration-recovery.md
+
+  # ---------------------------------------------------------------------------
+  # Storage Alerts (S3/MinIO)
+  # ---------------------------------------------------------------------------
+  - name: storage_upload_failures
+    description: "S3 upload operations are failing above acceptable rate"
+    condition: "s3_upload_failure_rate_percent > threshold"
+    threshold: 5
+    severity: critical
+    owner: platform
+    runbook_link: docs/runbooks/dependency-outage.md
+
+  - name: storage_bucket_unreachable
+    description: "S3 bucket health check is failing"
+    condition: "s3_health_check_failed == true"
+    threshold: 1
+    severity: critical
+    owner: on-call
+    runbook_link: docs/runbooks/dependency-outage.md
+
+  - name: storage_retrieval_errors
+    description: "S3 object retrieval errors exceeding acceptable rate"
+    condition: "s3_get_failure_rate_percent > threshold"
+    threshold: 5
+    severity: warning
+    owner: platform
+    runbook_link: docs/runbooks/dependency-outage.md
+
+  # ---------------------------------------------------------------------------
+  # Queue Alerts
+  # ---------------------------------------------------------------------------
+  - name: queue_depth_critical
+    description: "Job queue depth exceeds critical threshold indicating processing backlog"
+    condition: "queue_depth > threshold"
+    threshold: 1000
+    severity: critical
+    owner: platform
+    runbook_link: docs/runbooks/incident-response.md
+
+  - name: queue_stuck_jobs
+    description: "Jobs stuck in processing state beyond expected duration"
+    condition: "stuck_job_count > threshold"
+    threshold: 5
+    severity: warning
+    owner: backend
+    runbook_link: docs/runbooks/incident-response.md
+
+  - name: queue_worker_starvation
+    description: "No workers available to process queued jobs"
+    condition: "active_worker_count < threshold"
+    threshold: 1
+    severity: critical
+    owner: on-call
+    runbook_link: docs/runbooks/incident-response.md
+
+  # ---------------------------------------------------------------------------
+  # Worker Alerts
+  # ---------------------------------------------------------------------------
+  - name: worker_import_failures
+    description: "Import worker failure rate exceeds acceptable threshold"
+    condition: "import_worker_failure_rate_percent > threshold"
+    threshold: 10
+    severity: critical
+    owner: backend
+    runbook_link: docs/runbooks/rollback.md
+
+  - name: worker_export_failures
+    description: "Export worker failure rate exceeds acceptable threshold"
+    condition: "export_worker_failure_rate_percent > threshold"
+    threshold: 10
+    severity: critical
+    owner: backend
+    runbook_link: docs/runbooks/rollback.md
+
+  - name: worker_crash_loops
+    description: "Worker process is restarting repeatedly indicating a crash loop"
+    condition: "worker_restart_count_per_hour > threshold"
+    threshold: 5
+    severity: critical
+    owner: on-call
+    runbook_link: docs/runbooks/rollback.md
+
+  # ---------------------------------------------------------------------------
+  # Import Alerts
+  # ---------------------------------------------------------------------------
+  - name: import_failure_rate
+    description: "Import job failure rate is above acceptable threshold"
+    condition: "import_failure_rate_percent > threshold"
+    threshold: 15
+    severity: warning
+    owner: backend
+    runbook_link: docs/runbooks/data-recovery.md
+
+  - name: import_parsing_errors
+    description: "High rate of parsing errors in import data"
+    condition: "import_parse_error_count_per_hour > threshold"
+    threshold: 20
+    severity: warning
+    owner: backend
+    runbook_link: docs/runbooks/data-recovery.md
+
+  - name: import_validation_failures
+    description: "Import data failing validation checks at elevated rate"
+    condition: "import_validation_failure_rate_percent > threshold"
+    threshold: 25
+    severity: info
+    owner: backend
+    runbook_link: docs/runbooks/data-recovery.md
+
+  # ---------------------------------------------------------------------------
+  # Export Alerts
+  # ---------------------------------------------------------------------------
+  - name: export_generation_failures
+    description: "Export file generation is failing above acceptable rate"
+    condition: "export_generation_failure_rate_percent > threshold"
+    threshold: 10
+    severity: critical
+    owner: backend
+    runbook_link: docs/runbooks/rollback.md
+
+  - name: export_expired_artifact_buildup
+    description: "Expired export artifacts accumulating and not being cleaned up"
+    condition: "expired_export_artifact_count > threshold"
+    threshold: 50
+    severity: warning
+    owner: platform
+    runbook_link: docs/runbooks/rollback.md
+
+  # ---------------------------------------------------------------------------
+  # Conflict Alerts (Optimistic Concurrency)
+  # ---------------------------------------------------------------------------
+  - name: conflict_rate_spike
+    description: "Optimistic concurrency conflict rate has spiked indicating contention"
+    condition: "conflict_rate_per_minute > threshold"
+    threshold: 20
+    severity: warning
+    owner: backend
+    runbook_link: docs/runbooks/incident-response.md
+
+  # ---------------------------------------------------------------------------
+  # Contract Alerts (OpenAPI Schema Validation)
+  # ---------------------------------------------------------------------------
+  - name: contract_schema_validation_failures
+    description: "OpenAPI schema validation failures detected in request or response payloads"
+    condition: "schema_validation_failure_count_per_minute > threshold"
+    threshold: 5
+    severity: warning
+    owner: backend
+    runbook_link: docs/runbooks/rollback.md
+
+  - name: contract_unexpected_shapes
+    description: "Unexpected request or response shapes not matching API contract"
+    condition: "unexpected_shape_count_per_minute > threshold"
+    threshold: 10
+    severity: critical
+    owner: on-call
+    runbook_link: docs/runbooks/incident-response.md
