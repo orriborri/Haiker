@@ -7,6 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
+use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -14,10 +15,11 @@ use haiker_app::activity_catalog::commands::{self, AuditSink};
 use haiker_app::activity_catalog::queries::{get_activity, list_activities};
 use haiker_app::activity_catalog::repository::ActivityRepository;
 use haiker_app::activity_catalog::{ActivityCatalogError, ActivityId};
+use haiker_app::recorded_activity::leg_repository::LegRepository;
 
 use crate::activities_dto::{
-    ActivityDetailResponse, ActivityListResponse, ActivitySummaryResponse, ListActivitiesParams,
-    PaginationMeta, RenameActivityRequest,
+    ActivityAggregatedStats, ActivityDetailResponse, ActivityLegSummary, ActivityListResponse,
+    ActivitySummaryResponse, ListActivitiesParams, PaginationMeta, RenameActivityRequest,
 };
 use crate::error::ApiError;
 use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
@@ -27,6 +29,7 @@ use haiker_platform::session::SessionStore;
 #[derive(Clone)]
 pub struct ActivityAppState {
     pub repo: Arc<dyn ActivityRepository>,
+    pub leg_repo: Arc<dyn LegRepository>,
     pub audit: Arc<dyn AuditSink>,
     pub session_store: SessionStore,
 }
@@ -155,6 +158,60 @@ pub async fn get_activity_detail(
         .await
         .map_err(activity_error_to_api_error)?;
 
+    // Fetch legs for this activity
+    let legs = state
+        .leg_repo
+        .list_legs(activity.id)
+        .await
+        .unwrap_or_default();
+
+    let (legs_summary, aggregated_stats) = if legs.is_empty() {
+        (None, None)
+    } else {
+        let mut leg_summaries = Vec::with_capacity(legs.len());
+        let mut total_distance = 0.0_f64;
+        let mut total_elevation_gain: Option<f64> = None;
+        let mut dates = HashSet::new();
+
+        for leg in &legs {
+            let summary = state.leg_repo.get_leg_summary(leg.id).await.ok().flatten();
+            if let Some(ref s) = summary {
+                total_distance += s.distance_meters;
+                if let Some(gain) = s.elevation_gain_meters {
+                    total_elevation_gain = Some(total_elevation_gain.unwrap_or(0.0) + gain);
+                }
+            }
+            dates.insert(leg.date);
+
+            let recorded_summary_json = summary.map(|s| {
+                serde_json::json!({
+                    "distanceMeters": s.distance_meters,
+                    "elevationGainMeters": s.elevation_gain_meters,
+                    "elevationLossMeters": s.elevation_loss_meters,
+                    "pointCount": s.point_count,
+                    "durationSeconds": s.duration_seconds
+                })
+            });
+
+            leg_summaries.push(ActivityLegSummary {
+                id: leg.id.0,
+                leg_number: leg.leg_number,
+                title: leg.title.as_ref().map(|t| t.as_str().to_string()),
+                date: leg.date,
+                recorded_summary: recorded_summary_json,
+            });
+        }
+
+        let stats = ActivityAggregatedStats {
+            total_distance,
+            total_elevation_gain,
+            total_days: dates.len() as u32,
+            total_legs: legs.len() as u32,
+        };
+
+        (Some(leg_summaries), Some(stats))
+    };
+
     let response = ActivityDetailResponse {
         id: activity.id.0,
         title: activity.title.as_str().to_string(),
@@ -164,6 +221,8 @@ pub async fn get_activity_detail(
         lifecycle_state: activity.lifecycle_state.to_string(),
         recorded_summary: activity.recorded_summary,
         corrected_summary: activity.corrected_summary,
+        legs: legs_summary,
+        aggregated_stats,
         created_at: activity.created_at,
         updated_at: activity.updated_at,
     };
@@ -203,6 +262,8 @@ pub async fn patch_activity_title(
         lifecycle_state: activity.lifecycle_state.to_string(),
         recorded_summary: activity.recorded_summary,
         corrected_summary: activity.corrected_summary,
+        legs: None,
+        aggregated_stats: None,
         created_at: activity.created_at,
         updated_at: activity.updated_at,
     };

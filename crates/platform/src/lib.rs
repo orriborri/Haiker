@@ -6,6 +6,7 @@
 
 pub mod activity_persistence;
 pub mod audit;
+pub mod leg_persistence;
 pub mod auth_middleware;
 pub mod backpressure;
 pub mod clock;
