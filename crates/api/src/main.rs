@@ -118,6 +118,9 @@ async fn main() {
         leg_repo: Arc::new(haiker_platform::leg_persistence::PgLegRepository::new(
             pool.clone(),
         )),
+        version_repo: Arc::new(
+            haiker_platform::route_version_persistence::PgRouteVersionRepository::new(pool.clone()),
+        ),
         audit: Arc::new(AuditSinkAdapter {
             audit_log: audit_log.clone(),
         }),
@@ -133,6 +136,10 @@ async fn main() {
         .route(
             "/v1/activities/{activityId}/title",
             patch(activities::patch_activity_title),
+        )
+        .route(
+            "/v1/activities/{activityId}/current-route-version",
+            post(activities::post_select_current_route_version),
         )
         .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Read)))
         .with_state(activity_state);

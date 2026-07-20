@@ -14,6 +14,7 @@ use haiker_app::activity_catalog::{
     Activity, ActivityCatalogError, ActivityId, ActivityTitle, ActivityType, LifecycleState,
 };
 use haiker_app::identity::UserId;
+use haiker_app::route_versioning::RouteVersionId;
 
 /// PostgreSQL implementation of the activity repository.
 #[derive(Clone)]
@@ -39,6 +40,7 @@ type ActivityRow = (
     Option<DateTime<Utc>>,     // ended_at
     Option<serde_json::Value>, // recorded_summary_json
     Option<serde_json::Value>, // corrected_summary_json
+    Option<Uuid>,              // current_route_version_id
     DateTime<Utc>,             // created_at
     DateTime<Utc>,             // updated_at
 );
@@ -74,6 +76,7 @@ fn row_to_activity(row: ActivityRow) -> Activity {
         ended_at,
         recorded_summary,
         corrected_summary,
+        current_route_version_id,
         created_at,
         updated_at,
     ) = row;
@@ -89,6 +92,7 @@ fn row_to_activity(row: ActivityRow) -> Activity {
         ended_at,
         recorded_summary,
         corrected_summary,
+        current_route_version_id: current_route_version_id.map(RouteVersionId::new),
         created_at,
         updated_at,
     }

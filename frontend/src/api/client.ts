@@ -127,6 +127,7 @@ const ActivityDetailSchema = z.object({
   lifecycleState: z.string(),
   recordedSummary: RecordedSummarySchema.nullable().optional(),
   correctedSummary: CorrectedSummarySchema.nullable().optional(),
+  currentRouteVersionId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -204,6 +205,23 @@ export function deleteActivity(activityId: string): Promise<undefined> {
   return apiFetch(`/activities/${activityId}`, VoidSchema, {
     method: "DELETE",
   });
+}
+
+export function selectCurrentRouteVersion(
+  activityId: string,
+  routeVersionId: string,
+): Promise<ActivityDetail> {
+  return apiFetch(
+    `/activities/${activityId}/current-route-version`,
+    ActivityDetailSchema,
+    {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ routeVersionId }),
+    },
+  );
 }
 
 // Route Editing Schemas

@@ -61,6 +61,14 @@ pub struct RenameActivityRequest {
     pub title: String,
 }
 
+/// Request body for POST /v1/activities/{activityId}/current-route-version.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SelectCurrentRouteVersionRequest {
+    /// The route version ID to select as current.
+    pub route_version_id: Uuid,
+}
+
 /// Response body for GET /v1/activities/{activityId}.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -75,6 +83,8 @@ pub struct ActivityDetailResponse {
     pub recorded_summary: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corrected_summary: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_route_version_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub legs: Option<Vec<ActivityLegSummary>>,
     #[serde(skip_serializing_if = "Option::is_none")]

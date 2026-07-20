@@ -16,10 +16,13 @@ use haiker_app::activity_catalog::queries::{get_activity, list_activities};
 use haiker_app::activity_catalog::repository::ActivityRepository;
 use haiker_app::activity_catalog::{ActivityCatalogError, ActivityId};
 use haiker_app::recorded_activity::leg_repository::LegRepository;
+use haiker_app::route_versioning::repository::RouteVersionRepository;
+use haiker_app::route_versioning::RouteVersionId;
 
 use crate::activities_dto::{
     ActivityAggregatedStats, ActivityDetailResponse, ActivityLegSummary, ActivityListResponse,
     ActivitySummaryResponse, ListActivitiesParams, PaginationMeta, RenameActivityRequest,
+    SelectCurrentRouteVersionRequest,
 };
 use crate::error::ApiError;
 use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
@@ -30,6 +33,7 @@ use haiker_platform::session::SessionStore;
 pub struct ActivityAppState {
     pub repo: Arc<dyn ActivityRepository>,
     pub leg_repo: Arc<dyn LegRepository>,
+    pub version_repo: Arc<dyn RouteVersionRepository>,
     pub audit: Arc<dyn AuditSink>,
     pub session_store: SessionStore,
 }
@@ -66,6 +70,15 @@ fn activity_error_to_api_error(err: ActivityCatalogError) -> ApiError {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             code: "VALIDATION_FAILED".to_string(),
             message,
+            problem_type: Some("/problems/validation-failed".to_string()),
+            title: Some("Validation Failed".to_string()),
+            request_id: None,
+            details: None,
+        },
+        ActivityCatalogError::VersionNotBelongsToActivity => ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "VERSION_NOT_BELONGS_TO_ACTIVITY".to_string(),
+            message: "version does not belong to this activity".to_string(),
             problem_type: Some("/problems/validation-failed".to_string()),
             title: Some("Validation Failed".to_string()),
             request_id: None,
@@ -221,6 +234,7 @@ pub async fn get_activity_detail(
         lifecycle_state: activity.lifecycle_state.to_string(),
         recorded_summary: activity.recorded_summary,
         corrected_summary: activity.corrected_summary,
+        current_route_version_id: activity.current_route_version_id.map(|v| v.0),
         legs: legs_summary,
         aggregated_stats,
         created_at: activity.created_at,
@@ -262,6 +276,7 @@ pub async fn patch_activity_title(
         lifecycle_state: activity.lifecycle_state.to_string(),
         recorded_summary: activity.recorded_summary,
         corrected_summary: activity.corrected_summary,
+        current_route_version_id: activity.current_route_version_id.map(|v| v.0),
         legs: None,
         aggregated_stats: None,
         created_at: activity.created_at,
@@ -295,6 +310,49 @@ pub async fn delete_activity_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// POST /v1/activities/{activityId}/current-route-version
+///
+/// Select a route version as the activity's current route. Validates that the
+/// version belongs to the activity (membership invariant). Returns 422 if not.
+#[tracing::instrument(skip(state, actor, body))]
+pub async fn post_select_current_route_version(
+    State(state): State<ActivityAppState>,
+    actor: AuthSession,
+    Path(activity_id): Path<Uuid>,
+    Json(body): Json<SelectCurrentRouteVersionRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let owner_id = actor.0.user_id;
+
+    let activity = commands::select_current_route_version(
+        ActivityId::new(activity_id),
+        owner_id,
+        RouteVersionId::new(body.route_version_id),
+        state.repo.as_ref(),
+        state.version_repo.as_ref(),
+        state.audit.as_ref(),
+    )
+    .await
+    .map_err(activity_error_to_api_error)?;
+
+    let response = ActivityDetailResponse {
+        id: activity.id.0,
+        title: activity.title.as_str().to_string(),
+        activity_type: activity.activity_type.to_string(),
+        started_at: activity.started_at,
+        ended_at: activity.ended_at,
+        lifecycle_state: activity.lifecycle_state.to_string(),
+        recorded_summary: activity.recorded_summary,
+        corrected_summary: activity.corrected_summary,
+        current_route_version_id: activity.current_route_version_id.map(|v| v.0),
+        legs: None,
+        aggregated_stats: None,
+        created_at: activity.created_at,
+        updated_at: activity.updated_at,
+    };
+
+    Ok((StatusCode::OK, Json(response)))
+}
+
 // -- In-memory implementations for use in tests --
 
 #[cfg(test)]
@@ -314,6 +372,52 @@ use haiker_app::activity_catalog::repository::ActivityPage;
 use haiker_app::activity_catalog::{Activity, LifecycleState};
 #[cfg(test)]
 use haiker_app::identity::UserId;
+#[cfg(test)]
+use haiker_app::route_versioning::repository::RouteVersionPage;
+#[cfg(test)]
+use haiker_app::route_versioning::{RouteVersion, RouteVersioningError};
+
+/// Stub route version repository that always returns None (for activity handler tests).
+#[cfg(test)]
+pub struct StubRouteVersionRepository;
+
+#[cfg(test)]
+#[async_trait]
+impl RouteVersionRepository for StubRouteVersionRepository {
+    async fn save(&self, _version: &RouteVersion) -> Result<(), RouteVersioningError> {
+        Ok(())
+    }
+    async fn find_by_id(
+        &self,
+        _id: RouteVersionId,
+    ) -> Result<Option<RouteVersion>, RouteVersioningError> {
+        Ok(None)
+    }
+    async fn find_latest_by_activity(
+        &self,
+        _activity_id: ActivityId,
+    ) -> Result<Option<RouteVersion>, RouteVersioningError> {
+        Ok(None)
+    }
+    async fn find_by_idempotency_key(
+        &self,
+        _key: &str,
+    ) -> Result<Option<RouteVersion>, RouteVersioningError> {
+        Ok(None)
+    }
+    async fn list_by_activity(
+        &self,
+        _activity_id: ActivityId,
+        _cursor: Option<&str>,
+        _page_size: u32,
+    ) -> Result<RouteVersionPage, RouteVersioningError> {
+        Ok(RouteVersionPage {
+            items: vec![],
+            next_cursor: None,
+            has_more: false,
+        })
+    }
+}
 
 /// In-memory activity repository for testing (not used in production).
 #[cfg(test)]
@@ -557,6 +661,7 @@ mod tests {
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::new()),
             leg_repo: Arc::new(StubLegRepository),
+            version_repo: Arc::new(StubRouteVersionRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };
@@ -579,6 +684,7 @@ mod tests {
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
             leg_repo: Arc::new(StubLegRepository),
+            version_repo: Arc::new(StubRouteVersionRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };
@@ -706,6 +812,7 @@ mod tests {
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
             leg_repo: Arc::new(StubLegRepository),
+            version_repo: Arc::new(StubRouteVersionRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };
@@ -816,6 +923,7 @@ mod tests {
         let state = ActivityAppState {
             repo: Arc::new(InMemoryActivityRepository::with_activities(activities)),
             leg_repo: Arc::new(StubLegRepository),
+            version_repo: Arc::new(StubRouteVersionRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };
@@ -1430,6 +1538,7 @@ mod tests {
                 activity1, activity2,
             ])),
             leg_repo: Arc::new(StubLegRepository),
+            version_repo: Arc::new(StubRouteVersionRepository),
             audit: Arc::new(NoOpAuditSink),
             session_store: dummy_session_store(),
         };

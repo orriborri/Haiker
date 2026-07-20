@@ -183,7 +183,10 @@ export function ActivityDetailPage({ activityId }: ActivityDetailPageProps) {
 
       {/* Route version history */}
       <div className="mt-6">
-        <RouteHistory activityId={activityId} />
+        <RouteHistory
+          activityId={activityId}
+          currentRouteVersionId={activity.currentRouteVersionId}
+        />
       </div>
     </div>
   );

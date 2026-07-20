@@ -159,6 +159,64 @@
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
 
+/v1/activities/{activityId}/current-route-version:
+  post:
+    operationId: selectCurrentRouteVersion
+    summary: Select a route version as the activity's current route
+    description: Sets the specified route version as the activity's current route version. The version must belong to this activity (membership invariant). Updates the corrected summary on the activity. Returns 422 if the version does not belong to this activity.
+    tags:
+      - Activities
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The unique activity identifier (UUID).
+        schema:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Unique idempotency key to prevent duplicate operations.
+        schema:
+          type: string
+          format: uuid
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "../components/activities.yaml#/SelectCurrentRouteVersionRequest"
+    responses:
+      "200":
+        description: The updated activity detail with the new current route version.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/activities.yaml#/ActivityDetailResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity not found (also returned for cross-owner access, non-disclosing).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "422":
+        description: Validation failed (version does not belong to this activity).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
 /v1/activities/{activityId}/recorded-route:
   get:
     operationId: getRecordedRoute
