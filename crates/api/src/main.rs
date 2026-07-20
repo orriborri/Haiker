@@ -115,11 +115,13 @@ async fn main() {
     let audit_log = AuditLog::new(pool.clone());
     let activity_state = activities::ActivityAppState {
         repo: Arc::new(PgActivityRepository::new(pool.clone())),
-        leg_repo: Arc::new(haiker_infrastructure::leg_persistence::PgLegRepository::new(
-            pool.clone(),
-        )),
+        leg_repo: Arc::new(
+            haiker_infrastructure::leg_persistence::PgLegRepository::new(pool.clone()),
+        ),
         version_repo: Arc::new(
-            haiker_platform::route_version_persistence::PgRouteVersionRepository::new(pool.clone()),
+            haiker_infrastructure::route_version_persistence::PgRouteVersionRepository::new(
+                pool.clone(),
+            ),
         ),
         audit: Arc::new(AuditSinkAdapter {
             audit_log: audit_log.clone(),
@@ -168,9 +170,9 @@ async fn main() {
     // Leg subsystem state
     let leg_state = legs::LegAppState {
         activity_repo: Arc::new(PgActivityRepository::new(pool.clone())),
-        leg_repo: Arc::new(haiker_infrastructure::leg_persistence::PgLegRepository::new(
-            pool.clone(),
-        )),
+        leg_repo: Arc::new(
+            haiker_infrastructure::leg_persistence::PgLegRepository::new(pool.clone()),
+        ),
         session_store: haiker_infrastructure::session::SessionStore::new(pool.clone()),
     };
 
@@ -241,9 +243,11 @@ async fn main() {
     let route_versioning_state = route_versioning::RouteVersioningAppState {
         activity_repo: Arc::new(PgActivityRepository::new(pool.clone())),
         version_repo: Arc::new(
-            haiker_platform::route_version_persistence::PgRouteVersionRepository::new(pool.clone()),
+            haiker_infrastructure::route_version_persistence::PgRouteVersionRepository::new(
+                pool.clone(),
+            ),
         ),
-        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+        session_store: haiker_infrastructure::session::SessionStore::new(pool.clone()),
     };
 
     let route_versioning_routes = Router::new()

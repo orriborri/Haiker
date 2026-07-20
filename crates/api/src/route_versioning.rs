@@ -26,8 +26,8 @@ use crate::route_versioning_dto::{
     RouteVersionFeatureProperties, RouteVersionGeometryResponse, RouteVersionListParams,
     RouteVersionListResponse, RouteVersionSummaryResponse,
 };
-use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
-use haiker_platform::session::SessionStore;
+use haiker_infrastructure::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_infrastructure::session::SessionStore;
 
 /// Shared application state for route versioning handlers.
 #[derive(Clone)]
