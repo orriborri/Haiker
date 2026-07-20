@@ -60,6 +60,7 @@ export function RouteHistory({
 
   const handleSetAsCurrent = useCallback(
     (versionId: string) => {
+      selectMutation.clearError();
       selectMutation.mutate({ activityId, routeVersionId: versionId });
     },
     [selectMutation, activityId],
@@ -121,6 +122,23 @@ export function RouteHistory({
       <p className="mb-4 text-xs text-gray-500">
         {versions.length} version{versions.length !== 1 ? "s" : ""} published
       </p>
+
+      {selectMutation.error && (
+        <div
+          role="alert"
+          className="mb-4 flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+        >
+          <span>{selectMutation.error}</span>
+          <button
+            type="button"
+            className="ml-2 text-red-600 hover:text-red-800 focus:outline-none"
+            onClick={selectMutation.clearError}
+            aria-label="Dismiss error"
+          >
+            &times;
+          </button>
+        </div>
+      )}
 
       <ol className="space-y-2" aria-label="Route versions">
         {versions.map((version) => (

@@ -136,7 +136,8 @@ impl ActivityRepository for PgActivityRepository {
                     r#"
                         SELECT id, owner_id, title, activity_type, lifecycle_state,
                                started_at, ended_at, recorded_summary_json,
-                               corrected_summary_json, created_at, updated_at
+                               corrected_summary_json, current_route_version_id,
+                               created_at, updated_at
                         FROM activity_catalog.activities
                         WHERE owner_id = $1
                           AND lifecycle_state != 'deleted'
@@ -166,7 +167,8 @@ impl ActivityRepository for PgActivityRepository {
                         r#"
                         SELECT id, owner_id, title, activity_type, lifecycle_state,
                                started_at, ended_at, recorded_summary_json,
-                               corrected_summary_json, created_at, updated_at
+                               corrected_summary_json, current_route_version_id,
+                               created_at, updated_at
                         FROM activity_catalog.activities
                         WHERE owner_id = $1
                           AND lifecycle_state != 'deleted'
@@ -190,7 +192,8 @@ impl ActivityRepository for PgActivityRepository {
                 r#"
                 SELECT id, owner_id, title, activity_type, lifecycle_state,
                        started_at, ended_at, recorded_summary_json,
-                       corrected_summary_json, created_at, updated_at
+                       corrected_summary_json, current_route_version_id,
+                       created_at, updated_at
                 FROM activity_catalog.activities
                 WHERE owner_id = $1
                   AND lifecycle_state != 'deleted'
@@ -237,7 +240,8 @@ impl ActivityRepository for PgActivityRepository {
             r#"
             SELECT id, owner_id, title, activity_type, lifecycle_state,
                    started_at, ended_at, recorded_summary_json,
-                   corrected_summary_json, created_at, updated_at
+                   corrected_summary_json, current_route_version_id,
+                   created_at, updated_at
             FROM activity_catalog.activities
             WHERE id = $1
             "#,
@@ -258,9 +262,10 @@ impl ActivityRepository for PgActivityRepository {
             INSERT INTO activity_catalog.activities (
                 id, owner_id, title, activity_type, lifecycle_state,
                 started_at, ended_at, recorded_summary_json,
-                corrected_summary_json, created_at, updated_at
+                corrected_summary_json, current_route_version_id,
+                created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             "#,
         )
         .bind(activity.id.0)
@@ -272,6 +277,7 @@ impl ActivityRepository for PgActivityRepository {
         .bind(activity.ended_at)
         .bind(&activity.recorded_summary)
         .bind(&activity.corrected_summary)
+        .bind(activity.current_route_version_id.map(|v| v.0))
         .bind(activity.created_at)
         .bind(activity.updated_at)
         .execute(&self.pool)
@@ -294,7 +300,8 @@ impl ActivityRepository for PgActivityRepository {
                 ended_at = $6,
                 recorded_summary_json = $7,
                 corrected_summary_json = $8,
-                updated_at = $9
+                current_route_version_id = $9,
+                updated_at = $10
             WHERE id = $1
             "#,
         )
@@ -306,6 +313,7 @@ impl ActivityRepository for PgActivityRepository {
         .bind(activity.ended_at)
         .bind(&activity.recorded_summary)
         .bind(&activity.corrected_summary)
+        .bind(activity.current_route_version_id.map(|v| v.0))
         .bind(activity.updated_at)
         .execute(&self.pool)
         .await

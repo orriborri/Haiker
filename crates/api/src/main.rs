@@ -137,11 +137,17 @@ async fn main() {
             "/v1/activities/{activityId}/title",
             patch(activities::patch_activity_title),
         )
+        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Read)))
+        .with_state(activity_state.clone());
+
+    let activity_mutation_routes = Router::new()
         .route(
             "/v1/activities/{activityId}/current-route-version",
             post(activities::post_select_current_route_version),
         )
-        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Read)))
+        .layer(axum::Extension(RouteCategoryExtension(
+            RouteCategory::Mutation,
+        )))
         .with_state(activity_state);
 
     // Recorded route subsystem state
@@ -352,6 +358,7 @@ async fn main() {
         .merge(auth_flow_routes)
         .merge(import_routes)
         .merge(activity_routes)
+        .merge(activity_mutation_routes)
         .merge(recorded_route_routes)
         .merge(leg_routes)
         .merge(route_editing_routes)

@@ -208,7 +208,19 @@ pub async fn select_current_route_version(
     }
 
     // Build corrected summary from the version's corrected statistics
-    let corrected_summary = serde_json::to_value(&version.corrected_statistics).unwrap_or_default();
+    let corrected_summary = match serde_json::to_value(&version.corrected_statistics) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                route_version_id = %route_version_id,
+                "failed to serialize corrected_statistics to JSON"
+            );
+            return Err(ActivityCatalogError::PersistenceError {
+                message: format!("failed to serialize corrected_statistics: {e}"),
+            });
+        }
+    };
 
     // Apply domain mutation
     activity.select_current_route_version(route_version_id, corrected_summary);

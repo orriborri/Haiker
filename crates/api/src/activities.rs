@@ -4,7 +4,7 @@
 //! and PATCH /v1/activities/{activityId}/title.
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use std::collections::HashSet;
@@ -310,17 +310,50 @@ pub async fn delete_activity_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Extract the Idempotency-Key header value.
+#[allow(clippy::result_large_err)]
+fn extract_idempotency_key(headers: &HeaderMap) -> Result<String, ApiError> {
+    let key = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "MISSING_IDEMPOTENCY_KEY".to_string(),
+            message: "Idempotency-Key header is required".to_string(),
+            problem_type: Some("/problems/missing-idempotency-key".to_string()),
+            title: Some("Missing Idempotency Key".to_string()),
+            request_id: None,
+            details: None,
+        })?;
+
+    if key.trim().is_empty() {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "MISSING_IDEMPOTENCY_KEY".to_string(),
+            message: "Idempotency-Key header must not be empty".to_string(),
+            problem_type: Some("/problems/missing-idempotency-key".to_string()),
+            title: Some("Missing Idempotency Key".to_string()),
+            request_id: None,
+            details: None,
+        });
+    }
+
+    Ok(key.to_string())
+}
+
 /// POST /v1/activities/{activityId}/current-route-version
 ///
 /// Select a route version as the activity's current route. Validates that the
 /// version belongs to the activity (membership invariant). Returns 422 if not.
-#[tracing::instrument(skip(state, actor, body))]
+#[tracing::instrument(skip(state, actor, body, headers))]
 pub async fn post_select_current_route_version(
     State(state): State<ActivityAppState>,
     actor: AuthSession,
     Path(activity_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(body): Json<SelectCurrentRouteVersionRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let _idempotency_key = extract_idempotency_key(&headers)?;
     let owner_id = actor.0.user_id;
 
     let activity = commands::select_current_route_version(

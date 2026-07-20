@@ -3,6 +3,7 @@ import {
   selectCurrentRouteVersion,
   type ActivityDetail,
 } from "@/api/client";
+import { useCallback, useState } from "react";
 
 interface SelectCurrentRouteVersionParams {
   activityId: string;
@@ -11,11 +12,13 @@ interface SelectCurrentRouteVersionParams {
 
 export function useSelectCurrentRouteVersion(activityId: string) {
   const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
 
-  return useMutation<ActivityDetail, Error, SelectCurrentRouteVersionParams>({
+  const mutation = useMutation<ActivityDetail, Error, SelectCurrentRouteVersionParams>({
     mutationFn: ({ activityId, routeVersionId }) =>
       selectCurrentRouteVersion(activityId, routeVersionId),
     onSuccess: () => {
+      setError(null);
       // Invalidate activity detail cache so UI reflects new currentRouteVersionId
       void queryClient.invalidateQueries({
         queryKey: ["activity", activityId],
@@ -25,5 +28,12 @@ export function useSelectCurrentRouteVersion(activityId: string) {
         queryKey: ["routeVersions", activityId],
       });
     },
+    onError: (err) => {
+      setError(err.message || "Failed to set current version");
+    },
   });
+
+  const clearError = useCallback(() => setError(null), []);
+
+  return { ...mutation, error, clearError };
 }
