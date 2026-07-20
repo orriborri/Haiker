@@ -9,6 +9,7 @@ pub mod commit;
 pub mod corrected_statistics;
 pub mod gateway;
 pub mod publish_command;
+pub mod queries;
 pub mod repository;
 
 use chrono::{DateTime, Utc};

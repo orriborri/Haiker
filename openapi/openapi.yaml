@@ -45,6 +45,12 @@ paths:
     $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1validation"
   /v1/route-drafts/{draftId}/publication:
     $ref: "paths/route-editing.yaml#/~1v1~1route-drafts~1{draftId}~1publication"
+  /v1/activities/{activityId}/route-versions:
+    $ref: "paths/route-versions.yaml#/~1v1~1activities~1{activityId}~1route-versions"
+  /v1/route-versions/{routeVersionId}:
+    $ref: "paths/route-versions.yaml#/~1v1~1route-versions~1{routeVersionId}"
+  /v1/route-versions/{routeVersionId}/geometry:
+    $ref: "paths/route-versions.yaml#/~1v1~1route-versions~1{routeVersionId}~1geometry"
   /v1/activities/{activityId}/exports:
     $ref: "paths/exports.yaml#/~1v1~1activities~1{activityId}~1exports"
   /v1/exports/{exportId}:
@@ -85,3 +91,13 @@ components:
       $ref: "components/exports.yaml#/ExportStatusResponse"
     ExportDownloadResponse:
       $ref: "components/exports.yaml#/ExportDownloadResponse"
+    RouteVersionSummary:
+      $ref: "components/route-versions.yaml#/RouteVersionSummary"
+    RouteVersionListResponse:
+      $ref: "components/route-versions.yaml#/RouteVersionListResponse"
+    RouteVersionDetailResponse:
+      $ref: "components/route-versions.yaml#/RouteVersionDetailResponse"
+    RouteVersionGeometryResponse:
+      $ref: "components/route-versions.yaml#/RouteVersionGeometryResponse"
+    CorrectedStatistics:
+      $ref: "components/route-versions.yaml#/CorrectedStatistics"

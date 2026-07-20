@@ -43,6 +43,8 @@ mod recorded_route;
 mod recorded_route_dto;
 mod route_editing;
 mod route_editing_dto;
+mod route_versioning;
+mod route_versioning_dto;
 
 /// OpenAPI documentation specification.
 #[derive(OpenApi)]
@@ -222,6 +224,31 @@ async fn main() {
         )))
         .with_state(route_editing_state);
 
+    // Route versioning subsystem state
+    let route_versioning_state = route_versioning::RouteVersioningAppState {
+        activity_repo: Arc::new(PgActivityRepository::new(pool.clone())),
+        version_repo: Arc::new(
+            haiker_platform::route_version_persistence::PgRouteVersionRepository::new(pool.clone()),
+        ),
+        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+    };
+
+    let route_versioning_routes = Router::new()
+        .route(
+            "/v1/activities/{activityId}/route-versions",
+            get(route_versioning::get_route_versions_list),
+        )
+        .route(
+            "/v1/route-versions/{routeVersionId}",
+            get(route_versioning::get_route_version_detail),
+        )
+        .route(
+            "/v1/route-versions/{routeVersionId}/geometry",
+            get(route_versioning::get_route_version_geometry_handler),
+        )
+        .layer(axum::Extension(RouteCategoryExtension(RouteCategory::Read)))
+        .with_state(route_versioning_state);
+
     // Export subsystem state (placeholder - no real persistence impl yet)
     // TODO: Wire up real persistence and gateway implementations when available
     let export_state = exports::ExportAppState {
@@ -321,6 +348,7 @@ async fn main() {
         .merge(recorded_route_routes)
         .merge(leg_routes)
         .merge(route_editing_routes)
+        .merge(route_versioning_routes)
         .merge(export_routes)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(axum::middleware::from_fn(rate_limit_middleware))
