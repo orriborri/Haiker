@@ -44,6 +44,7 @@ POST   /v1/imports/{importId}/cancellation
 
 GET    /v1/activities/{activityId}/recorded-route
 GET    /v1/activities/{activityId}/route-versions
+GET    /v1/activities/{activityId}/route-comparison
 GET    /v1/route-versions/{routeVersionId}
 GET    /v1/route-versions/{routeVersionId}/geometry
 

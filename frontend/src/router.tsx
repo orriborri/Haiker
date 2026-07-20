@@ -12,6 +12,7 @@ import { ActivityDetailPage } from "@/features/activity-detail/ActivityDetail";
 import { RouteEditor } from "@/features/route-editor/RouteEditor";
 import { ImportActivity } from "@/features/import-activity";
 import { ExportRoute } from "@/features/export-route";
+import { RouteComparison } from "@/features/route-comparison";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthGuard, AuthCallback, LoginPage } from "@/auth";
 
@@ -22,6 +23,7 @@ function getPageName(pathname: string): string {
   if (pathname === "/import") return "Import Activity page";
   if (/^\/activities\/[^/]+\/edit$/.test(pathname)) return "Route Editor page";
   if (/^\/activities\/[^/]+\/export$/.test(pathname)) return "Export Route page";
+  if (/^\/activities\/[^/]+\/compare$/.test(pathname)) return "Route Comparison page";
   if (/^\/activities\/[^/]+$/.test(pathname)) return "Activity Detail page";
   return "Page";
 }
@@ -153,6 +155,19 @@ const exportRoute = createRoute({
   },
 });
 
+const compareRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/activities/$activityId/compare",
+  component: function ProtectedRouteComparison() {
+    const { activityId } = compareRoute.useParams();
+    return (
+      <AuthGuard>
+        <RouteComparison activityId={activityId} />
+      </AuthGuard>
+    );
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   authCallbackRoute,
@@ -161,6 +176,7 @@ const routeTree = rootRoute.addChildren([
   activityEditRoute,
   importRoute,
   exportRoute,
+  compareRoute,
 ]);
 
 export const router = createRouter({ routeTree });

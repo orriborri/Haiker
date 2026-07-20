@@ -230,6 +230,7 @@ async fn main() {
         version_repo: Arc::new(
             haiker_platform::route_version_persistence::PgRouteVersionRepository::new(pool.clone()),
         ),
+        recorded_route_repo: Arc::new(PgRecordedRouteRepository::new(pool.clone())),
         session_store: haiker_platform::session::SessionStore::new(pool.clone()),
     };
 
@@ -237,6 +238,10 @@ async fn main() {
         .route(
             "/v1/activities/{activityId}/route-versions",
             get(route_versioning::get_route_versions_list),
+        )
+        .route(
+            "/v1/activities/{activityId}/route-comparison",
+            get(route_versioning::get_route_comparison_handler),
         )
         .route(
             "/v1/route-versions/{routeVersionId}",

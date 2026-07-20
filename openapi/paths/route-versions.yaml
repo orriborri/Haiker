@@ -135,3 +135,55 @@
           application/json:
             schema:
               $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/activities/{activityId}/route-comparison:
+  get:
+    operationId: getRouteComparison
+    summary: Compare recorded route with a corrected route version
+    description: |
+      Returns both the recorded route geometry and a selected corrected route version
+      geometry in a single response, with separate statistics for each. This enables
+      the frontend to render a comparison view without multiple round-trips.
+
+      The response clearly distinguishes recorded vs corrected data.
+
+      Returns 404 for missing, cross-owner, or deleted activities, or if the
+      route version does not exist or does not belong to the activity (non-disclosing).
+    tags:
+      - Route Versions
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The activity ID.
+        schema:
+          type: string
+          format: uuid
+      - name: routeVersionId
+        in: query
+        required: true
+        description: The route version ID to compare against the recorded route.
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: Comparison between recorded and corrected route.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-versions.yaml#/RouteComparisonResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity or route version not found (non-disclosing for cross-owner access).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

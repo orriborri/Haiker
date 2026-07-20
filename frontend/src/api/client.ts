@@ -606,3 +606,80 @@ export function getRouteVersionGeometry(
     RouteVersionGeometryResponseSchema,
   );
 }
+
+// Route Comparison Schemas
+
+const RecordedRouteComparisonStatisticsSchema = z.object({
+  distanceMeters: z.number(),
+  elevationGainMeters: z.number().nullable().optional(),
+  elevationLossMeters: z.number().nullable().optional(),
+  pointCount: z.number(),
+  segmentCount: z.number(),
+});
+
+const RecordedRouteComparisonFeaturePropertiesSchema = z.object({
+  segmentIndex: z.number(),
+  pointCount: z.number(),
+});
+
+const RecordedRouteComparisonFeatureSchema = z.object({
+  type: z.literal("Feature"),
+  geometry: GeoJsonGeometrySchema,
+  properties: RecordedRouteComparisonFeaturePropertiesSchema,
+});
+
+const RecordedRouteComparisonGeometrySchema = z.object({
+  type: z.literal("FeatureCollection"),
+  bbox: z.array(z.number()),
+  features: z.array(RecordedRouteComparisonFeatureSchema),
+});
+
+const RecordedRouteSectionSchema = z.object({
+  geometry: RecordedRouteComparisonGeometrySchema,
+  statistics: RecordedRouteComparisonStatisticsSchema,
+});
+
+const CorrectedRouteComparisonStatisticsSchema = z.object({
+  distanceMeters: z.number(),
+  pointCount: z.number(),
+  calculationVersion: z.string(),
+});
+
+const CorrectedRouteComparisonGeometrySchema = z.object({
+  type: z.literal("FeatureCollection"),
+  bbox: z.array(z.number()),
+  features: z.array(RouteVersionGeometryFeatureSchema),
+});
+
+const CorrectedRouteSectionSchema = z.object({
+  geometry: CorrectedRouteComparisonGeometrySchema,
+  statistics: CorrectedRouteComparisonStatisticsSchema,
+  versionNumber: z.number(),
+  editSummary: z.string().nullable().optional(),
+});
+
+const RouteComparisonResponseSchema = z.object({
+  recorded: RecordedRouteSectionSchema,
+  corrected: CorrectedRouteSectionSchema,
+  sharedBbox: z.array(z.number()),
+});
+
+// Route Comparison Types
+
+export type RecordedRouteComparisonStatistics = z.infer<typeof RecordedRouteComparisonStatisticsSchema>;
+export type CorrectedRouteComparisonStatistics = z.infer<typeof CorrectedRouteComparisonStatisticsSchema>;
+export type RouteComparisonResponse = z.infer<typeof RouteComparisonResponseSchema>;
+
+// Route Comparison API Functions
+
+export function getRouteComparison(
+  activityId: string,
+  routeVersionId: string,
+): Promise<RouteComparisonResponse> {
+  const params = new URLSearchParams();
+  params.set("routeVersionId", routeVersionId);
+  return apiFetch(
+    `/activities/${activityId}/route-comparison?${params.toString()}`,
+    RouteComparisonResponseSchema,
+  );
+}

@@ -6,6 +6,7 @@
 //! the database level via immutability triggers.
 
 pub mod commit;
+pub mod comparison_query;
 pub mod corrected_statistics;
 pub mod gateway;
 pub mod publish_command;
