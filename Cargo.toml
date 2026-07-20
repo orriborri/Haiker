@@ -4,7 +4,7 @@ members = [
     "crates/app",
     "crates/api",
     "crates/worker",
-    "crates/platform",
+    "crates/infrastructure",
     "crates/test_support",
 ]
 
@@ -73,5 +73,5 @@ jsonwebtoken = "9"
 
 # Internal crates
 haiker-app = { path = "crates/app" }
-haiker-platform = { path = "crates/platform" }
+haiker-infrastructure = { path = "crates/infrastructure" }
 haiker-test-support = { path = "crates/test_support" }

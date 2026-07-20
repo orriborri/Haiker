@@ -25,8 +25,8 @@ use crate::activities_dto::{
     SelectCurrentRouteVersionRequest,
 };
 use crate::error::ApiError;
-use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
-use haiker_platform::session::SessionStore;
+use haiker_infrastructure::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_infrastructure::session::SessionStore;
 
 /// Shared application state for activity handlers.
 #[derive(Clone)]

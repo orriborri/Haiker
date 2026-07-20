@@ -5,7 +5,7 @@ import { ExportProgress } from "./ExportProgress";
 import { ExportReady } from "./ExportReady";
 import { ExportFailed } from "./ExportFailed";
 import { ExportExpired } from "./ExportExpired";
-import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useDocumentTitle } from "@/common/hooks/useDocumentTitle";
 
 interface ExportRouteProps {
   activityId: string;

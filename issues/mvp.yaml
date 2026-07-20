@@ -41,7 +41,7 @@
     "api-core": {
       "capacity": 1,
       "description": "Shared API middleware, errors, authentication, request IDs, and common OpenAPI components",
-      "paths": ["crates/api/src/*.rs", "crates/platform/src/request_id.rs", "openapi/components/**", "openapi/openapi.yaml"]
+      "paths": ["crates/api/src/*.rs", "crates/infrastructure/src/request_id.rs", "openapi/components/**", "openapi/openapi.yaml"]
     },
     "frontend-client": {
       "capacity": 1,

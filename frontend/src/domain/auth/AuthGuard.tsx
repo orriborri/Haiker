@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useAuth } from "./AuthProvider";
 import { LoginPage } from "./LoginPage";
-import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { LoadingSpinner } from "@/common/components/LoadingSpinner";
 
 interface AuthGuardProps {
   children: ReactNode;

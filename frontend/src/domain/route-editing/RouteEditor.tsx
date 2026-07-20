@@ -20,9 +20,9 @@ import {
   useValidateDraft,
 } from "./useRouteDraft";
 import { getRouteDraft } from "@/api/client";
-import { useRecordedRoute } from "@/features/activity-detail/useRecordedRoute";
-import { LoadingSpinner } from "@/components/LoadingSpinner";
-import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useRecordedRoute } from "@/domain/activity/detail/useRecordedRoute";
+import { LoadingSpinner } from "@/common/components/LoadingSpinner";
+import { useDocumentTitle } from "@/common/hooks/useDocumentTitle";
 import { ApiError } from "@/api/client";
 import type { RoutePointDto } from "@/api/client";
 import type { Selection, RouteOperation, PendingOperation, SectionSelection } from "./types";

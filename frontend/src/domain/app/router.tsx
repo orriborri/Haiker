@@ -7,13 +7,13 @@ import {
   useLocation,
 } from "@tanstack/react-router";
 import { z } from "zod";
-import { ActivityLibrary } from "@/features/activity-library/ActivityLibrary";
-import { ActivityDetailPage } from "@/features/activity-detail/ActivityDetail";
-import { RouteEditor } from "@/features/route-editor/RouteEditor";
-import { ImportActivity } from "@/features/import-activity";
-import { ExportRoute } from "@/features/export-route";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { AuthGuard, AuthCallback, LoginPage } from "@/auth";
+import { ActivityLibrary } from "@/domain/activity/library/ActivityLibrary";
+import { ActivityDetailPage } from "@/domain/activity/detail/ActivityDetail";
+import { RouteEditor } from "@/domain/route-editing/RouteEditor";
+import { ImportActivity } from "@/domain/importing";
+import { ExportRoute } from "@/domain/exporting";
+import { ErrorBoundary } from "@/common/components/ErrorBoundary";
+import { AuthGuard, AuthCallback, LoginPage } from "@/domain/auth";
 
 function getPageName(pathname: string): string {
   if (pathname === "/") return "Activities page";

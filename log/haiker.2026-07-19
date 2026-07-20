@@ -1,0 +1,18 @@
+{"timestamp":"2026-07-19T18:14:26.451343Z","level":"INFO","fields":{"message":"Telemetry initialized","service":"haiker","version":"0.1.0"},"target":"haiker_platform::telemetry"}
+{"timestamp":"2026-07-19T18:14:26.451449Z","level":"INFO","fields":{"message":"File logging enabled (daily rotation)","log_dir":"./log","prefix":"haiker"},"target":"haiker_platform::telemetry"}
+{"timestamp":"2026-07-19T18:14:26.451481Z","level":"INFO","fields":{"message":"Starting Haiker background worker"},"target":"haiker_worker"}
+{"timestamp":"2026-07-19T18:14:26.488371Z","level":"INFO","fields":{"message":"Telemetry initialized","service":"haiker","version":"0.1.0"},"target":"haiker_platform::telemetry"}
+{"timestamp":"2026-07-19T18:14:26.488452Z","level":"INFO","fields":{"message":"File logging enabled (daily rotation)","log_dir":"./log","prefix":"haiker"},"target":"haiker_platform::telemetry"}
+{"timestamp":"2026-07-19T18:14:26.488480Z","level":"INFO","fields":{"message":"Starting Haiker API server"},"target":"haiker_api"}
+{"timestamp":"2026-07-19T18:18:48.412816Z","level":"INFO","fields":{"message":"Telemetry initialized","service":"haiker","version":"0.1.0"},"target":"haiker_platform::telemetry"}
+{"timestamp":"2026-07-19T18:18:48.412942Z","level":"INFO","fields":{"message":"File logging enabled (daily rotation)","log_dir":"./log","prefix":"haiker"},"target":"haiker_platform::telemetry"}
+{"timestamp":"2026-07-19T18:18:48.412976Z","level":"INFO","fields":{"message":"Starting Haiker background worker"},"target":"haiker_worker"}
+{"timestamp":"2026-07-19T18:18:48.444915Z","level":"INFO","fields":{"message":"Database connection pool established","max_connections":25},"target":"haiker_platform::database"}
+{"timestamp":"2026-07-19T18:18:48.445484Z","level":"INFO","fields":{"message":"Object storage client initialized","bucket":"haiker","endpoint":"http://localhost:9000"},"target":"haiker_platform::object_storage"}
+{"timestamp":"2026-07-19T18:18:48.445606Z","level":"INFO","fields":{"message":"Worker runtime starting","poll_interval_ms":1000,"max_concurrent_jobs":5,"default_job_timeout_seconds":300},"target":"haiker_platform::worker_runtime"}
+{"timestamp":"2026-07-19T18:18:48.451568Z","level":"INFO","fields":{"message":"Telemetry initialized","service":"haiker","version":"0.1.0"},"target":"haiker_platform::telemetry"}
+{"timestamp":"2026-07-19T18:18:48.451681Z","level":"INFO","fields":{"message":"File logging enabled (daily rotation)","log_dir":"./log","prefix":"haiker"},"target":"haiker_platform::telemetry"}
+{"timestamp":"2026-07-19T18:18:48.451716Z","level":"INFO","fields":{"message":"Starting Haiker API server"},"target":"haiker_api"}
+{"timestamp":"2026-07-19T18:18:48.481788Z","level":"INFO","fields":{"message":"Database connection pool established","max_connections":25},"target":"haiker_platform::database"}
+{"timestamp":"2026-07-19T18:18:48.482174Z","level":"INFO","fields":{"message":"Object storage client initialized","bucket":"haiker","endpoint":"http://localhost:9000"},"target":"haiker_platform::object_storage"}
+{"timestamp":"2026-07-19T18:18:49.344161Z","level":"INFO","fields":{"message":"OIDC provider configured successfully"},"target":"haiker_api"}

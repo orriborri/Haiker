@@ -1021,7 +1021,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "haiker-app",
- "haiker-platform",
+ "haiker-infrastructure",
  "haiker-test-support",
  "serde",
  "serde_json",
@@ -1056,7 +1056,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "haiker-platform"
+name = "haiker-infrastructure"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1095,7 +1095,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "haiker-app",
- "haiker-platform",
+ "haiker-infrastructure",
  "sha2 0.10.9",
  "tokio",
  "tracing",
@@ -1110,7 +1110,7 @@ dependencies = [
  "anyhow",
  "dotenvy",
  "haiker-app",
- "haiker-platform",
+ "haiker-infrastructure",
  "haiker-test-support",
  "tokio",
  "tokio-util",

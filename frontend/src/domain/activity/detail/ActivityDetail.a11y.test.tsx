@@ -21,7 +21,7 @@ vi.mock("./useRecordedRoute", () => ({
   useRecordedRoute: vi.fn(),
 }));
 
-vi.mock("@/hooks/useDocumentTitle", () => ({
+vi.mock("@/common/hooks/useDocumentTitle", () => ({
   useDocumentTitle: vi.fn(),
 }));
 

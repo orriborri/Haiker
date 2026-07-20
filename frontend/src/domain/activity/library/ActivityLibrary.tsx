@@ -1,23 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useActivities } from "./useActivities";
-import { LoadingSpinner } from "@/components/LoadingSpinner";
-import { EmptyState } from "@/components/EmptyState";
-import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { LoadingSpinner } from "@/common/components/LoadingSpinner";
+import { EmptyState } from "@/common/components/EmptyState";
+import { useDocumentTitle } from "@/common/hooks/useDocumentTitle";
+import { formatDate, formatDistanceKm } from "@/common/utils";
 import type { ActivitySummary } from "@/api/client";
-
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function formatDistanceKm(meters: number): string {
-  return `${(meters / 1000).toFixed(1)} km`;
-}
 
 function ActivityRow({ activity }: { activity: ActivitySummary }) {
   const navigate = useNavigate();

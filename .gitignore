@@ -31,3 +31,9 @@ tests/performance/results/*.json
 /frontend/node_modules/
 /frontend/dist/
 frontend/tsconfig.tsbuildinfo
+
+
+# Mutation testing
+/mutants.out/
+/frontend/stryker-tmp/
+/frontend/reports/

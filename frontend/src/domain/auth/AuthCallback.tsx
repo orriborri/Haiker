@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { exchangeCallback } from "@/api/auth";
 import { useAuth } from "./AuthProvider";
-import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { LoadingSpinner } from "@/common/components/LoadingSpinner";
 
 /**
  * Handles the OIDC callback redirect.

@@ -1,25 +1,25 @@
 use axum::routing::{get, patch, post};
 use axum::Router;
 use haiker_app::activity_catalog::commands::AuditSink;
-use haiker_platform::activity_persistence::PgActivityRepository;
-use haiker_platform::audit::AuditLog;
-use haiker_platform::config::AppConfig;
-use haiker_platform::database;
-use haiker_platform::import_persistence::PgImportRepository;
-use haiker_platform::object_storage::ObjectStorageClient;
-use haiker_platform::oidc::Auth0OidcProvider;
-use haiker_platform::oidc_state_store::OidcStateStore;
-use haiker_platform::publication_commit::PgPublicationCommitter;
-use haiker_platform::rate_limit::{
+use haiker_infrastructure::activity_persistence::PgActivityRepository;
+use haiker_infrastructure::audit::AuditLog;
+use haiker_infrastructure::config::AppConfig;
+use haiker_infrastructure::database;
+use haiker_infrastructure::import_persistence::PgImportRepository;
+use haiker_infrastructure::object_storage::ObjectStorageClient;
+use haiker_infrastructure::oidc::Auth0OidcProvider;
+use haiker_infrastructure::oidc_state_store::OidcStateStore;
+use haiker_infrastructure::publication_commit::PgPublicationCommitter;
+use haiker_infrastructure::rate_limit::{
     rate_limit_middleware, RateLimitConfig, RateLimiter, RouteCategory, RouteCategoryExtension,
 };
-use haiker_platform::recorded_route_persistence::PgRecordedRouteRepository;
-use haiker_platform::request_id::request_id_middleware;
-use haiker_platform::route_editing_gateways::{PgActivityGateway, PgRouteVersionGateway};
-use haiker_platform::route_editing_persistence::PgRouteDraftRepository;
-use haiker_platform::telemetry::{self, TelemetryConfig};
-use haiker_platform::upload_quota::{UploadQuota, UploadQuotaConfig};
-use haiker_platform::user_persistence::PgUserRepository;
+use haiker_infrastructure::recorded_route_persistence::PgRecordedRouteRepository;
+use haiker_infrastructure::request_id::request_id_middleware;
+use haiker_infrastructure::route_editing_gateways::{PgActivityGateway, PgRouteVersionGateway};
+use haiker_infrastructure::route_editing_persistence::PgRouteDraftRepository;
+use haiker_infrastructure::telemetry::{self, TelemetryConfig};
+use haiker_infrastructure::upload_quota::{UploadQuota, UploadQuotaConfig};
+use haiker_infrastructure::user_persistence::PgUserRepository;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -93,10 +93,10 @@ async fn main() {
         }),
         upload_verifier: Arc::new(object_storage),
         job_queue: Some(Arc::new(PgJobEnqueuer {
-            queue: haiker_platform::job_queue::JobQueue::new(pool.clone()),
+            queue: haiker_infrastructure::job_queue::JobQueue::new(pool.clone()),
         })),
         upload_quota: Some(upload_quota),
-        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+        session_store: haiker_infrastructure::session::SessionStore::new(pool.clone()),
     };
 
     let import_routes = Router::new()
@@ -115,7 +115,7 @@ async fn main() {
     let audit_log = AuditLog::new(pool.clone());
     let activity_state = activities::ActivityAppState {
         repo: Arc::new(PgActivityRepository::new(pool.clone())),
-        leg_repo: Arc::new(haiker_platform::leg_persistence::PgLegRepository::new(
+        leg_repo: Arc::new(haiker_infrastructure::leg_persistence::PgLegRepository::new(
             pool.clone(),
         )),
         version_repo: Arc::new(
@@ -124,7 +124,7 @@ async fn main() {
         audit: Arc::new(AuditSinkAdapter {
             audit_log: audit_log.clone(),
         }),
-        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+        session_store: haiker_infrastructure::session::SessionStore::new(pool.clone()),
     };
 
     let activity_routes = Router::new()
@@ -154,7 +154,7 @@ async fn main() {
     let recorded_route_state = recorded_route::RecordedRouteAppState {
         activity_repo: Arc::new(PgActivityRepository::new(pool.clone())),
         route_repo: Arc::new(PgRecordedRouteRepository::new(pool.clone())),
-        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+        session_store: haiker_infrastructure::session::SessionStore::new(pool.clone()),
     };
 
     let recorded_route_routes = Router::new()
@@ -168,10 +168,10 @@ async fn main() {
     // Leg subsystem state
     let leg_state = legs::LegAppState {
         activity_repo: Arc::new(PgActivityRepository::new(pool.clone())),
-        leg_repo: Arc::new(haiker_platform::leg_persistence::PgLegRepository::new(
+        leg_repo: Arc::new(haiker_infrastructure::leg_persistence::PgLegRepository::new(
             pool.clone(),
         )),
-        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+        session_store: haiker_infrastructure::session::SessionStore::new(pool.clone()),
     };
 
     let leg_routes = Router::new()
@@ -196,7 +196,7 @@ async fn main() {
         activity_gateway: Arc::new(PgActivityGateway::new()),
         route_version_gateway: Arc::new(PgRouteVersionGateway::new()),
         publication_committer: Some(Arc::new(PgPublicationCommitter::new(pool.clone()))),
-        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+        session_store: haiker_infrastructure::session::SessionStore::new(pool.clone()),
     };
 
     let route_editing_routes = Router::new()
@@ -270,7 +270,7 @@ async fn main() {
         job_queue: None,
         download_url_generator: None,
         audit_sink: None,
-        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+        session_store: haiker_infrastructure::session::SessionStore::new(pool.clone()),
     };
 
     let export_routes = Router::new()
@@ -318,7 +318,7 @@ async fn main() {
         oidc_provider,
         state_store: Arc::new(OidcStateStore::new()),
         user_repo: Arc::new(PgUserRepository::new(pool.clone())),
-        session_store: haiker_platform::session::SessionStore::new(pool.clone()),
+        session_store: haiker_infrastructure::session::SessionStore::new(pool.clone()),
         cookie_secure: app_config
             .oidc
             .as_ref()
@@ -399,7 +399,7 @@ impl haiker_app::imports::commands::UploadUrlGenerator for PresignedUrlGenerator
 
 /// Job enqueuer adapter backed by the platform JobQueue.
 struct PgJobEnqueuer {
-    queue: haiker_platform::job_queue::JobQueue,
+    queue: haiker_infrastructure::job_queue::JobQueue,
 }
 
 #[async_trait::async_trait]

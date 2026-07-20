@@ -55,6 +55,30 @@ Evaluate and benchmark before committing:
 - **No** GraphQL, tRPC, or browser-facing gRPC
 - **Internal gRPC**: Only if a future independently deployed service has a demonstrated need
 
+## Crate Responsibilities & Frontend Parallel
+
+Both frontend and backend follow the same **domain/common** organizational principle:
+
+| Role | Backend (Rust) | Frontend (TypeScript) |
+|------|---------------|----------------------|
+| Domain logic by bounded context | `crates/app/src/{context}/` | `src/domain/{context}/` |
+| Shared infrastructure | `crates/infrastructure/src/` | `src/common/` |
+| External interface (HTTP/UI) | `crates/api/src/` | `src/domain/{context}/*.tsx` |
+| Background processing | `crates/worker/src/` | — |
+| API contract | `openapi/` | `src/api/` |
+
+Each bounded context uses the same ubiquitous language across frontend and backend:
+
+| Domain | Backend module | Frontend folder |
+|--------|---------------|-----------------|
+| Activity Catalog | `activity_catalog/` | `activity/` |
+| Activity Importing | `imports/` | `importing/` |
+| Recorded Activity | `recorded_activity/` | (consumed via `activity/detail/`) |
+| Route Editing | `route_editing/` | `route-editing/` |
+| Route Versioning | `route_versioning/` | (consumed via API) |
+| Route Exporting | `exports/` | `exporting/` |
+| Identity & Auth | `identity.rs` | `auth/` |
+
 ## Repository Structure
 
 ```
@@ -74,7 +98,7 @@ haiker/
 │   │       └── lib.rs
 │   ├── api/                    # Axum HTTP server (binary)
 │   ├── worker/                 # Background job processor (binary)
-│   ├── platform/               # Shared infrastructure (db, storage, telemetry)
+│   ├── infrastructure/          # Shared infrastructure (db, storage, telemetry)
 │   └── test_support/           # Test utilities and fixtures
 ├── frontend/                   # React SPA
 ├── migrations/                 # Database migrations (per context)
@@ -106,22 +130,41 @@ route_editing/
 └── mod.rs
 ```
 
-## Frontend Feature Organization
+## Frontend Organization
+
+The frontend follows a **domain/common** pattern inspired by domain-driven design. Code is organized by bounded context under `domain/`, with shared generic infrastructure in `common/`.
 
 ```
 src/
-├── features/
-│   ├── activity-library/
-│   ├── activity-detail/
-│   ├── import-activity/
-│   ├── route-editor/
-│   ├── route-history/
-│   └── export-route/
-├── api/                        # Generated client
-├── auth/
-├── map/
-└── platform/
+├── domain/                     # Business domains (bounded contexts)
+│   ├── app/                    # App shell, router, layout
+│   ├── activity/               # Activity catalog domain
+│   │   ├── library/            # Activity list UI
+│   │   └── detail/             # Activity detail UI
+│   ├── importing/              # Activity importing domain
+│   ├── route-editing/          # Route editing domain
+│   ├── exporting/              # Route exporting domain
+│   └── auth/                   # Authentication domain
+├── common/                     # Shared, generic infrastructure
+│   ├── components/             # Generic UI (EmptyState, LoadingSpinner, ErrorBoundary)
+│   ├── hooks/                  # Generic hooks (useDocumentTitle)
+│   └── utils/                  # Shared utilities (formatDate, formatDistance)
+├── api/                        # API client (generated or hand-written)
+├── test-utils/                 # Test helpers
+└── main.tsx
 ```
+
+### Domain folder rules
+
+- Each domain folder owns its full stack: components, hooks, queries, mutations, types, constants, translations.
+- Domain folders mirror backend bounded contexts and use the same ubiquitous language.
+- A domain folder must NOT import from another domain folder directly. Cross-domain communication goes through `api/` or shared types.
+
+### Common folder rules
+
+- `common/` contains only generic, domain-agnostic code.
+- Nothing in `common/` should reference a business concept (activity, route, import, etc.).
+- Extract to `common/` only after the rule of three (proven duplication across domains).
 
 ## Frontend State Strategy
 

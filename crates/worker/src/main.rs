@@ -1,16 +1,16 @@
-use haiker_platform::audit::AuditLog;
-use haiker_platform::config::AppConfig;
-use haiker_platform::database;
-use haiker_platform::export_worker::GenerateExportJobHandler;
-use haiker_platform::import_cleanup::cleanup_abandoned_imports;
-use haiker_platform::import_persistence::PgImportRepository;
-use haiker_platform::import_worker::ParseGpxJobHandler;
-use haiker_platform::job_queue::JobQueue;
-use haiker_platform::object_storage::ObjectStorageClient;
-use haiker_platform::outbox::{Outbox, OutboxDispatcher};
-use haiker_platform::session::SessionStore;
-use haiker_platform::telemetry::{self, TelemetryConfig};
-use haiker_platform::worker_runtime::{WorkerConfig, WorkerRuntime};
+use haiker_infrastructure::audit::AuditLog;
+use haiker_infrastructure::config::AppConfig;
+use haiker_infrastructure::database;
+use haiker_infrastructure::export_worker::GenerateExportJobHandler;
+use haiker_infrastructure::import_cleanup::cleanup_abandoned_imports;
+use haiker_infrastructure::import_persistence::PgImportRepository;
+use haiker_infrastructure::import_worker::ParseGpxJobHandler;
+use haiker_infrastructure::job_queue::JobQueue;
+use haiker_infrastructure::object_storage::ObjectStorageClient;
+use haiker_infrastructure::outbox::{Outbox, OutboxDispatcher};
+use haiker_infrastructure::session::SessionStore;
+use haiker_infrastructure::telemetry::{self, TelemetryConfig};
+use haiker_infrastructure::worker_runtime::{WorkerConfig, WorkerRuntime};
 use tokio_util::sync::CancellationToken;
 
 /// Interval for periodic maintenance tasks (stale job timeout, session cleanup).

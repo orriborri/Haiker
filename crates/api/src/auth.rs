@@ -18,7 +18,7 @@ use crate::error::ApiError;
 /// Wraps the domain `Actor` type so we can implement Axum's `FromRequestParts`
 /// in this crate.
 ///
-/// **Deprecated:** Prefer `haiker_platform::auth_middleware::AuthSession` for new
+/// **Deprecated:** Prefer `haiker_infrastructure::auth_middleware::AuthSession` for new
 /// endpoints. This extractor only validates Bearer UUID tokens and does not support
 /// session cookies or CSRF protection. It is retained for the `/me` debug endpoint.
 pub struct AuthenticatedActor(pub Actor);

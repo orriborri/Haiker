@@ -24,9 +24,9 @@ use crate::imports_dto::{
     CompleteUploadRequest, ImportStatusResponse, StartImportRequest, StartImportResponse,
 };
 
-use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
-use haiker_platform::session::SessionStore;
-use haiker_platform::upload_quota::UploadQuota;
+use haiker_infrastructure::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_infrastructure::session::SessionStore;
+use haiker_infrastructure::upload_quota::UploadQuota;
 
 /// Trait for enqueueing background jobs from the API layer.
 ///
@@ -2661,7 +2661,7 @@ mod tests {
     #[tokio::test]
     async fn post_start_import_over_quota_returns_429() {
         ensure_dev_auth();
-        use haiker_platform::upload_quota::{UploadQuota, UploadQuotaConfig};
+        use haiker_infrastructure::upload_quota::{UploadQuota, UploadQuotaConfig};
 
         let quota = Arc::new(UploadQuota::new(&UploadQuotaConfig {
             max_imports_per_day: 2,
@@ -2745,7 +2745,7 @@ mod tests {
     #[tokio::test]
     async fn post_start_import_different_users_have_independent_quotas() {
         ensure_dev_auth();
-        use haiker_platform::upload_quota::{UploadQuota, UploadQuotaConfig};
+        use haiker_infrastructure::upload_quota::{UploadQuota, UploadQuotaConfig};
 
         let quota = Arc::new(UploadQuota::new(&UploadQuotaConfig {
             max_imports_per_day: 1,

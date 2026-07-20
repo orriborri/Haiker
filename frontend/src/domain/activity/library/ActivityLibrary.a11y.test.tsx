@@ -18,7 +18,7 @@ vi.mock("./useActivities", () => ({
 }));
 
 // Mock useDocumentTitle to avoid side effects
-vi.mock("@/hooks/useDocumentTitle", () => ({
+vi.mock("@/common/hooks/useDocumentTitle", () => ({
   useDocumentTitle: vi.fn(),
 }));
 

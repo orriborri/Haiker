@@ -3,25 +3,10 @@ import { useNavigate, Link } from "@tanstack/react-router";
 import { useActivity } from "./useActivity";
 import { useRecordedRoute } from "./useRecordedRoute";
 import { RouteMap } from "./RouteMap";
-import { RouteHistory } from "@/features/route-history";
-import { LoadingSpinner } from "@/components/LoadingSpinner";
-import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { LoadingSpinner } from "@/common/components/LoadingSpinner";
+import { useDocumentTitle } from "@/common/hooks/useDocumentTitle";
+import { formatDateTime, formatDistanceKm } from "@/common/utils";
 import type { ActivityDetail } from "@/api/client";
-
-function formatDateTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatDistanceKm(meters: number): string {
-  return `${(meters / 1000).toFixed(1)} km`;
-}
 
 interface ActivityDetailPageProps {
   activityId: string;

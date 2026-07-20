@@ -8,7 +8,7 @@ description = "Haiker HTTP API server (Axum)"
 
 [dependencies]
 haiker-app.workspace = true
-haiker-platform.workspace = true
+haiker-infrastructure.workspace = true
 axum.workspace = true
 axum-extra.workspace = true
 anyhow.workspace = true

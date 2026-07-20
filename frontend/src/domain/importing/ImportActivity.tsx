@@ -4,7 +4,7 @@ import { useImportActivity } from "./useImportActivity";
 import { FilePickerDropZone } from "./FilePickerDropZone";
 import { ImportProgress } from "./ImportProgress";
 import { ImportResult } from "./ImportResult";
-import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useDocumentTitle } from "@/common/hooks/useDocumentTitle";
 
 export function ImportActivity() {
   useDocumentTitle("Import Activity");

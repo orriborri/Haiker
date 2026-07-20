@@ -6,14 +6,14 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/app/Cargo.toml crates/app/
 COPY crates/api/Cargo.toml crates/api/
 COPY crates/worker/Cargo.toml crates/worker/
-COPY crates/platform/Cargo.toml crates/platform/
+COPY crates/infrastructure/Cargo.toml crates/infrastructure/
 COPY crates/test_support/Cargo.toml crates/test_support/
 # Create dummy source files for dependency caching
-RUN mkdir -p crates/app/src crates/api/src crates/worker/src crates/platform/src crates/test_support/src && \
+RUN mkdir -p crates/app/src crates/api/src crates/worker/src crates/infrastructure/src crates/test_support/src && \
     echo "pub fn main() {}" > crates/api/src/main.rs && \
     echo "pub fn main() {}" > crates/worker/src/main.rs && \
     echo "" > crates/app/src/lib.rs && \
-    echo "" > crates/platform/src/lib.rs && \
+    echo "" > crates/infrastructure/src/lib.rs && \
     echo "" > crates/test_support/src/lib.rs
 ENV SQLX_OFFLINE=true
 RUN cargo build --release --bin haiker-api --bin haiker-worker 2>/dev/null || true

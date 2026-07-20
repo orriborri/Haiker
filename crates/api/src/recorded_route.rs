@@ -18,8 +18,8 @@ use crate::recorded_route_dto::{
     GeoJsonFeature, GeoJsonGeometry, RecordedRouteParams, RecordedRoutePreviewResponse,
     RecordedRouteResponse, RouteDetail, RouteProperties, SegmentProperties,
 };
-use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
-use haiker_platform::session::SessionStore;
+use haiker_infrastructure::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_infrastructure::session::SessionStore;
 
 /// Shared application state for recorded route handlers.
 #[derive(Clone)]

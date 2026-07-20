@@ -30,8 +30,8 @@ use crate::legs_dto::{
     CreateLegRequest, LegDetailResponse, LegListResponse, LegSummaryResponse,
     LegSummaryStatsResponse, UpdateLegRequest,
 };
-use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
-use haiker_platform::session::SessionStore;
+use haiker_infrastructure::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_infrastructure::session::SessionStore;
 
 /// Shared application state for leg handlers.
 #[derive(Clone)]

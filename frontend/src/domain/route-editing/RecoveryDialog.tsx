@@ -1,4 +1,4 @@
-import { FocusTrap } from "@/components/FocusTrap";
+import { FocusTrap } from "@/common/components/FocusTrap";
 import type { PendingOperation } from "./types";
 
 interface RecoveryDialogProps {

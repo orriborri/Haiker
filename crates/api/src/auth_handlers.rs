@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use haiker_app::identity::{OidcProvider, UserRepository};
-use haiker_platform::auth_middleware::{HasSessionStore, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
-use haiker_platform::oidc_state_store::OidcStateStore;
-use haiker_platform::session::SessionStore;
+use haiker_infrastructure::auth_middleware::{HasSessionStore, CSRF_HEADER_NAME, SESSION_COOKIE_NAME};
+use haiker_infrastructure::oidc_state_store::OidcStateStore;
+use haiker_infrastructure::session::SessionStore;
 
 /// Application state for auth handlers.
 #[derive(Clone)]

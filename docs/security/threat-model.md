@@ -51,21 +51,21 @@
 
 The system uses a layered authentication architecture:
 
-1. **Primary:** Session-based authentication via HTTP-only cookies (`AuthSession` extractor in `crates/platform/src/auth_middleware.rs`)
-2. **OIDC Integration:** Auth0 as identity provider (`crates/platform/src/oidc.rs`)
-3. **Development Bypass:** `DEV_AUTH_ENABLED` environment variable allows raw UUID Bearer tokens (`crates/platform/src/auth_middleware.rs:32`)
+1. **Primary:** Session-based authentication via HTTP-only cookies (`AuthSession` extractor in `crates/infrastructure/src/auth_middleware.rs`)
+2. **OIDC Integration:** Auth0 as identity provider (`crates/infrastructure/src/oidc.rs`)
+3. **Development Bypass:** `DEV_AUTH_ENABLED` environment variable allows raw UUID Bearer tokens (`crates/infrastructure/src/auth_middleware.rs:32`)
 
 ### Session Flow
 
 1. User initiates login via `POST /auth/login` (redirects to Auth0)
 2. Auth0 callback at `GET /auth/callback` validates tokens
-3. Server generates UUID session token, stores SHA-256 hash in DB (`crates/platform/src/session.rs:144-147`)
+3. Server generates UUID session token, stores SHA-256 hash in DB (`crates/infrastructure/src/session.rs:144-147`)
 4. Raw token sent as HTTP-only cookie; never stored server-side in plaintext
 5. Subsequent requests validated by hashing cookie value and looking up in DB
 
 ### DEV_AUTH_ENABLED Risk
 
-- **Location:** `crates/platform/src/auth_middleware.rs:32`
+- **Location:** `crates/infrastructure/src/auth_middleware.rs:32`
 - **Behavior:** When enabled, accepts `Authorization: Bearer <UUID>` as direct user identity
 - **Cached:** Value read once via `OnceLock`, cannot be toggled at runtime
 - **Startup Warning:** `crates/api/src/main.rs:262-266` logs `SECURITY RISK` error when both OIDC and dev auth are active
@@ -169,7 +169,7 @@ User-controlled strings that may be rendered in the frontend:
 | Short TTL | 300 seconds (5 minutes) | `crates/api/src/exports.rs:61` |
 | Cache-Control: no-store | Prevents browser/proxy caching of URL | `crates/api/src/exports.rs:504` |
 | URL not in API response | Object storage key not exposed in JSON | Verified via test assertions |
-| URL not in audit log | Download events recorded without the presigned URL | `crates/platform/src/audit.rs` ExportAuditSink abstraction |
+| URL not in audit log | Download events recorded without the presigned URL | `crates/infrastructure/src/audit.rs` ExportAuditSink abstraction |
 | Auth required | Download endpoint requires `AuthenticatedActor` + ownership check | `crates/api/src/exports.rs` |
 
 ### Residual Risks
@@ -187,8 +187,8 @@ User-controlled strings that may be rendered in the frontend:
 
 | Property | Implementation | File |
 |----------|---------------|------|
-| Token format | UUID v4 (122 bits entropy) | `crates/platform/src/session.rs` |
-| Storage | SHA-256 hash in PostgreSQL | `crates/platform/src/session.rs:144-147` |
+| Token format | UUID v4 (122 bits entropy) | `crates/infrastructure/src/session.rs` |
+| Storage | SHA-256 hash in PostgreSQL | `crates/infrastructure/src/session.rs:144-147` |
 | Cookie flags | HttpOnly, SameSite=Lax, Path=/, Max-Age=7d | `crates/api/src/auth_handlers.rs:278-284` |
 | Secure flag | Conditional on HTTPS redirect URI | `crates/api/src/auth_handlers.rs:278` |
 | Revocation | On logout; expired sessions cleaned up | Session store implementation |
@@ -223,7 +223,7 @@ User-controlled strings that may be rendered in the frontend:
 | Checksum verification | SHA-256 computed and verified on completion | `crates/app/src/imports/orchestrator.rs:137-141` |
 | Duplicate detection | Checksum-based deduplication per owner | Import orchestrator |
 | Queue backpressure | 429 Too Many Requests with Retry-After | Import queue handler |
-| Rate limiting | 10 RPM on import routes | `crates/platform/src/rate_limit.rs:56` |
+| Rate limiting | 10 RPM on import routes | `crates/infrastructure/src/rate_limit.rs:56` |
 
 ### Residual Risks
 
@@ -240,16 +240,16 @@ User-controlled strings that may be rendered in the frontend:
 
 | Category | Limit (RPM) | Scope | File |
 |----------|-------------|-------|------|
-| Auth (login/register) | 5 | Per-actor or per-IP | `crates/platform/src/rate_limit.rs:55` |
-| Imports | 10 | Per-actor or per-IP | `crates/platform/src/rate_limit.rs:56` |
-| Mutations (create/update/delete) | 30 | Per-actor or per-IP | `crates/platform/src/rate_limit.rs:57` |
-| Reads | 120 | Per-actor or per-IP | `crates/platform/src/rate_limit.rs:58` |
-| Exports | 10 | Per-actor or per-IP | `crates/platform/src/rate_limit.rs:59` |
+| Auth (login/register) | 5 | Per-actor or per-IP | `crates/infrastructure/src/rate_limit.rs:55` |
+| Imports | 10 | Per-actor or per-IP | `crates/infrastructure/src/rate_limit.rs:56` |
+| Mutations (create/update/delete) | 30 | Per-actor or per-IP | `crates/infrastructure/src/rate_limit.rs:57` |
+| Reads | 120 | Per-actor or per-IP | `crates/infrastructure/src/rate_limit.rs:58` |
+| Exports | 10 | Per-actor or per-IP | `crates/infrastructure/src/rate_limit.rs:59` |
 
 ### Bucket Management
 
-- **Eviction threshold:** 10,000 entries (`crates/platform/src/rate_limit.rs:255`)
-- **Stale age:** 120 seconds (`crates/platform/src/rate_limit.rs:259`)
+- **Eviction threshold:** 10,000 entries (`crates/infrastructure/src/rate_limit.rs:255`)
+- **Stale age:** 120 seconds (`crates/infrastructure/src/rate_limit.rs:259`)
 - **Eviction trigger:** When bucket map exceeds threshold, entries older than stale age are removed
 
 ### Other Controls
@@ -330,9 +330,9 @@ User-controlled strings that may be rendered in the frontend:
 
 | Statement | Location | Data Logged | Risk |
 |-----------|----------|-------------|------|
-| DEV_AUTH warning | `crates/platform/src/auth_middleware.rs:106-108` | `user_id` | Low (dev only, appropriate warning) |
+| DEV_AUTH warning | `crates/infrastructure/src/auth_middleware.rs:106-108` | `user_id` | Low (dev only, appropriate warning) |
 | Auth error | `crates/api/src/auth_handlers.rs` | Error details, no user PII | Low |
-| Audit append | `crates/platform/src/audit.rs:25-26` | User ID, action, resource (no coordinates/file content/PII) | Low |
+| Audit append | `crates/infrastructure/src/audit.rs:25-26` | User ID, action, resource (no coordinates/file content/PII) | Low |
 | Export download | Export audit sink | Event recorded WITHOUT presigned URL | Low |
 
 ### Residual Risks
@@ -349,22 +349,22 @@ User-controlled strings that may be rendered in the frontend:
 
 | Secret | Storage | Rotation Mechanism | File |
 |--------|---------|-------------------|------|
-| OIDC client secret | Environment variable | Auth0 dashboard rotation | `crates/platform/src/oidc.rs` |
-| S3 access key / secret key | Environment variable | Object storage provider rotation | `crates/platform/src/config.rs:40-50` |
-| Database connection URL | Environment variable | Password rotation + connection string update | `crates/platform/src/config.rs:31-36` |
-| Session signing (token hashing) | Algorithmic (SHA-256) | No secret key; tokens are random UUIDs | `crates/platform/src/session.rs` |
+| OIDC client secret | Environment variable | Auth0 dashboard rotation | `crates/infrastructure/src/oidc.rs` |
+| S3 access key / secret key | Environment variable | Object storage provider rotation | `crates/infrastructure/src/config.rs:40-50` |
+| Database connection URL | Environment variable | Password rotation + connection string update | `crates/infrastructure/src/config.rs:31-36` |
+| Session signing (token hashing) | Algorithmic (SHA-256) | No secret key; tokens are random UUIDs | `crates/infrastructure/src/session.rs` |
 
 ### Findings
 
 **MEDIUM-001: StorageConfig derives Debug - could leak secret_access_key**
 
-- **File:** `crates/platform/src/config.rs:40`
+- **File:** `crates/infrastructure/src/config.rs:40`
 - **Impact:** If `StorageConfig` is debug-printed (e.g., via `tracing::debug!(?config)` or panic messages), the `secret_access_key` field would be exposed in logs
 - **Recommendation:** Implement custom `Debug` that redacts sensitive fields, or use `secrecy::Secret<String>` wrapper
 
 **MEDIUM-002: OidcConfig derives Debug - could leak client_secret**
 
-- **File:** `crates/platform/src/config.rs:53`
+- **File:** `crates/infrastructure/src/config.rs:53`
 - **Impact:** If `OidcConfig` is debug-printed, the `client_secret` field would be exposed in logs
 - **Recommendation:** Same as MEDIUM-001
 
@@ -402,11 +402,11 @@ All API endpoints require the `AuthenticatedActor` extractor, which:
 |----|----------|----------|-------------|------|--------|-------|-------------|
 | HIGH-001 | High | BOLA | Route draft endpoints return 404 for cross-owner (non-disclosing) | `crates/api/src/route_editing.rs` | Fixed | platform-team | 2025-02-14 |
 | HIGH-002 | High | BOLA | Import completion returns 403 for cross-owner (discloses resource existence) | `crates/api/src/imports.rs:132-139` | Open | platform-team | 2025-02-14 |
-| MEDIUM-001 | Medium | Secret Exposure | StorageConfig custom Debug redacts secret_access_key | `crates/platform/src/config.rs:40` | Fixed | platform-team | 2025-02-14 |
-| MEDIUM-002 | Medium | Secret Exposure | OidcConfig custom Debug redacts client_secret | `crates/platform/src/config.rs:53` | Fixed | platform-team | 2025-02-14 |
+| MEDIUM-001 | Medium | Secret Exposure | StorageConfig custom Debug redacts secret_access_key | `crates/infrastructure/src/config.rs:40` | Fixed | platform-team | 2025-02-14 |
+| MEDIUM-002 | Medium | Secret Exposure | OidcConfig custom Debug redacts client_secret | `crates/infrastructure/src/config.rs:53` | Fixed | platform-team | 2025-02-14 |
 | MEDIUM-003 | Medium | XSS | Frontend stores auth_token in localStorage (XSS exfiltration risk) | `frontend/src/api/client.ts:6` | Accepted | platform-team | 2025-02-14 |
 | LOW-001 | Low | Session | 7-day session Max-Age without step-up authentication for sensitive ops | `crates/api/src/auth_handlers.rs:284` | Accepted | platform-team | - |
-| LOW-002 | Low | Rate Limit | IP-based limiting bypassable with rotating IPs | `crates/platform/src/rate_limit.rs` | Accepted | platform-team | - |
+| LOW-002 | Low | Rate Limit | IP-based limiting bypassable with rotating IPs | `crates/infrastructure/src/rate_limit.rs` | Accepted | platform-team | - |
 
 ### Severity Definitions
 

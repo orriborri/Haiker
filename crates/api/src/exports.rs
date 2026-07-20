@@ -26,8 +26,8 @@ use crate::exports_dto::{
     ExportDownloadUrlResponse, ExportStatusResponse, RequestExportRequest, RequestExportResponse,
 };
 use crate::imports::JobEnqueuer;
-use haiker_platform::auth_middleware::{AuthSession, HasSessionStore};
-use haiker_platform::session::SessionStore;
+use haiker_infrastructure::auth_middleware::{AuthSession, HasSessionStore};
+use haiker_infrastructure::session::SessionStore;
 
 /// Shared application state for export handlers.
 #[derive(Clone)]

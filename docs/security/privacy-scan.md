@@ -15,7 +15,7 @@ All `tracing::*` calls in the codebase were reviewed for PII and secret leakage.
 
 | File | Line | Level | Data Logged | PII/Secret Risk | Status |
 |------|------|-------|-------------|-----------------|--------|
-| `crates/platform/src/auth_middleware.rs` | 106-108 | `warn` | `user_id` (UUID) | Low - user identifier only, dev-mode context | Acceptable |
+| `crates/infrastructure/src/auth_middleware.rs` | 106-108 | `warn` | `user_id` (UUID) | Low - user identifier only, dev-mode context | Acceptable |
 | `crates/api/src/auth_handlers.rs` | (error paths) | `error` | Error details | None - no user PII in error messages | Pass |
 | `crates/api/src/main.rs` | 262-265 | `error` | Configuration warning text | None - static warning message | Pass |
 
@@ -67,9 +67,9 @@ Unit tests confirm:
 
 ### Audit Store Contract
 
-- **File:** `crates/platform/src/audit.rs:25-26`
+- **File:** `crates/infrastructure/src/audit.rs:25-26`
 - **Doc comment:** "The metadata must be privacy-safe (no coordinates, file content, or PII beyond user identifiers)."
-- **Repeated at:** `crates/platform/src/audit.rs:56-57` (transactional variant)
+- **Repeated at:** `crates/infrastructure/src/audit.rs:56-57` (transactional variant)
 
 ### Audit Data Fields
 
@@ -144,7 +144,7 @@ Unit tests confirm:
 | Check | Result | Evidence |
 |-------|--------|----------|
 | Presigned URL NOT in API JSON response body | PASS | Export response includes download metadata but not raw S3 URL |
-| Presigned URL NOT in audit log | PASS | Audit sink records event without URL (`crates/platform/src/audit.rs` contract) |
+| Presigned URL NOT in audit log | PASS | Audit sink records event without URL (`crates/infrastructure/src/audit.rs` contract) |
 | Presigned URL NOT in tracing spans | PASS | No `tracing::*` calls include presigned URLs |
 | Cache-Control: no-store on download response | PASS | `crates/api/src/exports.rs:504` |
 | Short TTL (300s) limits exposure window | PASS | `crates/api/src/exports.rs:61` |
@@ -157,7 +157,7 @@ Unit tests confirm:
 
 ### StorageConfig
 
-- **File:** `crates/platform/src/config.rs:40`
+- **File:** `crates/infrastructure/src/config.rs:40`
 - **Struct:** `StorageConfig` derives `Debug`
 - **Sensitive fields:** `secret_access_key`
 - **Risk:** If this struct is ever formatted with `{:?}` (debug print), the secret key appears in output
@@ -165,7 +165,7 @@ Unit tests confirm:
 
 ### OidcConfig
 
-- **File:** `crates/platform/src/config.rs:53`
+- **File:** `crates/infrastructure/src/config.rs:53`
 - **Struct:** `OidcConfig` derives `Debug`
 - **Sensitive fields:** `client_secret`
 - **Risk:** Same as StorageConfig

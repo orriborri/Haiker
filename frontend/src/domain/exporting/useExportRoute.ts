@@ -8,7 +8,7 @@ import {
   type ExportStatusResponse,
   type ExportDownloadResponse,
 } from "@/api/client";
-import { useOnlineStatus } from "@/features/route-editor/useOnlineStatus";
+import { useOnlineStatus } from "@/domain/route-editing/useOnlineStatus";
 
 /** Maximum polling duration in milliseconds (2 minutes). */
 export const MAX_POLLING_DURATION_MS = 120_000;
