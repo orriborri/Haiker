@@ -23,6 +23,10 @@
 .DS_Store
 Thumbs.db
 
+# Performance test fixtures (generated, large files)
+tests/performance/fixtures/*.gpx
+tests/performance/results/*.json
+
 # Frontend (future)
 /frontend/node_modules/
 /frontend/dist/
