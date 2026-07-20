@@ -29,6 +29,8 @@ paths:
     $ref: "paths/imports.yaml#/~1v1~1imports~1{importId}"
   /v1/activities:
     $ref: "paths/activities.yaml#/~1v1~1activities"
+  /v1/activities/{activityId}/current-route-version:
+    $ref: "paths/activities.yaml#/~1v1~1activities~1{activityId}~1current-route-version"
   /v1/activities/{activityId}/route-drafts:
     $ref: "paths/route-editing.yaml#/~1v1~1activities~1{activityId}~1route-drafts"
   /v1/route-drafts/{draftId}:
@@ -69,6 +71,8 @@ components:
       $ref: "components/activities.yaml#/ActivitySummary"
     ActivityListResponse:
       $ref: "components/activities.yaml#/ActivityListResponse"
+    SelectCurrentRouteVersionRequest:
+      $ref: "components/activities.yaml#/SelectCurrentRouteVersionRequest"
     CreateRouteDraftRequest:
       $ref: "components/route-editing.yaml#/CreateRouteDraftRequest"
     RouteDraftResponse:

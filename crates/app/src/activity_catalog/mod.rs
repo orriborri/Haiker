@@ -13,6 +13,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::identity::UserId;
+use crate::route_versioning::RouteVersionId;
 
 /// A strongly-typed activity identifier wrapping a UUID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -134,6 +135,7 @@ pub struct Activity {
     pub ended_at: Option<DateTime<Utc>>,
     pub recorded_summary: Option<serde_json::Value>,
     pub corrected_summary: Option<serde_json::Value>,
+    pub current_route_version_id: Option<RouteVersionId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -158,6 +160,7 @@ impl Activity {
             ended_at,
             recorded_summary: None,
             corrected_summary: None,
+            current_route_version_id: None,
             created_at: now,
             updated_at: now,
         }
@@ -183,6 +186,19 @@ impl Activity {
         self.lifecycle_state = LifecycleState::Deleted;
         self.updated_at = Utc::now();
     }
+
+    /// Select a route version as the current version for this activity.
+    ///
+    /// Updates the pointer and the corrected summary from the version's statistics.
+    pub fn select_current_route_version(
+        &mut self,
+        version_id: RouteVersionId,
+        corrected_summary: serde_json::Value,
+    ) {
+        self.current_route_version_id = Some(version_id);
+        self.corrected_summary = Some(corrected_summary);
+        self.updated_at = Utc::now();
+    }
 }
 
 /// Errors that can occur in the activity catalog context.
@@ -199,6 +215,10 @@ pub enum ActivityCatalogError {
     /// The user is not authorized to access this activity.
     #[error("unauthorized")]
     Unauthorized,
+
+    /// The specified route version does not belong to this activity.
+    #[error("version does not belong to this activity")]
+    VersionNotBelongsToActivity,
 
     /// A persistence error occurred.
     #[error("persistence error: {message}")]
@@ -314,6 +334,9 @@ mod tests {
 
         let err = ActivityCatalogError::Unauthorized;
         assert_eq!(err.to_string(), "unauthorized");
+
+        let err = ActivityCatalogError::VersionNotBelongsToActivity;
+        assert_eq!(err.to_string(), "version does not belong to this activity");
     }
 
     #[test]

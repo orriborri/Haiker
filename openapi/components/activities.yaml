@@ -181,6 +181,19 @@ RenameActivityRequest:
       maxLength: 500
       example: "Afternoon Hike in the Mountains"
 
+SelectCurrentRouteVersionRequest:
+  type: object
+  description: Request body for selecting a route version as the activity's current route.
+  required:
+    - routeVersionId
+  additionalProperties: false
+  properties:
+    routeVersionId:
+      type: string
+      format: uuid
+      description: The ID of the route version to set as current.
+      example: "660e8400-e29b-41d4-a716-446655440001"
+
 RecordedRouteResponse:
   type: object
   description: GeoJSON FeatureCollection containing the full recorded route geometry.

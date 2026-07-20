@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { useRouteVersions, useRouteVersionGeometry } from "./useRouteVersions";
+import { useSelectCurrentRouteVersion } from "./useSelectCurrentRouteVersion";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import type { RouteVersionSummary } from "@/api/client";
 
@@ -51,9 +52,19 @@ export function RouteHistory({
     isLoading: geometryLoading,
   } = useRouteVersionGeometry(selectedVersionId);
 
+  const selectMutation = useSelectCurrentRouteVersion(activityId);
+
   const handleVersionSelect = useCallback((versionId: string) => {
     setSelectedVersionId((prev) => (prev === versionId ? null : versionId));
   }, []);
+
+  const handleSetAsCurrent = useCallback(
+    (versionId: string) => {
+      selectMutation.clearError();
+      selectMutation.mutate({ activityId, routeVersionId: versionId });
+    },
+    [selectMutation, activityId],
+  );
 
   if (isLoading) {
     return (
@@ -112,6 +123,23 @@ export function RouteHistory({
         {versions.length} version{versions.length !== 1 ? "s" : ""} published
       </p>
 
+      {selectMutation.error && (
+        <div
+          role="alert"
+          className="mb-4 flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+        >
+          <span>{selectMutation.error}</span>
+          <button
+            type="button"
+            className="ml-2 text-red-600 hover:text-red-800 focus:outline-none"
+            onClick={selectMutation.clearError}
+            aria-label="Dismiss error"
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
       <ol className="space-y-2" aria-label="Route versions">
         {versions.map((version) => (
           <VersionItem
@@ -119,7 +147,12 @@ export function RouteHistory({
             version={version}
             isCurrent={version.id === currentRouteVersionId}
             isSelected={version.id === selectedVersionId}
+            isSettingCurrent={
+              selectMutation.isPending &&
+              selectMutation.variables?.routeVersionId === version.id
+            }
             onSelect={handleVersionSelect}
+            onSetAsCurrent={handleSetAsCurrent}
           />
         ))}
       </ol>
@@ -169,14 +202,18 @@ interface VersionItemProps {
   version: RouteVersionSummary;
   isCurrent: boolean;
   isSelected: boolean;
+  isSettingCurrent: boolean;
   onSelect: (versionId: string) => void;
+  onSetAsCurrent: (versionId: string) => void;
 }
 
 function VersionItem({
   version,
   isCurrent,
   isSelected,
+  isSettingCurrent,
   onSelect,
+  onSetAsCurrent,
 }: VersionItemProps) {
   return (
     <li>
@@ -214,15 +251,38 @@ function VersionItem({
           <p className="mt-1 text-xs text-gray-600">{version.editSummary}</p>
         )}
 
-        <div className="mt-2 flex gap-4 text-xs text-gray-500">
-          <span>
-            {formatDistanceKm(version.correctedStatistics.distanceMeters)}
-          </span>
-          <span>{version.correctedStatistics.pointCount} points</span>
-          {version.parentVersionId && (
-            <span className="text-gray-400">
-              from v
-              {version.versionNumber - 1}
+        <div className="mt-2 flex items-center justify-between">
+          <div className="flex gap-4 text-xs text-gray-500">
+            <span>
+              {formatDistanceKm(version.correctedStatistics.distanceMeters)}
+            </span>
+            <span>{version.correctedStatistics.pointCount} points</span>
+            {version.parentVersionId && (
+              <span className="text-gray-400">
+                from v
+                {version.versionNumber - 1}
+              </span>
+            )}
+          </div>
+          {!isCurrent && (
+            <span
+              role="button"
+              tabIndex={0}
+              className="inline-flex items-center rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSetAsCurrent(version.id);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  onSetAsCurrent(version.id);
+                }
+              }}
+              aria-label={`Set ${versionLabel(version)} as current`}
+            >
+              {isSettingCurrent ? "Setting..." : "Set as Current"}
             </span>
           )}
         </div>
