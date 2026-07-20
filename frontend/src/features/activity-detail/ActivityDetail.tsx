@@ -3,6 +3,7 @@ import { useNavigate, Link } from "@tanstack/react-router";
 import { useActivity } from "./useActivity";
 import { useRecordedRoute } from "./useRecordedRoute";
 import { RouteMap } from "./RouteMap";
+import { RouteHistory } from "@/features/route-history";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import type { ActivityDetail } from "@/api/client";
@@ -179,6 +180,11 @@ export function ActivityDetailPage({ activityId }: ActivityDetailPageProps) {
 
       {/* Statistics */}
       <StatisticsSection activity={activity} />
+
+      {/* Route version history */}
+      <div className="mt-6">
+        <RouteHistory activityId={activityId} />
+      </div>
     </div>
   );
 }

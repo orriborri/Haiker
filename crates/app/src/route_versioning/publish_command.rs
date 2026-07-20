@@ -347,6 +347,25 @@ mod tests {
         ) -> Result<Option<RouteVersion>, RouteVersioningError> {
             Ok(self.idempotency_keys.lock().unwrap().get(key).cloned())
         }
+
+        async fn list_by_activity(
+            &self,
+            activity_id: ActivityId,
+            _cursor: Option<&str>,
+            _page_size: u32,
+        ) -> Result<super::super::repository::RouteVersionPage, RouteVersioningError> {
+            let versions = self.versions.lock().unwrap();
+            let items: Vec<RouteVersion> = versions
+                .iter()
+                .filter(|v| v.activity_id == activity_id)
+                .cloned()
+                .collect();
+            Ok(super::super::repository::RouteVersionPage {
+                items,
+                next_cursor: None,
+                has_more: false,
+            })
+        }
     }
 
     // --- Fake PublicationGateway ---

@@ -1,0 +1,137 @@
+/v1/activities/{activityId}/route-versions:
+  get:
+    operationId: listRouteVersions
+    summary: List route versions for an activity
+    description: |
+      Returns a paginated list of published route versions for the given activity,
+      ordered by version_number descending (newest first).
+
+      Returns 404 for missing, cross-owner, or deleted activities (non-disclosing).
+    tags:
+      - Route Versions
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: activityId
+        in: path
+        required: true
+        description: The activity ID to list route versions for.
+        schema:
+          type: string
+          format: uuid
+      - name: cursor
+        in: query
+        required: false
+        description: Opaque cursor for fetching the next page of results.
+        schema:
+          type: string
+      - name: pageSize
+        in: query
+        required: false
+        description: Number of items per page. Default 25, max 100.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 25
+    responses:
+      "200":
+        description: A paginated list of route versions.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-versions.yaml#/RouteVersionListResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Activity not found (non-disclosing for cross-owner access).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/route-versions/{routeVersionId}:
+  get:
+    operationId: getRouteVersion
+    summary: Get route version detail
+    description: |
+      Returns the full detail of a single route version.
+
+      Returns 404 for missing versions, cross-owner access, or deleted activities (non-disclosing).
+    tags:
+      - Route Versions
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: routeVersionId
+        in: path
+        required: true
+        description: The route version ID.
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: Route version detail.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/route-versions.yaml#/RouteVersionDetailResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Route version not found (non-disclosing for cross-owner access).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+
+/v1/route-versions/{routeVersionId}/geometry:
+  get:
+    operationId: getRouteVersionGeometry
+    summary: Get route version geometry
+    description: |
+      Returns the immutable geometry of a route version as a GeoJSON FeatureCollection.
+
+      Coordinates are in GeoJSON order: [longitude, latitude].
+
+      Returns 404 for missing versions, cross-owner access, or deleted activities (non-disclosing).
+    tags:
+      - Route Versions
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: routeVersionId
+        in: path
+        required: true
+        description: The route version ID.
+        schema:
+          type: string
+          format: uuid
+    responses:
+      "200":
+        description: Route version geometry as GeoJSON FeatureCollection.
+        content:
+          application/geo+json:
+            schema:
+              $ref: "../components/route-versions.yaml#/RouteVersionGeometryResponse"
+      "401":
+        description: Missing or invalid authentication.
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"
+      "404":
+        description: Route version not found (non-disclosing for cross-owner access).
+        content:
+          application/json:
+            schema:
+              $ref: "../components/errors.yaml#/ProblemDetail"

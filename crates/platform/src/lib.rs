@@ -31,6 +31,7 @@ pub mod recorded_route_persistence;
 pub mod request_id;
 pub mod route_editing_gateways;
 pub mod route_editing_persistence;
+pub mod route_version_persistence;
 pub mod session;
 pub mod telemetry;
 pub mod upload_quota;

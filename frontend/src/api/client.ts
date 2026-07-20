@@ -509,3 +509,100 @@ export function getExportDownloadUrl(
 }
 
 export { ApiError };
+
+// Route Versioning Schemas
+
+const CorrectedStatisticsSchema = z.object({
+  distanceMeters: z.number(),
+  pointCount: z.number(),
+  calculationVersion: z.string(),
+});
+
+const RouteVersionSummarySchema = z.object({
+  id: z.string(),
+  activityId: z.string(),
+  parentVersionId: z.string().nullable().optional(),
+  versionNumber: z.number(),
+  editSummary: z.string().nullable().optional(),
+  correctedStatistics: CorrectedStatisticsSchema,
+  calculationVersion: z.string(),
+  createdBy: z.string(),
+  createdAt: z.string(),
+});
+
+const RouteVersionListResponseSchema = z.object({
+  items: z.array(RouteVersionSummarySchema),
+  pagination: PaginationMetaSchema,
+});
+
+const RouteVersionDetailResponseSchema = z.object({
+  id: z.string(),
+  activityId: z.string(),
+  parentVersionId: z.string().nullable().optional(),
+  versionNumber: z.number(),
+  editSummary: z.string().nullable().optional(),
+  correctedStatistics: CorrectedStatisticsSchema,
+  calculationVersion: z.string(),
+  createdBy: z.string(),
+  createdAt: z.string(),
+});
+
+const RouteVersionGeometryFeaturePropertiesSchema = z.object({
+  pointCount: z.number(),
+  distanceMeters: z.number().nullable().optional(),
+});
+
+const RouteVersionGeometryFeatureSchema = z.object({
+  type: z.literal("Feature"),
+  geometry: GeoJsonGeometrySchema,
+  properties: RouteVersionGeometryFeaturePropertiesSchema,
+});
+
+const RouteVersionGeometryResponseSchema = z.object({
+  type: z.literal("FeatureCollection"),
+  bbox: z.array(z.number()),
+  features: z.array(RouteVersionGeometryFeatureSchema),
+});
+
+// Route Versioning Types
+
+export type CorrectedStatisticsDto = z.infer<typeof CorrectedStatisticsSchema>;
+export type RouteVersionSummary = z.infer<typeof RouteVersionSummarySchema>;
+export type RouteVersionListResponse = z.infer<typeof RouteVersionListResponseSchema>;
+export type RouteVersionDetailResponse = z.infer<typeof RouteVersionDetailResponseSchema>;
+export type RouteVersionGeometryResponse = z.infer<typeof RouteVersionGeometryResponseSchema>;
+
+// Route Versioning API Functions
+
+export function listRouteVersions(
+  activityId: string,
+  cursor?: string | null,
+  pageSize?: number,
+): Promise<RouteVersionListResponse> {
+  const params = new URLSearchParams();
+  if (cursor) params.set("cursor", cursor);
+  if (pageSize) params.set("pageSize", String(pageSize));
+  const query = params.toString();
+  return apiFetch(
+    `/activities/${activityId}/route-versions${query ? `?${query}` : ""}`,
+    RouteVersionListResponseSchema,
+  );
+}
+
+export function getRouteVersion(
+  routeVersionId: string,
+): Promise<RouteVersionDetailResponse> {
+  return apiFetch(
+    `/route-versions/${routeVersionId}`,
+    RouteVersionDetailResponseSchema,
+  );
+}
+
+export function getRouteVersionGeometry(
+  routeVersionId: string,
+): Promise<RouteVersionGeometryResponse> {
+  return apiFetch(
+    `/route-versions/${routeVersionId}/geometry`,
+    RouteVersionGeometryResponseSchema,
+  );
+}

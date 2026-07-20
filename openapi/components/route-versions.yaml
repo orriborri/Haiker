@@ -1,0 +1,231 @@
+RouteVersionSummary:
+  type: object
+  description: Summary of a published route version in the list response.
+  required:
+    - id
+    - activityId
+    - versionNumber
+    - correctedStatistics
+    - calculationVersion
+    - createdBy
+    - createdAt
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Unique identifier for this route version.
+      example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    activityId:
+      type: string
+      format: uuid
+      description: The activity this route version belongs to.
+      example: "550e8400-e29b-41d4-a716-446655440000"
+    parentVersionId:
+      type:
+        - string
+        - "null"
+      format: uuid
+      description: The previous version this was derived from. Null for the initial version (version 1).
+      example: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+    versionNumber:
+      type: integer
+      description: Sequential version number starting at 1.
+      minimum: 1
+      example: 2
+    editSummary:
+      type:
+        - string
+        - "null"
+      description: Optional human-readable summary of edits made in this version.
+      example: "Fixed trail section near summit"
+    correctedStatistics:
+      $ref: "#/CorrectedStatistics"
+    calculationVersion:
+      type: string
+      description: Identifies the algorithm version used to compute corrected statistics.
+      example: "v1.0"
+    createdBy:
+      type: string
+      format: uuid
+      description: The user who created this version.
+      example: "c3d4e5f6-a7b8-9012-cdef-123456789012"
+    createdAt:
+      type: string
+      format: date-time
+      description: When this version was published.
+      example: "2026-03-15T14:30:00Z"
+
+CorrectedStatistics:
+  type: object
+  description: Statistics computed from the corrected (published) route geometry.
+  required:
+    - distanceMeters
+    - pointCount
+    - calculationVersion
+  properties:
+    distanceMeters:
+      type: number
+      format: double
+      description: Total distance in meters computed via haversine over the geometry.
+      example: 12345.67
+    pointCount:
+      type: integer
+      description: Number of coordinate points in the geometry.
+      minimum: 2
+      example: 450
+    calculationVersion:
+      type: string
+      description: Identifies the algorithm version used to compute these statistics.
+      example: "v1.0"
+
+RouteVersionListResponse:
+  type: object
+  description: Paginated list of route versions for an activity.
+  required:
+    - items
+    - pagination
+  properties:
+    items:
+      type: array
+      description: Route version summaries ordered by version_number descending (newest first).
+      items:
+        $ref: "#/RouteVersionSummary"
+    pagination:
+      $ref: "../components/common.yaml#/CursorPagination"
+
+RouteVersionDetailResponse:
+  type: object
+  description: Full detail of a single route version.
+  required:
+    - id
+    - activityId
+    - versionNumber
+    - correctedStatistics
+    - calculationVersion
+    - createdBy
+    - createdAt
+  properties:
+    id:
+      type: string
+      format: uuid
+      description: Unique identifier for this route version.
+    activityId:
+      type: string
+      format: uuid
+      description: The activity this route version belongs to.
+    parentVersionId:
+      type:
+        - string
+        - "null"
+      format: uuid
+      description: The previous version this was derived from. Null for the initial version.
+    versionNumber:
+      type: integer
+      description: Sequential version number starting at 1.
+      minimum: 1
+    editSummary:
+      type:
+        - string
+        - "null"
+      description: Optional human-readable summary of edits made in this version.
+    correctedStatistics:
+      $ref: "#/CorrectedStatistics"
+    calculationVersion:
+      type: string
+      description: Identifies the algorithm version used to compute corrected statistics.
+    createdBy:
+      type: string
+      format: uuid
+      description: The user who created this version.
+    createdAt:
+      type: string
+      format: date-time
+      description: When this version was published.
+
+RouteVersionGeometryResponse:
+  type: object
+  description: GeoJSON FeatureCollection containing the route version geometry.
+  required:
+    - type
+    - bbox
+    - features
+  properties:
+    type:
+      type: string
+      enum:
+        - FeatureCollection
+      description: Always "FeatureCollection".
+    bbox:
+      type: array
+      description: Bounding box as [west, south, east, north] per GeoJSON convention.
+      items:
+        type: number
+        format: double
+      minItems: 4
+      maxItems: 4
+      example: [10.2, 47.0, 11.5, 47.8]
+    features:
+      type: array
+      description: A single Feature containing the route LineString geometry.
+      items:
+        $ref: "#/RouteVersionFeature"
+
+RouteVersionFeature:
+  type: object
+  description: A GeoJSON Feature representing the route version geometry.
+  required:
+    - type
+    - geometry
+    - properties
+  properties:
+    type:
+      type: string
+      enum:
+        - Feature
+      description: Always "Feature".
+    geometry:
+      $ref: "#/RouteLineString"
+    properties:
+      $ref: "#/RouteVersionFeatureProperties"
+
+RouteLineString:
+  type: object
+  description: A GeoJSON LineString geometry.
+  required:
+    - type
+    - coordinates
+  properties:
+    type:
+      type: string
+      enum:
+        - LineString
+      description: Always "LineString".
+    coordinates:
+      type: array
+      description: Coordinates as [[longitude, latitude], ...] per GeoJSON convention.
+      items:
+        type: array
+        items:
+          type: number
+          format: double
+        minItems: 2
+        maxItems: 2
+      minItems: 2
+
+RouteVersionFeatureProperties:
+  type: object
+  description: Properties for the route version geometry feature.
+  required:
+    - pointCount
+  properties:
+    pointCount:
+      type: integer
+      description: Total number of points in the geometry.
+      example: 450
+    distanceMeters:
+      type:
+        - number
+        - "null"
+      format: double
+      description: Total distance in meters from corrected statistics.
+      example: 12345.67
